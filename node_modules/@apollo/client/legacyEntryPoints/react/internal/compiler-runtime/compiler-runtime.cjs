@@ -1,0 +1,1 @@
+module.exports = require("@apollo/client/react/internal/compiler-runtime");

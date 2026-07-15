@@ -1,0 +1,302 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.removeDirectivesFromDocument = removeDirectivesFromDocument;
+const graphql_1 = require("graphql");
+const invariant_1 = require("@apollo/client/utilities/invariant");
+const checkDocument_js_1 = require("./checkDocument.cjs");
+const createFragmentMap_js_1 = require("./createFragmentMap.cjs");
+const getFragmentDefinition_js_1 = require("./getFragmentDefinition.cjs");
+const getFragmentDefinitions_js_1 = require("./getFragmentDefinitions.cjs");
+const getOperationDefinition_js_1 = require("./getOperationDefinition.cjs");
+const isArray_js_1 = require("./isArray.cjs");
+const isNonEmptyArray_js_1 = require("./isNonEmptyArray.cjs");
+/**
+* @internal
+* 
+* @deprecated This is an internal API and should not be used directly. This can be removed or changed at any time.
+*/
+function removeDirectivesFromDocument(directives, doc) {
+    (0, checkDocument_js_1.checkDocument)(doc);
+    // Passing empty strings to makeInUseGetterFunction means we handle anonymous
+    // operations as if their names were "". Anonymous fragment definitions are
+    // not supposed to be possible, but the same default naming strategy seems
+    // appropriate for that case as well.
+    const getInUseByOperationName = makeInUseGetterFunction("");
+    const getInUseByFragmentName = makeInUseGetterFunction("");
+    const getInUse = (ancestors) => {
+        for (let p = 0, ancestor; p < ancestors.length && (ancestor = ancestors[p]); ++p) {
+            if ((0, isArray_js_1.isArray)(ancestor))
+                continue;
+            if (ancestor.kind === graphql_1.Kind.OPERATION_DEFINITION) {
+                // If an operation is anonymous, we use the empty string as its key.
+                return getInUseByOperationName(ancestor.name && ancestor.name.value);
+            }
+            if (ancestor.kind === graphql_1.Kind.FRAGMENT_DEFINITION) {
+                return getInUseByFragmentName(ancestor.name.value);
+            }
+        }
+        invariant_1.invariant.error(14);
+        return null;
+    };
+    let operationCount = 0;
+    for (let i = doc.definitions.length - 1; i >= 0; --i) {
+        if (doc.definitions[i].kind === graphql_1.Kind.OPERATION_DEFINITION) {
+            ++operationCount;
+        }
+    }
+    const directiveMatcher = getDirectiveMatcher(directives);
+    const shouldRemoveField = (nodeDirectives) => (0, isNonEmptyArray_js_1.isNonEmptyArray)(nodeDirectives) &&
+        nodeDirectives
+            .map(directiveMatcher)
+            .some((config) => config && config.remove);
+    const originalFragmentDefsByPath = new Map();
+    // Any time the first traversal of the document below makes a change like
+    // removing a fragment (by returning null), this variable should be set to
+    // true. Once it becomes true, it should never be set to false again. If this
+    // variable remains false throughout the traversal, then we can return the
+    // original doc immediately without any modifications.
+    let firstVisitMadeChanges = false;
+    const fieldOrInlineFragmentVisitor = {
+        enter(node) {
+            if (shouldRemoveField(node.directives)) {
+                firstVisitMadeChanges = true;
+                return null;
+            }
+        },
+    };
+    const docWithoutDirectiveSubtrees = (0, graphql_1.visit)(doc, {
+        // These two AST node types share the same implementation, defined above.
+        Field: fieldOrInlineFragmentVisitor,
+        InlineFragment: fieldOrInlineFragmentVisitor,
+        VariableDefinition: {
+            enter() {
+                // VariableDefinition nodes do not count as variables in use, though
+                // they do contain Variable nodes that might be visited below. To avoid
+                // counting variable declarations as usages, we skip visiting the
+                // contents of this VariableDefinition node by returning false.
+                return false;
+            },
+        },
+        Variable: {
+            enter(node, _key, _parent, _path, ancestors) {
+                const inUse = getInUse(ancestors);
+                if (inUse) {
+                    inUse.variables.add(node.name.value);
+                }
+            },
+        },
+        FragmentSpread: {
+            enter(node, _key, _parent, _path, ancestors) {
+                if (shouldRemoveField(node.directives)) {
+                    firstVisitMadeChanges = true;
+                    return null;
+                }
+                const inUse = getInUse(ancestors);
+                if (inUse) {
+                    inUse.fragmentSpreads.add(node.name.value);
+                }
+                // We might like to remove this FragmentSpread by returning null here if
+                // the corresponding FragmentDefinition node is also going to be removed
+                // by the logic below, but we can't control the relative order of those
+                // events, so we have to postpone the removal of dangling FragmentSpread
+                // nodes until after the current visit of the document has finished.
+            },
+        },
+        FragmentDefinition: {
+            enter(node, _key, _parent, path) {
+                originalFragmentDefsByPath.set(JSON.stringify(path), node);
+            },
+            leave(node, _key, _parent, path) {
+                const originalNode = originalFragmentDefsByPath.get(JSON.stringify(path));
+                if (node === originalNode) {
+                    // If the FragmentNode received by this leave function is identical to
+                    // the one received by the corresponding enter function (above), then
+                    // the visitor must not have made any changes within this
+                    // FragmentDefinition node. This fragment definition may still be
+                    // removed if there are no ...spread references to it, but it won't be
+                    // removed just because it has only a __typename field.
+                    return node;
+                }
+                if (
+                // This logic applies only if the document contains one or more
+                // operations, since removing all fragments from a document containing
+                // only fragments makes the document useless.
+                operationCount > 0 &&
+                    node.selectionSet.selections.every((selection) => selection.kind === graphql_1.Kind.FIELD &&
+                        selection.name.value === "__typename")) {
+                    // This is a somewhat opinionated choice: if a FragmentDefinition ends
+                    // up having no fields other than __typename, we remove the whole
+                    // fragment definition, and later prune ...spread references to it.
+                    getInUseByFragmentName(node.name.value).removed = true;
+                    firstVisitMadeChanges = true;
+                    return null;
+                }
+            },
+        },
+        Directive: {
+            leave(node) {
+                // If a matching directive is found, remove the directive itself. Note
+                // that this does not remove the target (field, argument, etc) of the
+                // directive, but only the directive itself.
+                if (directiveMatcher(node)) {
+                    firstVisitMadeChanges = true;
+                    return null;
+                }
+            },
+        },
+    });
+    if (!firstVisitMadeChanges) {
+        // If our first pass did not change anything about the document, then there
+        // is no cleanup we need to do, and we can return the original doc.
+        return doc;
+    }
+    // Utility for making sure inUse.transitiveVars is recursively populated.
+    // Because this logic assumes inUse.fragmentSpreads has been completely
+    // populated and inUse.removed has been set if appropriate,
+    // populateTransitiveVars must be called after that information has been
+    // collected by the first traversal of the document.
+    const populateTransitiveVars = (inUse) => {
+        if (!inUse.transitiveVars) {
+            inUse.transitiveVars = new Set(inUse.variables);
+            if (!inUse.removed) {
+                inUse.fragmentSpreads.forEach((childFragmentName) => {
+                    populateTransitiveVars(getInUseByFragmentName(childFragmentName)).transitiveVars.forEach((varName) => {
+                        inUse.transitiveVars.add(varName);
+                    });
+                });
+            }
+        }
+        return inUse;
+    };
+    // Since we've been keeping track of fragment spreads used by particular
+    // operations and fragment definitions, we now need to compute the set of all
+    // spreads used (transitively) by any operations in the document.
+    const allFragmentNamesUsed = new Set();
+    docWithoutDirectiveSubtrees.definitions.forEach((def) => {
+        if (def.kind === graphql_1.Kind.OPERATION_DEFINITION) {
+            populateTransitiveVars(getInUseByOperationName(def.name && def.name.value)).fragmentSpreads.forEach((childFragmentName) => {
+                allFragmentNamesUsed.add(childFragmentName);
+            });
+        }
+        else if (def.kind === graphql_1.Kind.FRAGMENT_DEFINITION &&
+            // If there are no operations in the document, then all fragment
+            // definitions count as usages of their own fragment names. This heuristic
+            // prevents accidentally removing all fragment definitions from the
+            // document just because it contains no operations that use the fragments.
+            operationCount === 0 &&
+            !getInUseByFragmentName(def.name.value).removed) {
+            allFragmentNamesUsed.add(def.name.value);
+        }
+    });
+    // Now that we have added all fragment spreads used by operations to the
+    // allFragmentNamesUsed set, we can complete the set by transitively adding
+    // all fragment spreads used by those fragments, and so on.
+    allFragmentNamesUsed.forEach((fragmentName) => {
+        // Once all the childFragmentName strings added here have been seen already,
+        // the top-level allFragmentNamesUsed.forEach loop will terminate.
+        populateTransitiveVars(getInUseByFragmentName(fragmentName)).fragmentSpreads.forEach((childFragmentName) => {
+            allFragmentNamesUsed.add(childFragmentName);
+        });
+    });
+    const fragmentWillBeRemoved = (fragmentName) => !!(
+    // A fragment definition will be removed if there are no spreads that refer
+    // to it, or the fragment was explicitly removed because it had no fields
+    // other than __typename.
+    (!allFragmentNamesUsed.has(fragmentName) ||
+        getInUseByFragmentName(fragmentName).removed));
+    const enterVisitor = {
+        enter(node) {
+            if (fragmentWillBeRemoved(node.name.value)) {
+                return null;
+            }
+        },
+    };
+    return nullIfDocIsEmpty((0, graphql_1.visit)(docWithoutDirectiveSubtrees, {
+        // If the fragment is going to be removed, then leaving any dangling
+        // FragmentSpread nodes with the same name would be a mistake.
+        FragmentSpread: enterVisitor,
+        // This is where the fragment definition is actually removed.
+        FragmentDefinition: enterVisitor,
+        OperationDefinition: {
+            leave(node) {
+                // Upon leaving each operation in the depth-first AST traversal, prune
+                // any variables that are declared by the operation but unused within.
+                if (node.variableDefinitions) {
+                    const usedVariableNames = populateTransitiveVars(
+                    // If an operation is anonymous, we use the empty string as its key.
+                    getInUseByOperationName(node.name && node.name.value)).transitiveVars;
+                    // According to the GraphQL spec, all variables declared by an
+                    // operation must either be used by that operation or used by some
+                    // fragment included transitively into that operation:
+                    // https://spec.graphql.org/draft/#sec-All-Variables-Used
+                    //
+                    // To stay on the right side of this validation rule, if/when we
+                    // remove the last $var references from an operation or its fragments,
+                    // we must also remove the corresponding $var declaration from the
+                    // enclosing operation. This pruning applies only to operations and
+                    // not fragment definitions, at the moment. Fragments may be able to
+                    // declare variables eventually, but today they can only consume them.
+                    if (usedVariableNames.size < node.variableDefinitions.length) {
+                        return {
+                            ...node,
+                            variableDefinitions: node.variableDefinitions.filter((varDef) => usedVariableNames.has(varDef.variable.name.value)),
+                        };
+                    }
+                }
+            },
+        },
+    }));
+}
+function makeInUseGetterFunction(defaultKey) {
+    const map = new Map();
+    return function inUseGetterFunction(key = defaultKey) {
+        let inUse = map.get(key);
+        if (!inUse) {
+            map.set(key, (inUse = {
+                // Variable and fragment spread names used directly within this
+                // operation or fragment definition, as identified by key. These sets
+                // will be populated during the first traversal of the document in
+                // removeDirectivesFromDocument below.
+                variables: new Set(),
+                fragmentSpreads: new Set(),
+            }));
+        }
+        return inUse;
+    };
+}
+function getDirectiveMatcher(configs) {
+    const names = new Map();
+    const tests = new Map();
+    configs.forEach((directive) => {
+        if (directive) {
+            if (directive.name) {
+                names.set(directive.name, directive);
+            }
+            else if (directive.test) {
+                tests.set(directive.test, directive);
+            }
+        }
+    });
+    return (directive) => {
+        let config = names.get(directive.name.value);
+        if (!config && tests.size) {
+            tests.forEach((testConfig, test) => {
+                if (test(directive)) {
+                    config = testConfig;
+                }
+            });
+        }
+        return config;
+    };
+}
+function isEmpty(op, fragmentMap) {
+    return (!op ||
+        op.selectionSet.selections.every((selection) => selection.kind === graphql_1.Kind.FRAGMENT_SPREAD &&
+            isEmpty(fragmentMap[selection.name.value], fragmentMap)));
+}
+function nullIfDocIsEmpty(doc) {
+    return (isEmpty((0, getOperationDefinition_js_1.getOperationDefinition)(doc) || (0, getFragmentDefinition_js_1.getFragmentDefinition)(doc), (0, createFragmentMap_js_1.createFragmentMap)((0, getFragmentDefinitions_js_1.getFragmentDefinitions)(doc)))) ?
+        null
+        : doc;
+}
+//# sourceMappingURL=removeDirectivesFromDocument.cjs.map

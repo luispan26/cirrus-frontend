@@ -1,0 +1,1 @@
+{"version":3,"file":"FulfilledPromise.js","sourceRoot":"","sources":["../../../../src/utilities/internal/types/FulfilledPromise.ts"],"names":[],"mappings":"","sourcesContent":["/** @internal */\nexport interface FulfilledPromise<TValue> extends Promise<TValue> {\n  status: \"fulfilled\";\n  value: TValue;\n}\n"]}

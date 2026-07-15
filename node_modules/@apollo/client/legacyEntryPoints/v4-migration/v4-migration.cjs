@@ -1,0 +1,1 @@
+module.exports = require("@apollo/client/v4-migration");

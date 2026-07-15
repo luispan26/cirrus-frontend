@@ -1,0 +1,3 @@
+export * from "./index.js";
+export declare const getApolloCacheMemoryInternals: typeof import("./getMemoryInternals.js").getApolloCacheMemoryInternals, getApolloClientMemoryInternals: typeof import("./getMemoryInternals.js").getApolloClientMemoryInternals, getInMemoryCacheMemoryInternals: typeof import("./getMemoryInternals.js").getInMemoryCacheMemoryInternals;
+//# sourceMappingURL=index.production.d.ts.map

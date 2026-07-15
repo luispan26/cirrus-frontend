@@ -1,0 +1,1 @@
+{"version":3,"file":"RejectedPromise.js","sourceRoot":"","sources":["../../../../src/utilities/internal/types/RejectedPromise.ts"],"names":[],"mappings":"","sourcesContent":["/** @internal */\nexport interface RejectedPromise<TValue> extends Promise<TValue> {\n  status: \"rejected\";\n  reason: unknown;\n}\n"]}

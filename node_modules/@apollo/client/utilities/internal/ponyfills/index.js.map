@@ -1,0 +1,1 @@
+{"version":3,"file":"index.js","sourceRoot":"","sources":["../../../../src/utilities/internal/ponyfills/index.ts"],"names":[],"mappings":"AAAA,MAAM,CAAC,GAAG,oBAAoB,CAAC;AAC/B,OAAO,EAAE,CAAC,IAAI,oBAAoB,EAAE,CAAC","sourcesContent":["const F = FinalizationRegistry;\nexport { F as FinalizationRegistry };\n"]}

@@ -1,0 +1,1 @@
+{"version":3,"file":"index.react-native.js","sourceRoot":"","sources":["../../../../src/utilities/internal/ponyfills/index.react-native.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,oBAAoB,EAAE,MAAM,2BAA2B,CAAC","sourcesContent":["export { FinalizationRegistry } from \"./FinalizationRegistry.js\";\n"]}

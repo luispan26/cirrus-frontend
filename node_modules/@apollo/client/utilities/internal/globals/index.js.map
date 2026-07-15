@@ -1,0 +1,1 @@
+{"version":3,"file":"index.js","sourceRoot":"","sources":["../../../../src/utilities/internal/globals/index.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,KAAK,EAAE,MAAM,YAAY,CAAC;AACnC,OAAO,EAAE,OAAO,IAAI,MAAM,EAAE,MAAM,aAAa,CAAC","sourcesContent":["export { maybe } from \"./maybe.js\";\nexport { default as global } from \"./global.js\";\n"]}

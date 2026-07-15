@@ -1,0 +1,144 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useApolloClient, useMutation, useQuery, useSubscription } from '@apollo/client/react';
+import {
+  COMPLETE_INTAKE_MUTATION,
+  INTAKE_SESSION_QUERY,
+  INTAKE_UPDATED_SUBSCRIPTION,
+  UPDATE_INTAKE_FIELDS_MUTATION,
+} from '../graphql/operations';
+import { getSessionId } from '../lib/session';
+import { INTAKE_FIELD_KEYS, type Answers } from '../lib/questions';
+
+export type SyncStatus = 'idle' | 'live' | 'err';
+
+interface IntakeSessionData {
+  fields: Record<string, unknown>;
+  complete: boolean;
+  finalIntakeJson: Record<string, unknown> | null;
+}
+
+/**
+ * Owns the connection to a single IntakeSession on the backend: hydrates
+ * initial state, subscribes to live updates (replacing the old dual
+ * setInterval polling loops), and exposes debounced field writes. Used by
+ * both the guided-questions flow and the chat page, since either can
+ * complete the same underlying session.
+ */
+export function useIntakeSync(onComplete: (finalIntakeJson: Record<string, unknown>) => void) {
+  const sessionId = getSessionId();
+  const client = useApolloClient();
+  const [answers, setAnswers] = useState<Answers>({});
+  const [status, setStatus] = useState<SyncStatus>('idle');
+  const completionHandled = useRef(false);
+  const writeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const mergeFields = useCallback((fields: Record<string, unknown> | undefined) => {
+    if (!fields) return;
+    setAnswers((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const key of INTAKE_FIELD_KEYS) {
+        if (!(key in fields)) continue;
+        const v = fields[key];
+        if (v == null || v === '') continue;
+        if (JSON.stringify(prev[key]) !== JSON.stringify(v)) {
+          next[key] = v;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
+  // Initial hydrate — picks up anything already on the session (e.g. from a
+  // chat conversation that ran before Guided Mode was opened, or a refresh).
+  const initialQuery = useQuery<{ intakeSession: IntakeSessionData }>(INTAKE_SESSION_QUERY, {
+    variables: { sessionId },
+    fetchPolicy: 'network-only',
+  });
+
+  useEffect(() => {
+    if (initialQuery.error) {
+      setStatus('err');
+      return;
+    }
+    if (!initialQuery.data) return;
+    setStatus('live');
+    mergeFields(initialQuery.data.intakeSession.fields);
+    if (
+      initialQuery.data.intakeSession.complete &&
+      initialQuery.data.intakeSession.finalIntakeJson &&
+      !completionHandled.current
+    ) {
+      completionHandled.current = true;
+      onComplete(initialQuery.data.intakeSession.finalIntakeJson);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery.data, initialQuery.error]);
+
+  // Live updates — replaces the old setInterval(4000)/setInterval(5000) polling.
+  useSubscription<{ intakeUpdated: IntakeSessionData }>(INTAKE_UPDATED_SUBSCRIPTION, {
+    variables: { sessionId },
+    onData: ({ data }: { data: { data?: { intakeUpdated: IntakeSessionData } } }) => {
+      const updated = data.data?.intakeUpdated;
+      if (!updated) return;
+      setStatus('live');
+      mergeFields(updated.fields);
+      if (updated.complete && updated.finalIntakeJson && !completionHandled.current) {
+        completionHandled.current = true;
+        onComplete(updated.finalIntakeJson);
+      }
+    },
+    onError: () => setStatus('err'),
+  });
+
+  const [runUpdateFields] = useMutation(UPDATE_INTAKE_FIELDS_MUTATION);
+  const [runCompleteIntake] = useMutation(COMPLETE_INTAKE_MUTATION);
+
+  const setField = useCallback(
+    (key: string, value: unknown) => {
+      setAnswers((prev) => ({ ...prev, [key]: value }));
+      if (!INTAKE_FIELD_KEYS.includes(key)) return;
+      if (writeTimer.current) clearTimeout(writeTimer.current);
+      writeTimer.current = setTimeout(() => {
+        runUpdateFields({ variables: { sessionId, patch: { [key]: value }, updatedBy: 'form' } })
+          .then(() => setStatus('live'))
+          .catch(() => setStatus('err'));
+      }, 500);
+    },
+    [runUpdateFields, sessionId],
+  );
+
+  const toggleMultiField = useCallback(
+    (key: string, value: string) => {
+      setAnswers((prev) => {
+        const current = (prev[key] as string[]) || [];
+        const next = current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
+        if (INTAKE_FIELD_KEYS.includes(key)) {
+          runUpdateFields({ variables: { sessionId, patch: { [key]: next }, updatedBy: 'form' } })
+            .then(() => setStatus('live'))
+            .catch(() => setStatus('err'));
+        }
+        return { ...prev, [key]: next };
+      });
+    },
+    [runUpdateFields, sessionId],
+  );
+
+  const completeIntake = useCallback(
+    async (finalIntakeJson: Record<string, unknown>) => {
+      await runCompleteIntake({ variables: { sessionId, finalIntakeJson } });
+      completionHandled.current = true;
+      onComplete(finalIntakeJson);
+    },
+    [runCompleteIntake, sessionId, onComplete],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (writeTimer.current) clearTimeout(writeTimer.current);
+    };
+  }, []);
+
+  return { sessionId, answers, status, setField, toggleMultiField, completeIntake, apolloClient: client };
+}

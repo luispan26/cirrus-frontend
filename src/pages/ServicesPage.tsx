@@ -1,0 +1,270 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@apollo/client/react';
+import { MY_REPORTS_QUERY } from '../graphql/operations';
+import { KB, ZONE_COLORS, computeFloorPlan } from '../lib/kb';
+
+interface ReportSummary {
+  id: string;
+  status: string;
+  createdAt: string;
+  data: Record<string, any> | null;
+}
+
+function cap(s: string | undefined): string {
+  return s ? s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '';
+}
+
+const STEP_INTERVAL_MS = 1800;
+
+export function ServicesPage() {
+  const navigate = useNavigate();
+  const { data, loading } = useQuery<{ myReports: ReportSummary[] }>(MY_REPORTS_QUERY, {
+    fetchPolicy: 'network-only',
+  });
+
+  const readyReports = useMemo(() => (data?.myReports ?? []).filter((r) => r.status === 'ready'), [data]);
+
+  const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  const [selectedProtocolId, setSelectedProtocolId] = useState<string | null>(null);
+  const [stepIndex, setStepIndex] = useState(0);
+  const [playing, setPlaying] = useState(false);
+
+  useEffect(() => {
+    if (!selectedReportId && readyReports.length > 0) {
+      setSelectedReportId(readyReports[0].id);
+    }
+  }, [readyReports, selectedReportId]);
+
+  const selectedReport = readyReports.find((r) => r.id === selectedReportId) || null;
+  const reportData = selectedReport?.data || {};
+  const protocols: { id?: string; name?: string; estimated_time_hours?: number }[] = Array.isArray(reportData.protocols_json)
+    ? reportData.protocols_json
+    : [];
+
+  useEffect(() => {
+    setSelectedProtocolId(protocols[0]?.id ?? null);
+    setStepIndex(0);
+    setPlaying(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedReportId]);
+
+  const protocol = protocols.find((p) => p.id === selectedProtocolId) || null;
+  const operation = protocol ? KB.operations.find((o) => o.id === protocol.id) : null;
+
+  const steps: string[] = operation?.stations ?? [];
+
+  const fp = useMemo(() => {
+    if (!selectedReport) return null;
+    const sp = reportData.space || {};
+    const width = parseFloat(sp.width_ft) || (sp.sqft ? Math.round(Math.sqrt(sp.sqft * (4 / 3))) : null) || 40;
+    const height = parseFloat(sp.height_ft) || (sp.sqft ? Math.round(sp.sqft / width) : null) || 30;
+    return computeFloorPlan(reportData, width, height);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedReport]);
+
+  useEffect(() => {
+    if (!playing || steps.length === 0) return;
+    if (stepIndex >= steps.length - 1) {
+      setPlaying(false);
+      return;
+    }
+    const t = setTimeout(() => setStepIndex((i) => i + 1), STEP_INTERVAL_MS);
+    return () => clearTimeout(t);
+  }, [playing, stepIndex, steps.length]);
+
+  function selectProtocol(id: string) {
+    setSelectedProtocolId(id);
+    setStepIndex(0);
+    setPlaying(false);
+  }
+  function togglePlay() {
+    if (stepIndex >= steps.length - 1) setStepIndex(0);
+    setPlaying((p) => !p);
+  }
+  function reset() {
+    setStepIndex(0);
+    setPlaying(false);
+  }
+
+  const activeStationId = steps[stepIndex] || null;
+
+  return (
+    <div className="screen" style={{ background: 'var(--light)' }}>
+      <div className="qm-topbar">
+        <div className="logo-mark" style={{ cursor: 'pointer' }} onClick={() => navigate('/dashboard')}>CIRRUS</div>
+        <div style={{ flex: 1 }} />
+        <button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>← Dashboard</button>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '32px 24px' }}>
+        <div style={{ maxWidth: 900, margin: '0 auto' }}>
+          <h2 style={{ fontSize: 24, fontWeight: 800, color: 'var(--dark)', marginBottom: 4, letterSpacing: '-0.01em' }}>Services</h2>
+          <p style={{ fontSize: 13, color: 'var(--mid)', marginBottom: 24 }}>
+            Pick a lab you've designed and a protocol to run through it — watch which stations it uses, in order.
+          </p>
+
+          {loading && <p style={{ color: 'var(--mid)', fontSize: 13 }}>Loading your designs…</p>}
+
+          {!loading && readyReports.length === 0 && (
+            <div className="q-card" style={{ textAlign: 'center', maxWidth: 480, margin: '40px auto' }}>
+              <div className="q-title" style={{ fontSize: 18 }}>No completed lab designs yet</div>
+              <div className="q-hint">Finish designing a lab first, then come back here to simulate a protocol running through it.</div>
+              <button className="btn-teal" style={{ width: '100%' }} onClick={() => navigate('/scenario')}>Start a lab design</button>
+            </div>
+          )}
+
+          {!loading && readyReports.length > 0 && (
+            <>
+              <div className="field-wrap">
+                <label className="field-label">Lab design</label>
+                <div className="chips">
+                  {readyReports.map((r) => (
+                    <span
+                      key={r.id}
+                      className={`chip${r.id === selectedReportId ? ' sel' : ''}`}
+                      onClick={() => setSelectedReportId(r.id)}
+                    >
+                      {cap(r.data?.business_model) || 'Lab design'} · {new Date(r.createdAt).toLocaleDateString()}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {protocols.length === 0 ? (
+                <p style={{ fontSize: 13, color: 'var(--mid)' }}>This design has no protocols to simulate.</p>
+              ) : (
+                <div className="field-wrap">
+                  <label className="field-label">Protocol</label>
+                  <div className="chips">
+                    {protocols.map((p) => (
+                      <span
+                        key={p.id}
+                        className={`chip${p.id === selectedProtocolId ? ' sel' : ''}`}
+                        onClick={() => p.id && selectProtocol(p.id)}
+                      >
+                        {p.name || p.id}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {fp && operation && steps.length > 0 && (
+                <div className="fp-panel" style={{ marginTop: 20 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+                    <button className="btn-teal" style={{ padding: '8px 20px' }} onClick={togglePlay}>
+                      {playing ? '⏸ Pause' : stepIndex >= steps.length - 1 ? '↻ Replay' : '▶ Play'}
+                    </button>
+                    <button className="btn-out" onClick={reset}>Reset</button>
+                    <span style={{ fontSize: 12, color: 'var(--mid)' }}>
+                      Step {stepIndex + 1} of {steps.length}
+                      {protocol?.estimated_time_hours ? ` · ~${protocol.estimated_time_hours} hrs total (real time)` : ''}
+                    </span>
+                  </div>
+
+                  <div className="fp-util-bar" style={{ marginBottom: 16 }}>
+                    <div
+                      className="fp-util-fill"
+                      style={{ width: `${((stepIndex + 1) / steps.length) * 100}%`, background: 'var(--pk)' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                    <div style={{ flex: '1 1 320px' }}>
+                      <div className="fp-legend">
+                        <span><i style={{ background: '#4FB3AC' }} />Wet lab</span>
+                        <span><i style={{ background: '#221F2E' }} />Dry lab</span>
+                        <span><i style={{ background: '#D1316B' }} />Automation</span>
+                        <span><i style={{ background: '#E3E0E6' }} />Unassigned</span>
+                      </div>
+                      <div className="fp-grid">
+                        {fp.grid.map((row) => (
+                          <div className="fp-rowcol" key={row.label}>
+                            <div className="fp-rowlabel">{row.label}</div>
+                            {row.cells.map((c) => {
+                              const isActive = c.stationId && c.stationId === activeStationId;
+                              const isInProtocol = c.stationId && steps.includes(c.stationId);
+                              return (
+                                <div
+                                  key={c.posLabel}
+                                  className="fp-cell"
+                                  title={c.name || c.posLabel}
+                                  style={{
+                                    background: c.stationId ? ZONE_COLORS[c.zone] || '#E3E0E6' : '#E3E0E6',
+                                    color: c.stationId ? 'white' : '#5B5770',
+                                    cursor: 'default',
+                                    opacity: isInProtocol && !isActive ? 0.35 : 1,
+                                    boxShadow: isActive ? '0 0 0 3px #D1316B, 0 0 16px rgba(209,49,107,.6)' : 'none',
+                                    transform: isActive ? 'scale(1.12)' : 'scale(1)',
+                                    transition: 'all .3s ease',
+                                  }}
+                                >
+                                  {c.posLabel}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div style={{ flex: '1 1 240px' }}>
+                      <div className="field-label" style={{ marginBottom: 10 }}>Steps</div>
+                      {steps.map((stationId, i) => {
+                        const meta = KB.stations[stationId];
+                        const isCurrent = i === stepIndex;
+                        const isPast = i < stepIndex;
+                        return (
+                          <div
+                            key={stationId + i}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              padding: '8px 10px',
+                              borderRadius: 8,
+                              marginBottom: 6,
+                              background: isCurrent ? 'var(--tl)' : 'transparent',
+                              border: isCurrent ? '1px solid var(--tline)' : '1px solid transparent',
+                              opacity: isPast ? 0.5 : 1,
+                              cursor: 'pointer',
+                            }}
+                            onClick={() => { setStepIndex(i); setPlaying(false); }}
+                          >
+                            <div
+                              style={{
+                                width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
+                                background: isCurrent ? '#D1316B' : isPast ? '#4FB3AC' : '#E3E0E6',
+                                color: 'white', fontSize: 10, fontWeight: 700,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              }}
+                            >
+                              {isPast ? '✓' : i + 1}
+                            </div>
+                            <div style={{ fontSize: 12, color: 'var(--dark)', fontWeight: isCurrent ? 700 : 400 }}>
+                              {meta?.name || stationId}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {operation.equipment.length > 0 && (
+                        <>
+                          <div className="field-label" style={{ marginTop: 16, marginBottom: 8 }}>Equipment used</div>
+                          <div className="proto-tags">
+                            {operation.equipment.map((e) => <span className="proto-tag" key={e}>{e}</span>)}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

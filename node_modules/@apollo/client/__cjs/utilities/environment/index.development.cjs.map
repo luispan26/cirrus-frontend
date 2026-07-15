@@ -1,0 +1,1 @@
+{"version":3,"file":"index.development.cjs","sources":["../../../../src/utilities/environment/index.development.ts"],"sourcesContent":["export const __DEV__ = true as boolean;\n"],"names":[],"mappings":";;;AAAa,CAAb,CAAA,CAAA,CAAA,CAAA,CAAA,CAAA,CAAa,CAAb,CAAA,CAAA,CAAA,CAAA,CAAA,EAAA,EAAuB,CAAvB,CAAA,CAAA,CAAsC;"}
