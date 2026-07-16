@@ -1,15 +1,35 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ReportView } from '../components/ReportView';
 
 export function ReportPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const initialData = (location.state as { reportData?: Record<string, any> } | null)?.reportData ?? null;
+  const routedData = (location.state as { reportData?: Record<string, any> } | null)?.reportData ?? null;
 
-  const [data, setData] = useState<Record<string, any> | null>(initialData);
+  const [pastedData, setPastedData] = useState<Record<string, any> | null>(null);
+  const [wantsPasteBox, setWantsPasteBox] = useState(false);
+  const [pasteKey, setPasteKey] = useState(0);
   const [pasteValue, setPasteValue] = useState('');
   const [pasteError, setPasteError] = useState('');
+
+  // A fresh navigation here (a different report, from Dashboard or
+  // GeneratingPage) should always win over anything previously pasted or
+  // shown — without this, re-navigating to the same /report route with new
+  // state wouldn't actually update anything, since useState only reads its
+  // initial value once on mount.
+  useEffect(() => {
+    setPastedData(null);
+    setWantsPasteBox(false);
+  }, [location.key]);
+
+  const data = wantsPasteBox ? pastedData : (pastedData ?? routedData);
+
+  // Forces ReportView — and everything inside it, including FloorPlan's
+  // internal optimizer state — to fully remount whenever the underlying
+  // report actually changes (a fresh navigation, or pasting new JSON),
+  // instead of silently re-rendering with stale computed layout state.
+  const viewKey = pastedData ? `pasted-${pasteKey}` : location.key;
 
   function handleParse() {
     const raw = pasteValue.trim();
@@ -19,7 +39,9 @@ export function ReportPage() {
       return;
     }
     try {
-      setData(JSON.parse(raw));
+      setPastedData(JSON.parse(raw));
+      setPasteKey((k) => k + 1);
+      setWantsPasteBox(false);
     } catch {
       setPasteError('Invalid JSON — check for missing brackets or quotes.');
     }
@@ -57,9 +79,9 @@ export function ReportPage() {
           </div>
         ) : (
           <>
-            <ReportView data={data} />
+            <ReportView key={viewKey} data={data} />
             <div style={{ textAlign: 'center' }}>
-              <button className="btn-out" onClick={() => { setData(null); setPasteValue(''); }}>Paste a different report</button>
+              <button className="btn-out" onClick={() => { setWantsPasteBox(true); setPastedData(null); setPasteValue(''); }}>Paste a different report</button>
             </div>
           </>
         )}

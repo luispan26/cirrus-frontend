@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState } from 'react';
 import { KB, ZONE_COLORS, computeFloorPlan, suggestExpansion, type FloorPlanResult, type FloorPlanRow } from '../lib/kb';
+import { optimizeFloorPlan, type LayoutWeights, type DemandParams } from '../lib/optimizer';
 
 function cap(s: string): string {
   return s ? s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '';
@@ -7,6 +8,11 @@ function cap(s: string): string {
 function fmt(n: number | undefined): string {
   return n ? '$' + Number(n).toLocaleString() : '—';
 }
+
+const DEFAULT_WEIGHTS: LayoutWeights = {
+  throughput: 0.5, walkingDistance: 0.5, flexibility: 0.5, contamination: 0.5, equipmentUtilization: 0.5,
+};
+const DEFAULT_DEMAND: DemandParams = { runsPerWeek: 0, batchSize: 0, seasonalVariability: 0 };
 
 export function FloorPlan({ reportData }: { reportData: Record<string, unknown> }) {
   const initialWidth = useMemo(() => {
@@ -20,19 +26,54 @@ export function FloorPlan({ reportData }: { reportData: Record<string, unknown> 
     return h;
   }, [reportData, initialWidth]);
 
+  // Client-configured priorities/demand, set during intake — every report
+  // has them going forward, but older reports generated before this feature
+  // existed won't, hence the defaults.
+  const weights: LayoutWeights = useMemo(() => {
+    const w = reportData.layout_weights as Record<string, number> | undefined;
+    if (!w) return DEFAULT_WEIGHTS;
+    return {
+      throughput: w.throughput ?? 0.5,
+      walkingDistance: w.walking_distance ?? 0.5,
+      flexibility: w.flexibility ?? 0.5,
+      contamination: w.contamination ?? 0.5,
+      equipmentUtilization: w.equipment_utilization ?? 0.5,
+    };
+  }, [reportData]);
+  const demand: DemandParams = useMemo(() => {
+    const d = reportData.demand as Record<string, number> | undefined;
+    if (!d) return DEFAULT_DEMAND;
+    return {
+      runsPerWeek: d.runs_per_week ?? 0,
+      batchSize: d.batch_size ?? 0,
+      seasonalVariability: d.seasonal_variability ?? 0,
+    };
+  }, [reportData]);
+  const hasOptimizationInputs = !!reportData.layout_weights;
+
   const [width, setWidth] = useState(initialWidth);
   const [height, setHeight] = useState(initialHeight);
   const [previewOpId, setPreviewOpId] = useState<string | null>(null);
-  const [fp, setFp] = useState<FloorPlanResult>(() => computeFloorPlan(reportData, initialWidth, initialHeight));
+  const [order, setOrder] = useState<string[]>([]);
+  const [fp, setFp] = useState<FloorPlanResult>(() => {
+    const result = optimizeFloorPlan(reportData, initialWidth, initialHeight, weights, demand);
+    setOrder(result.order);
+    return result.floorPlan;
+  });
   const [selectedCell, setSelectedCell] = useState<string | null>(null);
 
   function recompute(w: number, h: number, extraOpIds?: string[]) {
-    setFp(computeFloorPlan(reportData, w, h, extraOpIds));
+    // Preview/add-on changes reuse the already-optimized order rather than
+    // re-running the search — keeps the base layout stable while trying an
+    // extra station, instead of everything reshuffling.
+    setFp(computeFloorPlan(reportData, w, h, extraOpIds, order));
   }
 
   function regenerate() {
     setPreviewOpId(null);
-    recompute(width, height);
+    const result = optimizeFloorPlan(reportData, width, height, weights, demand);
+    setOrder(result.order);
+    setFp(result.floorPlan);
     setSelectedCell(null);
   }
   function previewAdd(opId: string) {
@@ -99,6 +140,9 @@ export function FloorPlan({ reportData }: { reportData: Record<string, unknown> 
       <div className="sec-head">
         Lab floor plan
         <div className="sec-line" />
+        {hasOptimizationInputs && (
+          <span className="modality-badge" style={{ marginBottom: 0 }}>Auto-optimized for your priorities</span>
+        )}
       </div>
       <div className="fp-panel">
         <div className="fp-controls">

@@ -16,6 +16,7 @@ export default function App() {
       <Route path="/" element={<SplashPage />} />
       <Route path="/login" element={<LoginPage mode="login" />} />
       <Route path="/register" element={<LoginPage mode="register" />} />
+      
 
       <Route element={<ProtectedRoute />}>
         <Route path="/dashboard" element={<DashboardPage />} />
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/generating" element={<GeneratingPage />} />
         <Route path="/report" element={<ReportPage />} />
+        <Route path="/services" element={<ServicesPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

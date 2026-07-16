@@ -37,15 +37,15 @@ export function QuestionsPage() {
   }
 
   async function nextQ() {
-    const ni = stepIndex(qi, 1, answers);
-    if (ni < QS.length) {
-      setQi(ni);
-    } else {
-      const finalJson = buildFinalIntakeJson(answers);
-      navigate('/generating');
-      await completeIntake(finalJson as unknown as Record<string, unknown>);
-    }
+  const ni = stepIndex(qi, 1, answers);
+  if (ni < QS.length) {
+    setQi(ni);
+  } else {
+    const finalJson = buildFinalIntakeJson(answers);
+    await completeIntake(finalJson as unknown as Record<string, unknown>);
+    navigate('/generating');
   }
+}
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -70,7 +70,7 @@ export function QuestionsPage() {
         <SyncBadge status={status} />
         <button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>Dashboard</button>
         <button className="qm-mode-toggle" onClick={() => navigate('/chat')}>Full-screen chat →</button>
-    </div>
+      </div>
       <div className="qm-stage">
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <div className="qm-counter">Question {posInApplicable} of {applicable.length}</div>
@@ -141,6 +141,8 @@ function QuestionBody({
       {q.type === 'space' && <SpaceBody answers={answers} setField={setField} />}
       {q.type === 'budget' && <BudgetBody answers={answers} setField={setField} />}
       {q.type === 'staff' && <StaffBody answers={answers} setField={setField} toggleMultiField={toggleMultiField} />}
+      {q.type === 'demand' && <DemandBody answers={answers} setField={setField} />}
+      {q.type === 'priorities' && <PrioritiesBody answers={answers} setField={setField} />}
     </div>
   );
 }
@@ -279,5 +281,68 @@ function StaffBody({ answers, setField, toggleMultiField }: { answers: Answers; 
         </div>
       </div>
     </>
+  );
+}
+
+function DemandBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+  const seasonal = (answers.seasonal_variability as string) || '0';
+  return (
+    <>
+      <div className="grid-2">
+        <div className="field-wrap">
+          <label className="field-label">Runs per week</label>
+          <input className="field-input" type="number" placeholder="e.g. 10" defaultValue={(answers.runs_per_week as string) || ''} onBlur={(e) => setField('runs_per_week', e.target.value)} />
+        </div>
+        <div className="field-wrap">
+          <label className="field-label">Expected batch size</label>
+          <input className="field-input" type="number" placeholder="e.g. 8" defaultValue={(answers.batch_size as string) || ''} onBlur={(e) => setField('batch_size', e.target.value)} />
+        </div>
+      </div>
+      <div className="field-wrap">
+        <label className="field-label">Seasonal variability (optional)</label>
+        <div className="chips">
+          <span className={`chip${seasonal === '0' ? ' sel' : ''}`} onClick={() => setField('seasonal_variability', '0')}>Steady year-round</span>
+          <span className={`chip${seasonal === '0.5' ? ' sel' : ''}`} onClick={() => setField('seasonal_variability', '0.5')}>Some fluctuation</span>
+          <span className={`chip${seasonal === '1' ? ' sel' : ''}`} onClick={() => setField('seasonal_variability', '1')}>Highly seasonal</span>
+        </div>
+      </div>
+    </>
+  );
+}
+
+const PRIORITY_SLIDERS: [string, string, string][] = [
+  ['priority_throughput', 'Throughput', 'Keep high-traffic stations centrally located'],
+  ['priority_walking_distance', 'Technician walking distance', 'Minimize steps between consecutive protocol stages'],
+  ['priority_flexibility', 'Flexibility for future expansion', 'Leave room to add stations later'],
+  ['priority_contamination', 'Contamination minimization', 'Keep sensitive and automation zones apart'],
+  ['priority_equipment_utilization', 'Equipment utilization', 'Keep equipment-heavy stations well-integrated'],
+];
+
+function PrioritiesBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {PRIORITY_SLIDERS.map(([key, label, hint]) => {
+        const raw = answers[key];
+        const parsed = typeof raw === 'string' ? parseInt(raw, 10) : NaN;
+        const value = Number.isNaN(parsed) ? 50 : parsed;
+        return (
+          <div key={key} className="field-wrap" style={{ marginBottom: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <label className="field-label" style={{ marginBottom: 2 }}>{label}</label>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--td)' }}>{value}</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              defaultValue={value}
+              onChange={(e) => setField(key, e.target.value)}
+              style={{ width: '100%', accentColor: 'var(--teal)' }}
+            />
+            <p style={{ fontSize: 11, color: 'var(--mid)', marginTop: 2 }}>{hint}</p>
+          </div>
+        );
+      })}
+    </div>
   );
 }

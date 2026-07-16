@@ -1,4 +1,4 @@
-export type QuestionType = 'radio' | 'multi' | 'automation' | 'space' | 'budget' | 'staff';
+export type QuestionType = 'radio' | 'multi' | 'automation' | 'space' | 'budget' | 'staff' | 'demand' | 'priorities';
 
 export interface QuestionOption {
   v: string;
@@ -46,8 +46,10 @@ export const QS: Question[] = [
   { id: 'space', n: 4, t: 'Tell us about your space', h: 'Used to generate your floor plan', type: 'space' },
   { id: 'budget', n: 5, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
   { id: 'staff', n: 6, t: 'Who will work in this lab?', h: 'Helps size workflows and staffing plan', type: 'staff' },
+  { id: 'demand', n: 7, t: 'How busy will this lab be?', h: 'Used to auto-optimize your floor plan layout', type: 'demand' },
+  { id: 'priorities', n: 8, t: 'What matters most in your layout?', h: 'Drag the sliders — your floor plan is optimized around these automatically', type: 'priorities' },
   {
-    id: 'business_model', n: 7, t: 'What is your business model?', h: 'Determines revenue projections in your report', type: 'radio',
+    id: 'business_model', n: 9, t: 'What is your business model?', h: 'Determines revenue projections in your report', type: 'radio',
     opts: [
       { v: 'internal_only', l: 'Internal research only', d: 'Lab serves only our team, no external clients' },
       { v: 'fee_for_service', l: 'Fee-for-service', d: 'Offer services and equipment to outside clients' },
@@ -60,6 +62,8 @@ export const QS: Question[] = [
 export const INTAKE_FIELD_KEYS = [
   'bsl', 'operations', 'bca_mode', 'miniprep_mode', 'width_ft', 'height_ft', 'ceiling_ft',
   'rooms', 'renovation', 'budget_total', 'budget_scope', 'staff_count', 'staff_roles', 'business_model',
+  'runs_per_week', 'batch_size', 'seasonal_variability',
+  'priority_throughput', 'priority_walking_distance', 'priority_flexibility', 'priority_contamination', 'priority_equipment_utilization',
 ];
 
 export function shouldSkip(q: Question, answers: Answers): boolean {
@@ -102,7 +106,17 @@ export interface FinalIntakeJson {
   allocation: { equipment: number; construction: number; staffing: number; consumables: number; contingency: number };
   staff: { role: string; count: number }[];
   business_model: string;
+  demand: { runs_per_week: number; batch_size: number; seasonal_variability: number };
+  layout_weights: {
+    throughput: number;
+    walking_distance: number;
+    flexibility: number;
+    contamination: number;
+    equipment_utilization: number;
+  };
 }
+
+const DEFAULT_PRIORITY = 50; // midpoint of the 0-100 sliders
 
 export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
   const roles = (a.staff_roles as string[]) || [];
@@ -113,6 +127,12 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
   const hasCon = a.budget_scope === 'equipment_and_construction';
   const width_ft = parseFloat((a.width_ft as string) || '0') || 0;
   const height_ft = parseFloat((a.height_ft as string) || '0') || 0;
+
+  const priority = (key: string) => {
+  const raw = a[key];
+  const parsed = typeof raw === 'string' ? parseInt(raw, 10) : NaN;
+  return (Number.isNaN(parsed) ? DEFAULT_PRIORITY : parsed) / 100;
+  };
 
   return {
     scenario: 'lab_design',
@@ -129,5 +149,17 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
     allocation: { equipment: hasCon ? 0.5 : 0.7, construction: hasCon ? 0.25 : 0, staffing: 0.1, consumables: 0.1, contingency: 0.05 },
     staff,
     business_model: (a.business_model as string) || 'internal_only',
+    demand: {
+      runs_per_week: parseFloat((a.runs_per_week as string) || '0') || 0,
+      batch_size: parseFloat((a.batch_size as string) || '0') || 0,
+      seasonal_variability: parseFloat((a.seasonal_variability as string) || '0') || 0,
+    },
+    layout_weights: {
+      throughput: priority('priority_throughput'),
+      walking_distance: priority('priority_walking_distance'),
+      flexibility: priority('priority_flexibility'),
+      contamination: priority('priority_contamination'),
+      equipment_utilization: priority('priority_equipment_utilization'),
+    },
   };
 }

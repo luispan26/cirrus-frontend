@@ -30,7 +30,6 @@ export function useIntakeSync(onComplete: (finalIntakeJson: Record<string, unkno
   const [answers, setAnswers] = useState<Answers>({});
   const [status, setStatus] = useState<SyncStatus>('idle');
   const completionHandled = useRef(false);
-  const writeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const mergeFields = useCallback((fields: Record<string, unknown> | undefined) => {
     if (!fields) return;
@@ -95,12 +94,12 @@ export function useIntakeSync(onComplete: (finalIntakeJson: Record<string, unkno
   const [runUpdateFields] = useMutation(UPDATE_INTAKE_FIELDS_MUTATION);
   const [runCompleteIntake] = useMutation(COMPLETE_INTAKE_MUTATION);
 
-  const setField = useCallback(
+  const writeTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const scheduleWrite = useCallback(
     (key: string, value: unknown) => {
-      setAnswers((prev) => ({ ...prev, [key]: value }));
-      if (!INTAKE_FIELD_KEYS.includes(key)) return;
-      if (writeTimer.current) clearTimeout(writeTimer.current);
-      writeTimer.current = setTimeout(() => {
+      if (writeTimers.current[key]) clearTimeout(writeTimers.current[key]);
+      writeTimers.current[key] = setTimeout(() => {
         runUpdateFields({ variables: { sessionId, patch: { [key]: value }, updatedBy: 'form' } })
           .then(() => setStatus('live'))
           .catch(() => setStatus('err'));
@@ -109,20 +108,30 @@ export function useIntakeSync(onComplete: (finalIntakeJson: Record<string, unkno
     [runUpdateFields, sessionId],
   );
 
+  const setField = useCallback(
+    (key: string, value: unknown) => {
+      setAnswers((prev) => ({ ...prev, [key]: value }));
+      if (!INTAKE_FIELD_KEYS.includes(key)) return;
+      scheduleWrite(key, value);
+    },
+    [scheduleWrite],
+  );
+
   const toggleMultiField = useCallback(
     (key: string, value: string) => {
       setAnswers((prev) => {
         const current = (prev[key] as string[]) || [];
         const next = current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
-        if (INTAKE_FIELD_KEYS.includes(key)) {
-          runUpdateFields({ variables: { sessionId, patch: { [key]: next }, updatedBy: 'form' } })
-            .then(() => setStatus('live'))
-            .catch(() => setStatus('err'));
-        }
+        // Debounced the same way setField is — rapid clicks (checking several
+        // operations quickly) now collapse into one save of the final array,
+        // instead of firing a separate concurrent mutation per click that can
+        // land out of order and get pushed back down via the subscription,
+        // silently overwriting freshly-selected local state.
+        if (INTAKE_FIELD_KEYS.includes(key)) scheduleWrite(key, next);
         return { ...prev, [key]: next };
       });
     },
-    [runUpdateFields, sessionId],
+    [scheduleWrite],
   );
 
   const completeIntake = useCallback(
@@ -136,7 +145,8 @@ export function useIntakeSync(onComplete: (finalIntakeJson: Record<string, unkno
 
   useEffect(() => {
     return () => {
-      if (writeTimer.current) clearTimeout(writeTimer.current);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      Object.values(writeTimers.current).forEach(clearTimeout);
     };
   }, []);
 

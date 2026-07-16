@@ -4,13 +4,19 @@ export interface StationMeta {
   category: string;
   zone: 'wet_lab' | 'dry_lab' | 'automation' | 'unassigned';
   typical_sqft: number;
+  bsl_min?: string;
+  model3d?: string; // '3d_model' in the source knowledge base — DAMP Lab hasn't built these yet, currently 'pending' for every station
 }
 
 export interface OperationMeta {
   id: string;
   name: string;
+  protocol?: string; // full protocol name, distinct from the short display name (e.g. "Monarch Spin Plasmid Miniprep (NEB)" vs "Plasmid Miniprep")
   stations: string[];
   equipment: string[];
+  consumables?: string[];
+  reagents?: string[];
+  verified?: boolean; // false = not yet confirmed working by DAMP Lab. Currently only miniprep_automated.
   approx_cost_usd: number;
 }
 
@@ -23,27 +29,72 @@ export const ZONE_COLORS: Record<string, string> = {
 
 export const KB = {
   stations: {
-    DNA_RNA_Prep: { id: 'DNA_RNA_Prep', name: 'DNA/RNA Prep Station', category: 'molecular_biology', zone: 'wet_lab', typical_sqft: 40 },
-    MED_Prep: { id: 'MED_Prep', name: 'Media Prep Station', category: 'microbiology', zone: 'wet_lab', typical_sqft: 30 },
-    Microbial_Culture_PREP: { id: 'Microbial_Culture_PREP', name: 'Microbial Culture Prep Station', category: 'microbiology', zone: 'wet_lab', typical_sqft: 35 },
-    Analytical_Instrumentation: { id: 'Analytical_Instrumentation', name: 'Analytical Instrumentation Station', category: 'analytical', zone: 'dry_lab', typical_sqft: 50 },
-    GEL_Electrophoresis: { id: 'GEL_Electrophoresis', name: 'Gel Electrophoresis Station', category: 'molecular_biology', zone: 'wet_lab', typical_sqft: 25 },
-    GEL_Imaging: { id: 'GEL_Imaging', name: 'Gel Imaging Station', category: 'molecular_biology', zone: 'dry_lab', typical_sqft: 15 },
-    Dry_Chemical_PREP: { id: 'Dry_Chemical_PREP', name: 'Dry Chemical Prep Station', category: 'analytical', zone: 'wet_lab', typical_sqft: 20 },
-    Automation_Prep: { id: 'Automation_Prep', name: 'Automation / Robotics Station', category: 'automation', zone: 'automation', typical_sqft: 60 },
-    Spectroscopy: { id: 'Spectroscopy', name: 'Spectroscopy Station', category: 'analytical', zone: 'dry_lab', typical_sqft: 20 },
+    DNA_RNA_Prep: { id: 'DNA_RNA_Prep', name: 'DNA/RNA Prep Station', category: 'molecular_biology', zone: 'wet_lab', typical_sqft: 40, bsl_min: 'BSL-1', model3d: 'pending' },
+    MED_Prep: { id: 'MED_Prep', name: 'Media Prep Station', category: 'microbiology', zone: 'wet_lab', typical_sqft: 30, bsl_min: 'BSL-1', model3d: 'pending' },
+    Microbial_Culture_PREP: { id: 'Microbial_Culture_PREP', name: 'Microbial Culture Prep Station', category: 'microbiology', zone: 'wet_lab', typical_sqft: 35, bsl_min: 'BSL-1', model3d: 'pending' },
+    Analytical_Instrumentation: { id: 'Analytical_Instrumentation', name: 'Analytical Instrumentation Station', category: 'analytical', zone: 'dry_lab', typical_sqft: 50, bsl_min: 'BSL-1', model3d: 'pending' },
+    GEL_Electrophoresis: { id: 'GEL_Electrophoresis', name: 'Gel Electrophoresis Station', category: 'molecular_biology', zone: 'wet_lab', typical_sqft: 25, bsl_min: 'BSL-1', model3d: 'pending' },
+    GEL_Imaging: { id: 'GEL_Imaging', name: 'Gel Imaging Station', category: 'molecular_biology', zone: 'dry_lab', typical_sqft: 15, bsl_min: 'BSL-1', model3d: 'pending' },
+    Dry_Chemical_PREP: { id: 'Dry_Chemical_PREP', name: 'Dry Chemical Prep Station', category: 'analytical', zone: 'wet_lab', typical_sqft: 20, bsl_min: 'BSL-1', model3d: 'pending' },
+    Automation_Prep: { id: 'Automation_Prep', name: 'Automation / Robotics Station', category: 'automation', zone: 'automation', typical_sqft: 60, bsl_min: 'BSL-1', model3d: 'pending' },
+    Spectroscopy: { id: 'Spectroscopy', name: 'Spectroscopy Station', category: 'analytical', zone: 'dry_lab', typical_sqft: 20, bsl_min: 'BSL-1', model3d: 'pending' },
   } as Record<string, StationMeta>,
 
   operations: [
-    { id: 'glycerol_stocking', name: 'Glycerol Stocking', stations: ['DNA_RNA_Prep'], equipment: ['Cryotubes', 'Bunsen burner', 'Pipette / tips', 'Fridge'], approx_cost_usd: 800 },
-    { id: 'making_overnight_cultures', name: 'Making Overnight Cultures', stations: ['MED_Prep', 'Microbial_Culture_PREP'], equipment: ['Bunsen burner', 'Pipettes', 'Serological pipette', '250 mL Erlenmeyer flask (sterile)'], approx_cost_usd: 600 },
-    { id: 'nanodrop', name: 'Nanodrop - dsDNA Quantification', stations: ['Analytical_Instrumentation'], equipment: ['Pipette'], approx_cost_usd: 6000 },
-    { id: 'gel_electrophoresis', name: 'Gel Electrophoresis', stations: ['GEL_Imaging', 'GEL_Electrophoresis'], equipment: ['Gel tray', 'Gel casting tray', 'Gel running cassette', 'Power supply', 'Gel imager'], approx_cost_usd: 4500 },
-    { id: 'bca_assay_manual', name: 'BCA Assay (Manual)', stations: ['Dry_Chemical_PREP', 'Analytical_Instrumentation'], equipment: ['Synergy H1 Microplate Reader'], approx_cost_usd: 9000 },
-    { id: 'bca_assay_automated', name: 'BCA Assay (Automated)', stations: ['Automation_Prep', 'Analytical_Instrumentation'], equipment: ['Synergy H1 Microplate Reader', 'Opentrons FLEX'], approx_cost_usd: 24000 },
-    { id: 'miniprep', name: 'Plasmid Miniprep', stations: ['Analytical_Instrumentation', 'DNA_RNA_Prep'], equipment: ['Eppendorf tubes (1.5 mL)', 'Bunsen burner', 'Centrifuge', 'Plate reader'], approx_cost_usd: 2500 },
-    { id: 'send_to_sequencing', name: 'Send Sample to Sequencing', stations: ['DNA_RNA_Prep', 'Spectroscopy'], equipment: ['Pipettes', 'Vortexer', 'Benchtop centrifuge'], approx_cost_usd: 1500 },
-    { id: 'miniprep_automated', name: 'Plasmid Miniprep (Automated)', stations: ['Automation_Prep', 'DNA_RNA_Prep'], equipment: ['Opentrons FLEX or Hamilton', 'Eppendorf tubes (1.5 mL)', 'Centrifuge'], approx_cost_usd: 20000 },
+    {
+      id: 'glycerol_stocking', name: 'Glycerol Stocking', protocol: 'Glycerol Stocking',
+      stations: ['DNA_RNA_Prep'], equipment: ['Cryotubes', 'Bunsen burner', 'Pipette / tips', 'Fridge'],
+      consumables: ['Filtered pipette tips'], reagents: ['Overnight cultures', '40% glycerol'], approx_cost_usd: 800,
+    },
+    {
+      id: 'making_overnight_cultures', name: 'Making Overnight Cultures', protocol: 'Making Overnight Cultures',
+      stations: ['MED_Prep', 'Microbial_Culture_PREP'], equipment: ['Bunsen burner', 'Pipettes', 'Serological pipette', '250 mL Erlenmeyer flask (sterile)'],
+      consumables: ['15 mL snap-cap culture tubes', 'Sterile loops', 'Filtered pipette tips', 'Dry ice (if using glycerol stocks)'],
+      reagents: ['Appropriate antibiotic (ampicillin, kanamycin, etc.)', 'Appropriate liquid culture media (LB, M9, etc.)'], approx_cost_usd: 600,
+    },
+    {
+      id: 'nanodrop', name: 'Nanodrop - dsDNA Quantification', protocol: 'Nanodrop - dsDNA Quantification',
+      stations: ['Analytical_Instrumentation'], equipment: ['Pipette'],
+      consumables: ['Pipette tips', 'KimWipe'], reagents: ['DI water'], approx_cost_usd: 6000,
+    },
+    {
+      id: 'gel_electrophoresis', name: 'Gel Electrophoresis', protocol: 'Gel Electrophoresis',
+      stations: ['GEL_Imaging', 'GEL_Electrophoresis'],
+      equipment: ['250 mL Erlenmeyer flask', 'Gel tray', 'Gel casting tray', 'Gel running cassette', 'Wires (red and black)', 'Power supply', 'Gel imager', 'Microwave', 'Hot pads'],
+      consumables: ['Filtered pipette tips'],
+      reagents: ['SybrSafe', 'DNA ladder', 'DNA binding buffer', '10X TAE buffer', 'Agarose (solid)', 'DI water'], approx_cost_usd: 4500,
+    },
+    {
+      id: 'bca_assay_manual', name: 'BCA Assay (Manual)', protocol: 'Pierce BCA Protein Assay (ThermoFisher Scientific)',
+      stations: ['Dry_Chemical_PREP', 'Analytical_Instrumentation'], equipment: ['Synergy H1 Microplate Reader'],
+      consumables: ['96-well clear flat-bottomed plate', 'Semi-permeable 96-well plate seal'],
+      reagents: ['Pierce BCA Protein Assay Reagent A', 'Pierce BCA Protein Assay Reagent B', 'Pierce BSA Protein Standards (tubestrip)'], approx_cost_usd: 9000,
+    },
+    {
+      id: 'bca_assay_automated', name: 'BCA Assay (Automated)', protocol: 'Pierce BCA Protein Assay (Automated Version)',
+      stations: ['Automation_Prep', 'Analytical_Instrumentation'], equipment: ['Synergy H1 Microplate Reader', 'Opentrons FLEX'],
+      consumables: ['96-well clear flat-bottomed plate', 'Semi-permeable 96-well plate seal', 'Filtered pipette tips (50uL, 200uL, 1000uL)'],
+      reagents: ['Pierce BCA Protein Assay Reagent A', 'Pierce BCA Protein Assay Reagent B', 'Pierce BSA Protein Standards (tubestrip)'], approx_cost_usd: 24000,
+    },
+    {
+      id: 'miniprep', name: 'Plasmid Miniprep', protocol: 'Monarch Spin Plasmid Miniprep (NEB)',
+      stations: ['Analytical_Instrumentation', 'DNA_RNA_Prep'],
+      equipment: ['Eppendorf tubes (1.5 mL)', 'Bunsen burner', 'Pipette / tips', 'Centrifuge', 'Plate reader'],
+      consumables: ['Clear round-bottom 96-well plate', 'Bleach waste beaker', 'Ethanol waste beaker'],
+      reagents: ['Overnight cultures', 'Culture media (LB, M9, etc.)', 'Bleach (10%)', 'Nuclease-free water'], approx_cost_usd: 2500,
+    },
+    {
+      id: 'send_to_sequencing', name: 'Send Sample to Sequencing', protocol: 'Whole-Plasmid Sequencing Send-out (Plasmidsaurus)',
+      stations: ['DNA_RNA_Prep', 'Spectroscopy'], equipment: ['Pipettes', 'Vortexer', 'Benchtop centrifuge'],
+      consumables: ['Filtered pipette tips', 'Microcentrifuge strip-tubes', '50 mL conical tube', 'KimWipes', 'Small bag'],
+      reagents: ['Nuclease-free water'], approx_cost_usd: 1500,
+    },
+    {
+      id: 'miniprep_automated', name: 'Plasmid Miniprep (Automated)', protocol: 'Monarch Spin Plasmid Miniprep, Automated (pending DAMP Lab verification)',
+      stations: ['Automation_Prep', 'DNA_RNA_Prep'], equipment: ['Opentrons FLEX or Hamilton', 'Eppendorf tubes (1.5 mL)', 'Centrifuge'],
+      consumables: ['Clear round-bottom 96-well plate', 'Filtered pipette tips'],
+      reagents: ['Overnight cultures', 'Culture media (LB, M9, etc.)', 'Nuclease-free water'], verified: false, approx_cost_usd: 20000,
+    },
   ] as OperationMeta[],
 
   station_to_protocol_map: {
@@ -132,6 +183,7 @@ export function computeFloorPlan(
   width: number,
   height: number,
   extraOpIds?: string[],
+  stationOrder?: string[],
 ): FloorPlanResult {
   const protocols: { id?: string }[] = Array.isArray(reportData.protocols_json)
     ? (reportData.protocols_json as { id?: string }[])
@@ -140,13 +192,26 @@ export function computeFloorPlan(
   const posSqft = KB.station_sizing.position_sqft;
   const benchDepth = KB.station_sizing.bench_depth_ft || 2.5;
 
-  const stationBlocks = stations
+  let stationBlocks = stations
     .map((id) => {
       const meta = KB.stations[id] || ({} as StationMeta);
       const size = KB.station_sizing.positions_by_station[id] || Math.max(1, Math.ceil((meta.typical_sqft || 24) / posSqft));
       return { id, size, zone: meta.zone || 'unassigned', name: meta.name || id };
-    })
-    .sort((a, b) => b.size - a.size);
+    });
+
+  if (stationOrder && stationOrder.length) {
+    // Optimizer-supplied order (see lib/optimizer.ts) — anything not in the
+    // list (shouldn't normally happen) falls back to the end, biggest first.
+    const orderIndex = new Map(stationOrder.map((id, i) => [id, i]));
+    stationBlocks = stationBlocks.sort((a, b) => {
+      const ai = orderIndex.has(a.id) ? orderIndex.get(a.id)! : Infinity;
+      const bi = orderIndex.has(b.id) ? orderIndex.get(b.id)! : Infinity;
+      return ai !== bi ? ai - bi : b.size - a.size;
+    });
+  } else {
+    stationBlocks = stationBlocks.sort((a, b) => b.size - a.size);
+  }
+
   const neededTotal = stationBlocks.reduce((s, b) => s + b.size, 0);
 
   const positionWidthFt = posSqft / benchDepth;
