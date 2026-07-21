@@ -9,6 +9,9 @@ import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { ServicesPage } from './pages/ServicesPage';
+import { ProtocolsTestPage } from './pages/ProtocolsTestPage';
+import { InventoryPage } from './pages/InventoryPage';
+import { StationsPage } from './pages/StationsPage';
 
 export default function App() {
   return (
@@ -26,6 +29,9 @@ export default function App() {
         <Route path="/generating" element={<GeneratingPage />} />
         <Route path="/report" element={<ReportPage />} />
         <Route path="/services" element={<ServicesPage />} />
+        <Route path="/protocols-test" element={<ProtocolsTestPage />} />
+        <Route path="/inventory" element={<InventoryPage />} />
+        <Route path="/stations" element={<StationsPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

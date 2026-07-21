@@ -10,7 +10,7 @@ function fmt(n: number | undefined): string {
 }
 
 const DEFAULT_WEIGHTS: LayoutWeights = {
-  throughput: 0.5, walkingDistance: 0.5, flexibility: 0.5, contamination: 0.5, equipmentUtilization: 0.5,
+  throughput: 0.5, walkingDistance: 0.5, flexibility: 0.5, contamination: 0.5, equipmentUtilization: 0.5, congestion: 0.5,
 };
 const DEFAULT_DEMAND: DemandParams = { runsPerWeek: 0, batchSize: 0, seasonalVariability: 0 };
 
@@ -38,6 +38,7 @@ export function FloorPlan({ reportData }: { reportData: Record<string, unknown> 
       flexibility: w.flexibility ?? 0.5,
       contamination: w.contamination ?? 0.5,
       equipmentUtilization: w.equipment_utilization ?? 0.5,
+      congestion: w.congestion ?? 0.5
     };
   }, [reportData]);
   const demand: DemandParams = useMemo(() => {
