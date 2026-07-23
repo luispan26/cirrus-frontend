@@ -190,4 +190,36 @@ export const DELETE_INVENTORY_ITEM_MUTATION = gql`
   }
 `;
 
+export const STEP_EQUIPMENT_MAPPINGS_FOR_PROTOCOL_QUERY = gql`
+  query StepEquipmentMappingsForProtocol($protocolId: ID!) {
+    stepEquipmentMappingsForProtocol(protocolId: $protocolId) {
+      id
+      protocolId
+      stepId
+      stepNumber
+      equipmentId
+    }
+  }
+`;
 
+export const ASSIGN_EQUIPMENT_TO_STEP_MUTATION = gql`
+  mutation AssignEquipmentToStep($input: AssignEquipmentToStepInput!) {
+    assignEquipmentToStep(input: $input) {
+      id
+      stepId
+      equipmentId
+    }
+  }
+`;
+
+export const REMOVE_STEP_EQUIPMENT_MAPPING_MUTATION = gql`
+  mutation RemoveStepEquipmentMapping($id: ID!) {
+    removeStepEquipmentMapping(id: $id)
+  }
+`;
+
+export const CREATE_STATION_MUTATION = gql`
+  mutation CreateStation($input: CreateStationInput!) {
+    createStation(input: $input) { stationId }
+  }
+`;
