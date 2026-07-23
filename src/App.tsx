@@ -7,6 +7,7 @@ import { GeneratingPage } from './pages/GeneratingPage';
 import { ReportPage } from './pages/ReportPage';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { DesignHistoryPage } from './pages/DesignHistoryPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { ServicesPage } from './pages/ServicesPage';
 import { ProtocolsTestPage } from './pages/ProtocolsTestPage';
@@ -23,6 +24,7 @@ export default function App() {
 
       <Route element={<ProtectedRoute />}>
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/history" element={<DesignHistoryPage />} />
         <Route path="/scenario" element={<ScenarioPage />} />
         <Route path="/questions" element={<QuestionsPage />} />
         <Route path="/chat" element={<ChatPage />} />

@@ -91,6 +91,12 @@ export const MY_REPORTS_QUERY = gql`
   }
 `;
 
+export const DELETE_REPORT_MUTATION = gql`
+  mutation DeleteReport($id: ID!) {
+    deleteReport(id: $id)
+  }
+`;
+
 export const PROTOCOLS_IO_PROTOCOL_QUERY = gql`
   query ProtocolsIoProtocol($protocolId: String!) {
     protocolsIoProtocol(protocolId: $protocolId) {

@@ -5,10 +5,9 @@ import { SyncBadge } from '../components/SyncBadge';
 import { useIntakeSync } from '../hooks/useIntakeSync';
 import { QS, shouldSkip, stepIndex, buildFinalIntakeJson, type Answers } from '../lib/questions';
 
-const AUTOMATION_MODES = [
-  { v: 'manual', l: 'Manual', d: 'Standard bench workflow' },
-  { v: 'automated', l: 'Automated', d: 'Opentrons FLEX or Hamilton liquid handler' },
-  { v: 'both', l: 'Both', d: 'Run manual now, add automation later — or keep both in parallel' },
+const AUTOMATION_CHOICES = [
+  { v: 'yes', l: 'Yes, add an automation station', d: 'Opentrons FLEX or Hamilton liquid handler for eligible protocols' },
+  { v: 'no', l: 'No, keep everything manual', d: 'Standard bench workflow' },
 ];
 const STAFF_ROLES = [
   ['PI', 'PI / Lead scientist'],
@@ -148,35 +147,12 @@ function QuestionBody({
 }
 
 function AutomationBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
-  const ops = (answers.operations as string[]) || [];
-  const showBca = ops.includes('bca_assay');
-  const showMini = ops.includes('miniprep');
-  if (!showBca && !showMini) {
-    return <p style={{ fontSize: 13, color: 'var(--mid)' }}>No automation-eligible operations selected — this step will be skipped.</p>;
-  }
   return (
-    <>
-      {showBca && (
-        <>
-          <div className="field-label" style={{ marginBottom: 8 }}>BCA assay</div>
-          <div className="opt-grid" style={{ gridTemplateColumns: '1fr' }}>
-            {AUTOMATION_MODES.map((o) => (
-              <OptionCard key={o.v} option={o} selected={answers.bca_mode === o.v} onClick={() => setField('bca_mode', o.v)} />
-            ))}
-          </div>
-        </>
-      )}
-      {showMini && (
-        <>
-          <div className="field-label" style={{ margin: `${showBca ? '18px' : '0'} 0 8px` }}>Plasmid miniprep</div>
-          <div className="opt-grid" style={{ gridTemplateColumns: '1fr' }}>
-            {AUTOMATION_MODES.map((o) => (
-              <OptionCard key={o.v} option={o} selected={answers.miniprep_mode === o.v} onClick={() => setField('miniprep_mode', o.v)} />
-            ))}
-          </div>
-        </>
-      )}
-    </>
+    <div className="opt-grid" style={{ gridTemplateColumns: '1fr' }}>
+      {AUTOMATION_CHOICES.map((o) => (
+        <OptionCard key={o.v} option={o} selected={answers.wants_automation === o.v} onClick={() => setField('wants_automation', o.v)} />
+      ))}
+    </div>
   );
 }
 
@@ -261,25 +237,50 @@ function BudgetBody({ answers, setField }: { answers: Answers; setField: (k: str
 
 function StaffBody({ answers, setField, toggleMultiField }: { answers: Answers; setField: (k: string, v: unknown) => void; toggleMultiField: (k: string, v: string) => void }) {
   const sr = (answers.staff_roles as string[]) || [];
-  const count = parseInt((answers.staff_count as string) || '1', 10) || 1;
+  const counts = (answers.staff_counts as Record<string, number>) || {};
+
+  function toggleRole(role: string) {
+    toggleMultiField('staff_roles', role);
+    if (!sr.includes(role) && counts[role] === undefined) {
+      setField('staff_counts', { ...counts, [role]: 1 });
+    }
+  }
+
+  function setCount(role: string, next: number) {
+    setField('staff_counts', { ...counts, [role]: Math.max(1, next) });
+  }
+
   return (
     <>
-      <div className="field-wrap">
-        <label className="field-label">Number of workers</label>
-        <div className="stepper">
-          <button type="button" onClick={() => setField('staff_count', String(Math.max(1, count - 1)))}>−</button>
-          <span className="stepper-val">{count}</span>
-          <button type="button" onClick={() => setField('staff_count', String(count + 1))}>+</button>
-        </div>
-      </div>
       <div className="field-wrap">
         <label className="field-label">Roles (select all)</label>
         <div className="chips">
           {STAFF_ROLES.map(([v, l]) => (
-            <span key={v} className={`chip${sr.includes(v) ? ' sel' : ''}`} onClick={() => toggleMultiField('staff_roles', v)}>{l}</span>
+            <span key={v} className={`chip${sr.includes(v) ? ' sel' : ''}`} onClick={() => toggleRole(v)}>{l}</span>
           ))}
         </div>
       </div>
+      {sr.length > 0 && (
+        <div className="field-wrap">
+          <label className="field-label">How many of each?</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {sr.map((v) => {
+              const label = STAFF_ROLES.find(([rv]) => rv === v)?.[1] ?? v;
+              const count = counts[v] ?? 1;
+              return (
+                <div key={v} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--dark)' }}>{label}</span>
+                  <div className="stepper">
+                    <button type="button" onClick={() => setCount(v, count - 1)}>−</button>
+                    <span className="stepper-val" style={{ fontSize: 18, minWidth: 26 }}>{count}</span>
+                    <button type="button" onClick={() => setCount(v, count + 1)}>+</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </>
   );
 }

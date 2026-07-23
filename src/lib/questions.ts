@@ -42,7 +42,7 @@ export const QS: Question[] = [
       { v: 'other', l: 'Other' },
     ],
   },
-  { id: 'automation', n: 3, t: 'Manual or automated?', h: 'Automation adds throughput and reproducibility but needs more equipment budget ($50k–$150k)', type: 'automation' },
+  { id: 'automation', n: 3, t: 'Do you want an automation station in your lab?', h: 'Automation adds throughput and reproducibility but needs more equipment budget ($50k–$150k)', type: 'automation' },
   { id: 'space', n: 4, t: 'Tell us about your space', h: 'Used to generate your floor plan', type: 'space' },
   { id: 'budget', n: 5, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
   { id: 'staff', n: 6, t: 'Who will work in this lab?', h: 'Helps size workflows and staffing plan', type: 'staff' },
@@ -60,17 +60,13 @@ export const QS: Question[] = [
 ];
 
 export const INTAKE_FIELD_KEYS = [
-  'bsl', 'operations', 'bca_mode', 'miniprep_mode', 'width_ft', 'height_ft', 'ceiling_ft',
-  'rooms', 'renovation', 'budget_total', 'budget_scope', 'staff_count', 'staff_roles', 'business_model',
+  'bsl', 'operations', 'wants_automation', 'width_ft', 'height_ft', 'ceiling_ft',
+  'rooms', 'renovation', 'budget_total', 'budget_scope', 'staff_counts', 'staff_roles', 'business_model',
   'runs_per_week', 'batch_size', 'seasonal_variability',
   'priority_throughput', 'priority_walking_distance', 'priority_flexibility', 'priority_contamination', 'priority_equipment_utilization',
 ];
 
-export function shouldSkip(q: Question, answers: Answers): boolean {
-  if (q.id === 'automation') {
-    const ops = (answers.operations as string[]) || [];
-    return !(ops.includes('bca_assay') || ops.includes('miniprep'));
-  }
+export function shouldSkip(_q: Question, _answers: Answers): boolean {
   return false;
 }
 
@@ -84,15 +80,12 @@ export function resolveOperations(a: Answers): string[] {
   const rawOps = (a.operations as string[]) || [];
   const base = rawOps.filter((v) => v !== 'bca_assay' && v !== 'miniprep');
   const ops = [...base];
+  const automated = a.wants_automation === 'yes';
   if (rawOps.includes('bca_assay')) {
-    const mode = (a.bca_mode as string) || 'manual';
-    if (mode === 'manual' || mode === 'both') ops.push('bca_assay_manual');
-    if (mode === 'automated' || mode === 'both') ops.push('bca_assay_automated');
+    ops.push(automated ? 'bca_assay_automated' : 'bca_assay_manual');
   }
   if (rawOps.includes('miniprep')) {
-    const mode = (a.miniprep_mode as string) || 'manual';
-    if (mode === 'manual' || mode === 'both') ops.push('miniprep');
-    if (mode === 'automated' || mode === 'both') ops.push('miniprep_automated');
+    ops.push(automated ? 'miniprep_automated' : 'miniprep');
   }
   return ops;
 }
@@ -120,10 +113,10 @@ const DEFAULT_PRIORITY = 50; // midpoint of the 0-100 sliders
 
 export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
   const roles = (a.staff_roles as string[]) || [];
-  const count = parseInt((a.staff_count as string) || '1', 10) || 1;
+  const counts = (a.staff_counts as Record<string, number>) || {};
   const staff = roles.length
-    ? roles.map((r) => ({ role: r, count: Math.max(1, Math.round(count / roles.length)) }))
-    : [{ role: 'technician', count }];
+    ? roles.map((r) => ({ role: r, count: Math.max(1, counts[r] ?? 1) }))
+    : [{ role: 'technician', count: 1 }];
   const hasCon = a.budget_scope === 'equipment_and_construction';
   const width_ft = parseFloat((a.width_ft as string) || '0') || 0;
   const height_ft = parseFloat((a.height_ft as string) || '0') || 0;

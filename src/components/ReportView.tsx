@@ -13,9 +13,16 @@ function asArray<T = any>(v: unknown): T[] {
 function asObject(v: unknown): Record<string, any> {
   return v && typeof v === 'object' ? (v as Record<string, any>) : {};
 }
+const ROLE_LABELS: Record<string, string> = {
+  PI: 'PI / Lead scientist',
+  lab_manager: 'Lab manager',
+  technician: 'Technician',
+  student_intern: 'Student / intern',
+};
 
 export function ReportView({ data }: { data: Record<string, any> }) {
   const essential = asArray(data.essential_equipment);
+  const staff = asArray(data.staff);
   const recommended = asArray(data.recommended_equipment);
   const consumables = asArray(data.consumables_monthly);
   const protocols = asArray(data.protocols_json);
@@ -120,6 +127,33 @@ export function ReportView({ data }: { data: Record<string, any> }) {
       )}
 
       <FloorPlan reportData={data} />
+
+      {staff.length > 0 && (
+        <>
+          <div className="sec-head">Staffing &amp; wages<div className="sec-line" /></div>
+          <div style={{ borderRadius: 10, overflow: 'hidden', marginBottom: 4 }}>
+            <table className="rep-table">
+              <thead><tr><th>Role</th><th>Headcount</th><th>Est. annual wage</th><th>Annual cost</th></tr></thead>
+              <tbody>
+                {staff.map((s, i) => (
+                  <tr className={i % 2 === 1 ? 'odd' : ''} key={s.role + i}>
+                    <td style={{ fontWeight: 600 }}>{ROLE_LABELS[s.role] || cap(s.role)}</td>
+                    <td>{s.count}</td>
+                    <td style={{ color: '#5B5770' }}>{fmt(s.annual_wage_usd)}/yr</td>
+                    <td style={{ fontWeight: 600, color: '#358C86' }}>{fmt(s.annual_cost_usd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {(data.total_annual_staff_cost || data.total_monthly_staff_cost) && (
+            <p style={{ fontSize: 12, color: 'var(--mid)', margin: '8px 0 4px' }}>
+              Total wage bill: <strong style={{ color: 'var(--dark)' }}>{fmt(data.total_annual_staff_cost)}/yr</strong>
+              {' '}({fmt(data.total_monthly_staff_cost)}/mo) — auto-estimated from headcount and role, not user-entered.
+            </p>
+          )}
+        </>
+      )}
 
       {consumables.length > 0 && (
         <>

@@ -25,6 +25,8 @@ html,body{overflow:hidden;font-family:'Manrope',system-ui,-apple-system,sans-ser
 .btn-dark:hover{background:var(--teal)}
 .btn-out{padding:10px 28px;background:var(--white);border:2px solid var(--br);border-radius:8px;font-size:13px;font-weight:600;color:var(--dark);cursor:pointer;transition:all .15s;font-family:inherit}
 .btn-out:hover{border-color:var(--dark)}
+.icon-btn-danger{width:34px;height:34px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--white);border:2px solid var(--br);border-radius:8px;color:var(--mid);cursor:pointer;transition:all .15s}
+.icon-btn-danger:hover{border-color:var(--pk);color:var(--pk);background:var(--pkl)}
 
 /* SCENARIO */
 .scenario{background:var(--light)}
