@@ -29,7 +29,7 @@ interface StepEquipmentMapping { id: string; protocolId: string; stepId: string;
 function durationLabel(seconds?: number): string | null {
   if (seconds === undefined || seconds === null) return null;
   const minutes = Math.round(seconds / 60);
-  return minutes < 60 ? '${minutes} min' : '${(minutes / 60).toFixed(1)} hr';
+  return minutes < 60 ? `${minutes} min` : `${(minutes / 60).toFixed(1)} hr`;
 }
 
 function errMsg(e: unknown): string {
@@ -162,11 +162,11 @@ export function ProtocolsTestPage() {
                 {section.steps.map((step) => {
                   const dur = durationLabel(step.durationSeconds);
                   const extras: string[] = [];
-                  if (step.files.length) extras.push('${step.files.length} file(s)');
-                  if (step.notes.length) extras.push('${step.notes.length} note(s)');
-                  if (step.images.length) extras.push('${step.images.length} image(s)');
-                  if (step.tables.length) extras.push('${step.tables.length} table(s)');
-                  if (step.wellPlates.length) extras.push('${step.wellPlates.length} well plate(s)');
+                  if (step.files.length) extras.push(`${step.files.length} file(s)`);
+                  if (step.notes.length) extras.push(`${step.notes.length} note(s)`);
+                  if (step.images.length) extras.push(`${step.images.length} image(s)`);
+                  if (step.tables.length) extras.push(`${step.tables.length} table(s)`);
+                  if (step.wellPlates.length) extras.push(`${step.wellPlates.length} well plate(s)`);
                   const stepMappings = mappings.filter((m) => m.stepId === step.id);
 
                   return (
