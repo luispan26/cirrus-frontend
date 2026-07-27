@@ -15,10 +15,29 @@ const STAFF_ROLES = [
   ['technician', 'Technician'],
   ['student_intern', 'Student / intern'],
 ];
+const FIXED_FEATURES = [['doors', 'Doors / egress'], ['windows', 'Windows'], ['columns', 'Columns'], ['sinks_drains', 'Sinks / drains'], ['electrical', 'Fixed electrical'], ['hvac', 'HVAC supply / returns'], ['gas_vacuum', 'Gas / vacuum'], ['fixed_equipment', 'Immovable equipment']];
+const HARD_CONSTRAINTS = [['clean_dirty_separation', 'Separate clean and dirty workflows'], ['pre_post_pcr', 'Separate pre-PCR and post-PCR'], ['clear_egress', 'Preserve clear egress routes'], ['accessible_routes', 'Maintain accessible routes'], ['dedicated_hood', 'Dedicated hood workspace'], ['one_way_flow', 'One-way sample or material flow']];
+
+function validateQuestion(id: string, answers: Answers) {
+  if (id === 'bsl' && !answers.bsl) return 'Select a biosafety level or “Not sure yet.”';
+  if (id === 'operations' && ((answers.operations as string[]) || []).length === 0) return 'Select at least one operation.';
+  if (id === 'automation' && !answers.wants_automation) return 'Choose whether automation should be included.';
+  if (id === 'space') {
+    if (!(Number(answers.width_ft) > 0) || !(Number(answers.height_ft) > 0) || !(Number(answers.ceiling_ft) > 0)) return 'Enter positive room width, depth, and ceiling height.';
+    if (!answers.rooms || answers.renovation === undefined) return 'Choose the room layout and whether this is a renovation.';
+  }
+  if (id === 'budget' && !(Number(answers.budget_total) > 0)) return 'Enter a positive budget amount.';
+  if (id === 'staff' && ((answers.staff_roles as string[]) || []).length === 0) return 'Select at least one staff role.';
+  if (id === 'schedule' && (!(Number(answers.hours_per_shift || 8) > 0) || !(Number(answers.shifts_per_day || 1) > 0))) return 'Enter a valid shift length and number of shifts.';
+  if (id === 'demand' && (!(Number(answers.runs_per_week) > 0) || !(Number(answers.batch_size) > 0))) return 'Enter positive weekly runs and batch size.';
+  if (id === 'business_model' && !answers.business_model) return 'Select a business model.';
+  return '';
+}
 
 export function QuestionsPage() {
   const navigate = useNavigate();
   const [qi, setQi] = useState(0);
+  const [validationError, setValidationError] = useState('');
   const { answers, status, setField, toggleMultiField, completeIntake } = useIntakeSync(() => {
     navigate('/generating');
   });
@@ -36,6 +55,9 @@ export function QuestionsPage() {
   }
 
   async function nextQ() {
+  const error = validateQuestion(q.id, answers);
+  if (error) { setValidationError(error); return; }
+  setValidationError('');
   const ni = stepIndex(qi, 1, answers);
   if (ni < QS.length) {
     setQi(ni);
@@ -48,7 +70,7 @@ export function QuestionsPage() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !(e.target instanceof HTMLTextAreaElement)) {
         e.preventDefault();
         nextQ();
       } else if (e.key === 'Escape') {
@@ -74,7 +96,8 @@ export function QuestionsPage() {
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <div className="qm-counter">Question {posInApplicable} of {applicable.length}</div>
           <div className="q-body">
-            <QuestionBody q={q} answers={answers} setField={setField} toggleMultiField={toggleMultiField} onEnterNav={nextQ} />
+            <QuestionBody q={q} displayNumber={posInApplicable} answers={answers} setField={setField} toggleMultiField={toggleMultiField} onEnterNav={nextQ} />
+            {validationError && <p className="q-validation-error">{validationError}</p>}
           </div>
         </div>
       </div>
@@ -91,11 +114,13 @@ export function QuestionsPage() {
 
 function QuestionBody({
   q,
+  displayNumber,
   answers,
   setField,
   toggleMultiField,
 }: {
   q: (typeof QS)[number];
+  displayNumber: number;
   answers: Answers;
   setField: (k: string, v: unknown) => void;
   toggleMultiField: (k: string, v: string) => void;
@@ -103,7 +128,7 @@ function QuestionBody({
 }) {
   return (
     <div className="q-card">
-      <div className="q-num">Q{q.n}</div>
+      <div className="q-num">Q{displayNumber}</div>
       <div className="q-title">{q.t}</div>
       <div className="q-hint">{q.h}</div>
 
@@ -137,10 +162,15 @@ function QuestionBody({
         <AutomationBody answers={answers} setField={setField} />
       )}
 
+      {q.type === 'protocols' && <ProtocolsBody answers={answers} setField={setField} />}
       {q.type === 'space' && <SpaceBody answers={answers} setField={setField} />}
+      {q.type === 'facilities' && <FacilitiesBody answers={answers} setField={setField} toggleMultiField={toggleMultiField} />}
       {q.type === 'budget' && <BudgetBody answers={answers} setField={setField} />}
       {q.type === 'staff' && <StaffBody answers={answers} setField={setField} toggleMultiField={toggleMultiField} />}
+      {q.type === 'schedule' && <ScheduleBody answers={answers} setField={setField} />}
       {q.type === 'demand' && <DemandBody answers={answers} setField={setField} />}
+      {q.type === 'constraints' && <ConstraintsBody answers={answers} toggleMultiField={toggleMultiField} />}
+      {q.type === 'growth' && <GrowthBody answers={answers} setField={setField} />}
       {q.type === 'priorities' && <PrioritiesBody answers={answers} setField={setField} />}
     </div>
   );
@@ -346,4 +376,26 @@ function PrioritiesBody({ answers, setField }: { answers: Answers; setField: (k:
       })}
     </div>
   );
+}
+
+function ScheduleBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+  return <><div className="grid-2"><div className="field-wrap"><label className="field-label">Hours per shift</label><input className="field-input" type="number" min="1" max="24" defaultValue={String(answers.hours_per_shift || '8')} onBlur={(e) => setField('hours_per_shift', e.target.value)} /></div><div className="field-wrap"><label className="field-label">Shifts per day</label><input className="field-input" type="number" min="1" max="3" defaultValue={String(answers.shifts_per_day || '1')} onBlur={(e) => setField('shifts_per_day', e.target.value)} /></div></div><div className="field-wrap"><label className="field-label">Peak protocols running simultaneously</label><input className="field-input" style={{ width: 180 }} type="number" min="1" defaultValue={String(answers.simultaneous_protocols || '1')} onBlur={(e) => setField('simultaneous_protocols', e.target.value)} /></div><div className="field-wrap"><label className="field-label">Can equipment run unattended?</label><div className="chips"><span className={`chip${answers.unattended_runs === 'true' ? ' sel' : ''}`} onClick={() => setField('unattended_runs', 'true')}>Yes, where permitted</span><span className={`chip${answers.unattended_runs === 'false' ? ' sel' : ''}`} onClick={() => setField('unattended_runs', 'false')}>No</span></div></div></>;
+}
+
+function ConstraintsBody({ answers, toggleMultiField }: { answers: Answers; toggleMultiField: (k: string, v: string) => void }) {
+  const selected = (answers.hard_constraints as string[]) || [];
+  return <><p className="q-inline-help">Selected items will invalidate a generated layout when they are not satisfied.</p><div className="opt-grid">{HARD_CONSTRAINTS.map(([value, label]) => <OptionCard key={value} option={{ v: value, l: label }} selected={selected.includes(value)} onClick={() => toggleMultiField('hard_constraints', value)} />)}</div></>;
+}
+
+function GrowthBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+  return <><div className="grid-2"><div className="field-wrap"><label className="field-label">Planning horizon (years)</label><input className="field-input" type="number" min="1" defaultValue={String(answers.growth_horizon_years || '3')} onBlur={(e) => setField('growth_horizon_years', e.target.value)} /></div><div className="field-wrap"><label className="field-label">Expected workload growth (%)</label><input className="field-input" type="number" min="0" defaultValue={String(answers.workload_growth_pct || '0')} onBlur={(e) => setField('workload_growth_pct', e.target.value)} /></div><div className="field-wrap"><label className="field-label">Additional staff expected</label><input className="field-input" type="number" min="0" defaultValue={String(answers.headcount_growth || '0')} onBlur={(e) => setField('headcount_growth', e.target.value)} /></div><div className="field-wrap"><label className="field-label">Reserve unused capacity (%)</label><input className="field-input" type="number" min="0" max="80" defaultValue={String(answers.spare_capacity_pct || '20')} onBlur={(e) => setField('spare_capacity_pct', e.target.value)} /></div></div></>;
+}
+
+function ProtocolsBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+  return <div className="field-wrap"><label className="field-label">Protocols.io IDs (optional)</label><textarea className="field-input q-textarea" placeholder={'Enter one ID per line, or separate IDs with commas'} defaultValue={String(answers.protocol_ids || '')} onBlur={(e) => setField('protocol_ids', e.target.value)} /><p className="q-inline-help">These protocols will later be resolved through the local protocol library and reviewed for step-to-equipment mappings.</p></div>;
+}
+
+function FacilitiesBody({ answers, setField, toggleMultiField }: { answers: Answers; setField: (k: string, v: unknown) => void; toggleMultiField: (k: string, v: string) => void }) {
+  const selected = (answers.fixed_features as string[]) || [];
+  return <><div className="field-wrap"><label className="field-label">Fixed features (select all)</label><div className="chips">{FIXED_FEATURES.map(([value, label]) => <span key={value} className={`chip${selected.includes(value) ? ' sel' : ''}`} onClick={() => toggleMultiField('fixed_features', value)}>{label}</span>)}</div></div><div className="field-wrap"><label className="field-label">Are exact utility and obstruction locations known?</label><div className="chips"><span className={`chip${answers.utility_locations_known === 'true' ? ' sel' : ''}`} onClick={() => setField('utility_locations_known', 'true')}>Yes, they can be mapped</span><span className={`chip${answers.utility_locations_known === 'false' ? ' sel' : ''}`} onClick={() => setField('utility_locations_known', 'false')}>Not yet</span></div></div><div className="field-wrap"><label className="field-label">Room notes</label><textarea className="field-input q-textarea" placeholder="Describe immovable objects, unusual geometry, utility limitations, or known HVAC constraints" defaultValue={String(answers.room_notes || '')} onBlur={(e) => setField('room_notes', e.target.value)} /></div></>;
 }

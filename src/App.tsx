@@ -13,6 +13,8 @@ import { ServicesPage } from './pages/ServicesPage';
 import { ProtocolsTestPage } from './pages/ProtocolsTestPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { StationsPage } from './pages/StationsPage';
+import { LayoutSandboxPage } from './pages/LayoutSandboxPage';
+import { LayoutCandidatesPage } from './pages/LayoutCandidatesPage';
 
 export default function App() {
   return (
@@ -34,6 +36,8 @@ export default function App() {
         <Route path="/protocols-test" element={<ProtocolsTestPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/stations" element={<StationsPage />} />
+        <Route path="/layout-sandbox" element={<LayoutSandboxPage />} />
+        <Route path="/layout-candidates" element={<LayoutCandidatesPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

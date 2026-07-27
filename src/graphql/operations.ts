@@ -166,6 +166,60 @@ export const CREATE_EQUIPMENT_MUTATION = gql`
   }
 `;
 
+export const SAVE_LAB_LAYOUT_MUTATION = gql`
+  mutation SaveLabLayout($input: SaveLabLayoutInput!) {
+    saveLabLayout(input: $input) { layoutId revision name schemaVersion }
+  }
+`;
+
+export const LAB_LAYOUT_QUERY = gql`
+  query LabLayout($layoutId: ID!) {
+    labLayout(layoutId: $layoutId) { layoutId revision name schemaVersion data createdAt }
+  }
+`;
+
+export const LAB_LAYOUTS_QUERY = gql`
+  query LabLayouts {
+    labLayouts { layoutId revision name schemaVersion createdAt }
+  }
+`;
+
+export const LAYOUT_SANDBOX_CAPABILITIES_QUERY = gql`
+  query LayoutSandboxCapabilities {
+    layoutSandboxCapabilities
+  }
+`;
+
+export const START_LAYOUT_OPTIMIZATION_MUTATION = gql`
+  mutation StartLayoutOptimization($input: StartLayoutOptimizationInput!) {
+    startLayoutOptimization(input: $input) {
+      runId status algorithmVersion baselineRevision result
+    }
+  }
+`;
+
+export const REVIEW_LAYOUT_CANDIDATE_MUTATION = gql`
+  mutation ReviewLayoutCandidate($input: ReviewLayoutCandidateInput!) {
+    reviewLayoutCandidate(input: $input) { seedId sourceRunId candidateIndex status strategy }
+  }
+`;
+
+export const APPROVED_LAYOUT_SEEDS_QUERY = gql`
+  query ApprovedLayoutSeeds {
+    layoutSeeds(status: "approved") { seedId sourceRunId candidateIndex status strategy layout metrics createdAt updatedAt }
+  }
+`;
+
+export const APPROVE_SANDBOX_LAYOUT_MUTATION = gql`
+  mutation ApproveSandboxLayout($layout: JSON!) {
+    approveSandboxLayout(layout: $layout) { seedId sourceRunId candidateIndex status strategy }
+  }
+`;
+
+export const DELETE_LAYOUT_SEED_MUTATION = gql`
+  mutation DeleteLayoutSeed($seedId: ID!) { deleteLayoutSeed(seedId: $seedId) }
+`;
+
 export const CREATE_INVENTORY_ITEM_MUTATION = gql`
   mutation CreateInventoryItem($input: CreateInventoryItemInput!) {
     createInventoryItem(input: $input) { inventoryId }

@@ -29,12 +29,13 @@ interface StepEquipmentMapping { id: string; protocolId: string; stepId: string;
 function durationLabel(seconds?: number): string | null {
   if (seconds === undefined || seconds === null) return null;
   const minutes = Math.round(seconds / 60);
-  return minutes < 60 ? `${minutes} min` : `${(minutes / 60).toFixed(1)} hr`;
+  return minutes < 60 ? '${minutes} min' : '${(minutes / 60).toFixed(1)} hr';
 }
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : 'Something went wrong.';
 }
+
 
 export function ProtocolsTestPage() {
   const navigate = useNavigate();

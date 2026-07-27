@@ -9,7 +9,6 @@ export function ReportPage() {
 
   const [pastedData, setPastedData] = useState<Record<string, any> | null>(null);
   const [wantsPasteBox, setWantsPasteBox] = useState(false);
-  const [pasteKey, setPasteKey] = useState(0);
   const [pasteValue, setPasteValue] = useState('');
   const [pasteError, setPasteError] = useState('');
 
@@ -25,12 +24,6 @@ export function ReportPage() {
 
   const data = wantsPasteBox ? pastedData : (pastedData ?? routedData);
 
-  // Forces ReportView — and everything inside it, including FloorPlan's
-  // internal optimizer state — to fully remount whenever the underlying
-  // report actually changes (a fresh navigation, or pasting new JSON),
-  // instead of silently re-rendering with stale computed layout state.
-  const viewKey = pastedData ? `pasted-${pasteKey}` : location.key;
-
   function handleParse() {
     const raw = pasteValue.trim();
     setPasteError('');
@@ -40,7 +33,6 @@ export function ReportPage() {
     }
     try {
       setPastedData(JSON.parse(raw));
-      setPasteKey((k) => k + 1);
       setWantsPasteBox(false);
     } catch {
       setPasteError('Invalid JSON — check for missing brackets or quotes.');
@@ -79,7 +71,7 @@ export function ReportPage() {
           </div>
         ) : (
           <>
-            <ReportView key={viewKey} data={data} />
+            <ReportView data={data} />
             <div style={{ textAlign: 'center' }}>
               <button className="btn-out" onClick={() => { setWantsPasteBox(true); setPastedData(null); setPasteValue(''); }}>Paste a different report</button>
             </div>

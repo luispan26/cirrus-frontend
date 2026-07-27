@@ -1,5 +1,5 @@
 import { DonutChart } from './DonutChart';
-import { FloorPlan } from './FloorPlan';
+import { GeneratedLayoutPlan } from './GeneratedLayoutPlan';
 
 function cap(s: string): string {
   return s ? s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '';
@@ -126,7 +126,7 @@ export function ReportView({ data }: { data: Record<string, any> }) {
         </>
       )}
 
-      <FloorPlan reportData={data} />
+      <GeneratedLayoutPlan value={data.generated_layout} />
 
       {staff.length > 0 && (
         <>

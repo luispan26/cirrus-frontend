@@ -29,7 +29,19 @@ export function DashboardPage() {
             <button className="btn-teal" onClick={() => navigate('/scenario')}>+ New lab design</button>
           </div>
 
-          <div className="sc-grid" style={{ maxWidth: 'none', gridTemplateColumns: 'repeat(2, 1fr)' }}>
+          <div className="sc-grid" style={{ maxWidth: 'none', gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            <div className="sc-card active" onClick={() => navigate('/layout-candidates')}>
+              <div className="sc-tag">SEED LAB</div>
+              <div className="sc-title">Review candidates</div>
+              <div className="sc-desc">Generate a batch from a saved layout, compare scores, and choose promising seeds.</div>
+              <div className="sc-cta">Open →</div>
+            </div>
+            <div className="sc-card active" onClick={() => navigate('/layout-sandbox')}>
+              <div className="sc-tag">SANDBOX</div>
+              <div className="sc-title">Build a layout</div>
+              <div className="sc-desc">Place bench stations manually, then assign equipment to each station.</div>
+              <div className="sc-cta">Open →</div>
+            </div>
             <div className="sc-card active" onClick={() => navigate('/services')}>
               <div className="sc-tag">SERVICES</div>
               <div className="sc-title">Run a protocol</div>

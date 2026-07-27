@@ -1,4 +1,4 @@
-export type QuestionType = 'radio' | 'multi' | 'automation' | 'space' | 'budget' | 'staff' | 'demand' | 'priorities';
+export type QuestionType = 'radio' | 'multi' | 'automation' | 'protocols' | 'space' | 'facilities' | 'budget' | 'staff' | 'schedule' | 'demand' | 'constraints' | 'growth' | 'priorities';
 
 export interface QuestionOption {
   v: string;
@@ -42,11 +42,16 @@ export const QS: Question[] = [
       { v: 'other', l: 'Other' },
     ],
   },
+  { id: 'protocols', n: 3, t: 'Which published protocols should this lab support?', h: 'Enter Protocols.io IDs now; equipment and timing mappings can be reviewed later', type: 'protocols' },
   { id: 'automation', n: 3, t: 'Do you want an automation station in your lab?', h: 'Automation adds throughput and reproducibility but needs more equipment budget ($50k–$150k)', type: 'automation' },
   { id: 'space', n: 4, t: 'Tell us about your space', h: 'Used to generate your floor plan', type: 'space' },
+  { id: 'facilities', n: 5, t: 'What is fixed in the room?', h: 'Utilities and obstructions constrain safe equipment placement', type: 'facilities' },
   { id: 'budget', n: 5, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
   { id: 'staff', n: 6, t: 'Who will work in this lab?', h: 'Helps size workflows and staffing plan', type: 'staff' },
+  { id: 'schedule', n: 7, t: 'When will the lab operate?', h: 'Used to simulate concurrent protocol execution', type: 'schedule' },
   { id: 'demand', n: 7, t: 'How busy will this lab be?', h: 'Used to auto-optimize your floor plan layout', type: 'demand' },
+  { id: 'constraints', n: 8, t: 'What must the layout preserve?', h: 'Hard requirements are never traded away by the optimizer', type: 'constraints' },
+  { id: 'growth', n: 9, t: 'How should the lab grow?', h: 'Reserve capacity for future staff, equipment, and workload', type: 'growth' },
   { id: 'priorities', n: 8, t: 'What matters most in your layout?', h: 'Drag the sliders — your floor plan is optimized around these automatically', type: 'priorities' },
   {
     id: 'business_model', n: 9, t: 'What is your business model?', h: 'Determines revenue projections in your report', type: 'radio',
@@ -63,6 +68,9 @@ export const INTAKE_FIELD_KEYS = [
   'bsl', 'operations', 'wants_automation', 'width_ft', 'height_ft', 'ceiling_ft',
   'rooms', 'renovation', 'budget_total', 'budget_scope', 'staff_counts', 'staff_roles', 'business_model',
   'runs_per_week', 'batch_size', 'seasonal_variability',
+  'protocol_ids', 'hours_per_shift', 'shifts_per_day', 'simultaneous_protocols', 'unattended_runs',
+  'fixed_features', 'utility_locations_known', 'room_notes', 'hard_constraints',
+  'growth_horizon_years', 'workload_growth_pct', 'headcount_growth', 'spare_capacity_pct',
   'priority_throughput', 'priority_walking_distance', 'priority_flexibility', 'priority_contamination', 'priority_equipment_utilization',
 ];
 
@@ -100,6 +108,11 @@ export interface FinalIntakeJson {
   staff: { role: string; count: number }[];
   business_model: string;
   demand: { runs_per_week: number; batch_size: number; seasonal_variability: number };
+  protocols: { protocol_ids: string[] };
+  schedule: { hours_per_shift: number; shifts_per_day: number; simultaneous_protocols: number; unattended_runs: boolean };
+  facilities: { fixed_features: string[]; utility_locations_known: boolean; room_notes: string };
+  hard_constraints: string[];
+  growth: { horizon_years: number; workload_growth_pct: number; headcount_growth: number; spare_capacity_pct: number };
   layout_weights: {
     throughput: number;
     walking_distance: number;
@@ -146,6 +159,25 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
       runs_per_week: parseFloat((a.runs_per_week as string) || '0') || 0,
       batch_size: parseFloat((a.batch_size as string) || '0') || 0,
       seasonal_variability: parseFloat((a.seasonal_variability as string) || '0') || 0,
+    },
+    protocols: { protocol_ids: String(a.protocol_ids || '').split(/[\s,]+/).map((id) => id.trim()).filter(Boolean) },
+    schedule: {
+      hours_per_shift: parseFloat((a.hours_per_shift as string) || '8') || 8,
+      shifts_per_day: parseInt((a.shifts_per_day as string) || '1', 10) || 1,
+      simultaneous_protocols: parseInt((a.simultaneous_protocols as string) || '1', 10) || 1,
+      unattended_runs: a.unattended_runs === 'true',
+    },
+    facilities: {
+      fixed_features: (a.fixed_features as string[]) || [],
+      utility_locations_known: a.utility_locations_known === 'true',
+      room_notes: String(a.room_notes || ''),
+    },
+    hard_constraints: (a.hard_constraints as string[]) || [],
+    growth: {
+      horizon_years: parseInt((a.growth_horizon_years as string) || '3', 10) || 3,
+      workload_growth_pct: parseFloat((a.workload_growth_pct as string) || '0') || 0,
+      headcount_growth: parseInt((a.headcount_growth as string) || '0', 10) || 0,
+      spare_capacity_pct: parseFloat((a.spare_capacity_pct as string) || '20') || 20,
     },
     layout_weights: {
       throughput: priority('priority_throughput'),
