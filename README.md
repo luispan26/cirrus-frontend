@@ -66,3 +66,7 @@ Still true from the vanilla-JS version, unchanged:
 Login and a dashboard were explicitly deferred to be tackled after this
 conversion — see the open questions from that conversation (auth strategy,
 what the dashboard shows) before starting those.
+
+# Cirrus Rules
+
+- do not change configuration files
