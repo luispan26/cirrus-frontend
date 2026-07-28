@@ -5,6 +5,19 @@ export interface QuestionOption {
   l: string;
   d?: string;
   risk?: string;
+  disabled?: boolean;
+}
+
+export type WallSide = 'N' | 'S' | 'E' | 'W';
+export interface DoorAnswer {
+  wall: WallSide;
+  offsetFt: number;
+  widthFt: number;
+}
+export interface UtilityAnswer {
+  type: string;
+  wall: WallSide;
+  offsetFt: number;
 }
 
 export interface Question {
@@ -23,23 +36,23 @@ export const QS: Question[] = [
     id: 'bsl', n: 1, t: 'What biosafety level does your lab require?', h: 'Choose the level that fits your work', type: 'radio',
     opts: [
       { v: 'BSL-1', l: 'BSL-1', d: 'Minimal risk — teaching labs, non-pathogenic organisms', risk: '#4FB3AC' },
-      { v: 'BSL-2', l: 'BSL-2', d: 'Moderate risk — most research, human cell lines', risk: '#C99A4A' },
-      { v: 'BSL-3', l: 'BSL-3', d: 'Serious pathogens — TB, anthrax, West Nile', risk: '#D1316B' },
-      { v: 'BSL-4', l: 'BSL-4', d: 'Highest risk — Ebola, hemorrhagic fevers', risk: '#7A1740' },
-      { v: 'not_sure', l: 'Not sure yet', d: "Describe your work and we'll recommend a level", risk: '#E3E0E6' },
+      { v: 'BSL-2', l: 'BSL-2', d: 'Moderate risk — most research, human cell lines. Not yet supported by the layout generator.', risk: '#C99A4A', disabled: true },
+      { v: 'BSL-3', l: 'BSL-3', d: 'Serious pathogens — TB, anthrax, West Nile. Not yet supported by the layout generator.', risk: '#D1316B', disabled: true },
+      { v: 'BSL-4', l: 'BSL-4', d: 'Highest risk — Ebola, hemorrhagic fevers. Not yet supported by the layout generator.', risk: '#7A1740', disabled: true },
+      { v: 'not_sure', l: 'Not sure yet', d: 'Not yet supported by the layout generator — choose BSL-1 if that fits, otherwise check back soon.', risk: '#E3E0E6', disabled: true },
     ],
   },
   {
     id: 'operations', n: 2, t: 'Which operations will your lab run?', h: 'Select all that apply', type: 'multi',
     opts: [
-      { v: 'glycerol_stocking', l: 'Glycerol stocking' },
-      { v: 'making_overnight_cultures', l: 'Making overnight cultures' },
-      { v: 'nanodrop', l: 'Nanodrop (dsDNA quantification)' },
-      { v: 'gel_electrophoresis', l: 'Gel electrophoresis' },
+      { v: 'glycerol_stocking', l: 'Glycerol stocking', d: 'Not yet supported by the layout generator.', disabled: true },
+      { v: 'making_overnight_cultures', l: 'Making overnight cultures', d: 'Not yet supported by the layout generator.', disabled: true },
+      { v: 'nanodrop', l: 'Nanodrop (dsDNA quantification)', d: 'Not yet supported by the layout generator.', disabled: true },
+      { v: 'gel_electrophoresis', l: 'Gel electrophoresis', d: 'Not yet supported by the layout generator.', disabled: true },
       { v: 'bca_assay', l: 'BCA assay' },
       { v: 'miniprep', l: 'Plasmid miniprep (Monarch NEB kit)' },
-      { v: 'send_to_sequencing', l: 'Send to sequencing (Plasmidsaurus)' },
-      { v: 'other', l: 'Other' },
+      { v: 'send_to_sequencing', l: 'Send to sequencing (Plasmidsaurus)', d: 'Not yet supported by the layout generator.', disabled: true },
+      { v: 'other', l: 'Other', d: 'Not yet supported by the layout generator.', disabled: true },
     ],
   },
   { id: 'protocols', n: 3, t: 'Which published protocols should this lab support?', h: 'Enter Protocols.io IDs now; equipment and timing mappings can be reviewed later', type: 'protocols' },
@@ -69,7 +82,7 @@ export const INTAKE_FIELD_KEYS = [
   'rooms', 'renovation', 'budget_total', 'budget_scope', 'staff_counts', 'staff_roles', 'business_model',
   'runs_per_week', 'batch_size', 'seasonal_variability',
   'protocol_ids', 'hours_per_shift', 'shifts_per_day', 'simultaneous_protocols', 'unattended_runs',
-  'fixed_features', 'utility_locations_known', 'room_notes', 'hard_constraints',
+  'fixed_features', 'utility_locations_known', 'room_notes', 'hard_constraints', 'door', 'utilities',
   'growth_horizon_years', 'workload_growth_pct', 'headcount_growth', 'spare_capacity_pct',
   'priority_throughput', 'priority_walking_distance', 'priority_flexibility', 'priority_contamination', 'priority_equipment_utilization',
 ];
@@ -111,6 +124,8 @@ export interface FinalIntakeJson {
   protocols: { protocol_ids: string[] };
   schedule: { hours_per_shift: number; shifts_per_day: number; simultaneous_protocols: number; unattended_runs: boolean };
   facilities: { fixed_features: string[]; utility_locations_known: boolean; room_notes: string };
+  door: DoorAnswer | null;
+  utilities: UtilityAnswer[];
   hard_constraints: string[];
   growth: { horizon_years: number; workload_growth_pct: number; headcount_growth: number; spare_capacity_pct: number };
   layout_weights: {
@@ -172,6 +187,8 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
       utility_locations_known: a.utility_locations_known === 'true',
       room_notes: String(a.room_notes || ''),
     },
+    door: (a.door as DoorAnswer) || null,
+    utilities: (a.utilities as UtilityAnswer[]) || [],
     hard_constraints: (a.hard_constraints as string[]) || [],
     growth: {
       horizon_years: parseInt((a.growth_horizon_years as string) || '3', 10) || 3,

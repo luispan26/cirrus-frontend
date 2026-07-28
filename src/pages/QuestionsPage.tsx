@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { OptionCard } from '../components/OptionCard';
 import { SyncBadge } from '../components/SyncBadge';
 import { useIntakeSync } from '../hooks/useIntakeSync';
-import { QS, shouldSkip, stepIndex, buildFinalIntakeJson, type Answers } from '../lib/questions';
+import { QS, shouldSkip, stepIndex, buildFinalIntakeJson, type Answers, type DoorAnswer, type UtilityAnswer, type WallSide } from '../lib/questions';
 
 const AUTOMATION_CHOICES = [
   { v: 'yes', l: 'Yes, add an automation station', d: 'Opentrons FLEX or Hamilton liquid handler for eligible protocols' },
@@ -17,6 +17,8 @@ const STAFF_ROLES = [
 ];
 const FIXED_FEATURES = [['doors', 'Doors / egress'], ['windows', 'Windows'], ['columns', 'Columns'], ['sinks_drains', 'Sinks / drains'], ['electrical', 'Fixed electrical'], ['hvac', 'HVAC supply / returns'], ['gas_vacuum', 'Gas / vacuum'], ['fixed_equipment', 'Immovable equipment']];
 const HARD_CONSTRAINTS = [['clean_dirty_separation', 'Separate clean and dirty workflows'], ['pre_post_pcr', 'Separate pre-PCR and post-PCR'], ['clear_egress', 'Preserve clear egress routes'], ['accessible_routes', 'Maintain accessible routes'], ['dedicated_hood', 'Dedicated hood workspace'], ['one_way_flow', 'One-way sample or material flow']];
+const WALL_OPTIONS: [WallSide, string][] = [['N', 'North'], ['S', 'South'], ['E', 'East'], ['W', 'West']];
+const UTILITY_TYPES = [['water', 'Water'], ['electrical', 'Electrical'], ['gas', 'Gas'], ['vacuum', 'Vacuum']];
 
 function validateQuestion(id: string, answers: Answers) {
   if (id === 'bsl' && !answers.bsl) return 'Select a biosafety level or “Not sure yet.”';
@@ -25,6 +27,10 @@ function validateQuestion(id: string, answers: Answers) {
   if (id === 'space') {
     if (!(Number(answers.width_ft) > 0) || !(Number(answers.height_ft) > 0) || !(Number(answers.ceiling_ft) > 0)) return 'Enter positive room width, depth, and ceiling height.';
     if (!answers.rooms || answers.renovation === undefined) return 'Choose the room layout and whether this is a renovation.';
+  }
+  if (id === 'facilities') {
+    const door = answers.door as DoorAnswer | undefined;
+    if (!door || !door.wall || !(Number(door.offsetFt) >= 0)) return 'Specify where the main door is located.';
   }
   if (id === 'budget' && !(Number(answers.budget_total) > 0)) return 'Enter a positive budget amount.';
   if (id === 'staff' && ((answers.staff_roles as string[]) || []).length === 0) return 'Select at least one staff role.';
@@ -397,5 +403,98 @@ function ProtocolsBody({ answers, setField }: { answers: Answers; setField: (k: 
 
 function FacilitiesBody({ answers, setField, toggleMultiField }: { answers: Answers; setField: (k: string, v: unknown) => void; toggleMultiField: (k: string, v: string) => void }) {
   const selected = (answers.fixed_features as string[]) || [];
-  return <><div className="field-wrap"><label className="field-label">Fixed features (select all)</label><div className="chips">{FIXED_FEATURES.map(([value, label]) => <span key={value} className={`chip${selected.includes(value) ? ' sel' : ''}`} onClick={() => toggleMultiField('fixed_features', value)}>{label}</span>)}</div></div><div className="field-wrap"><label className="field-label">Are exact utility and obstruction locations known?</label><div className="chips"><span className={`chip${answers.utility_locations_known === 'true' ? ' sel' : ''}`} onClick={() => setField('utility_locations_known', 'true')}>Yes, they can be mapped</span><span className={`chip${answers.utility_locations_known === 'false' ? ' sel' : ''}`} onClick={() => setField('utility_locations_known', 'false')}>Not yet</span></div></div><div className="field-wrap"><label className="field-label">Room notes</label><textarea className="field-input q-textarea" placeholder="Describe immovable objects, unusual geometry, utility limitations, or known HVAC constraints" defaultValue={String(answers.room_notes || '')} onBlur={(e) => setField('room_notes', e.target.value)} /></div></>;
+  const door: DoorAnswer = (answers.door as DoorAnswer) || { wall: 'S', offsetFt: 0, widthFt: 3 };
+  const utilitiesKnown = answers.utility_locations_known === 'true';
+  const utilities = (answers.utilities as UtilityAnswer[]) || [];
+  const [draftType, setDraftType] = useState(UTILITY_TYPES[0][0]);
+  const [draftWall, setDraftWall] = useState<WallSide>('S');
+  const [draftOffset, setDraftOffset] = useState('');
+
+  function patchDoor(patch: Partial<DoorAnswer>) {
+    setField('door', { ...door, ...patch });
+  }
+
+  function addUtility() {
+    const offsetFt = parseFloat(draftOffset);
+    if (!Number.isFinite(offsetFt) || offsetFt < 0) return;
+    setField('utilities', [...utilities, { type: draftType, wall: draftWall, offsetFt }]);
+    setDraftOffset('');
+  }
+
+  function removeUtility(index: number) {
+    setField('utilities', utilities.filter((_, i) => i !== index));
+  }
+
+  return (
+    <>
+      <div className="field-wrap">
+        <label className="field-label">Fixed features (select all)</label>
+        <div className="chips">{FIXED_FEATURES.map(([value, label]) => <span key={value} className={`chip${selected.includes(value) ? ' sel' : ''}`} onClick={() => toggleMultiField('fixed_features', value)}>{label}</span>)}</div>
+      </div>
+
+      <div className="field-wrap">
+        <label className="field-label">Where is the main door / exit?</label>
+        <div className="chips">
+          {WALL_OPTIONS.map(([v, l]) => (
+            <span key={v} className={`chip${door.wall === v ? ' sel' : ''}`} onClick={() => patchDoor({ wall: v })}>{l} wall</span>
+          ))}
+        </div>
+        <div className="grid-2" style={{ marginTop: 8 }}>
+          <div className="field-wrap">
+            <label className="field-label">Offset along that wall</label>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <input className="field-input" type="number" min="0" placeholder="e.g. 10" defaultValue={door.offsetFt || ''} onBlur={(e) => patchDoor({ offsetFt: parseFloat(e.target.value) || 0 })} />
+              <span className="field-unit">ft</span>
+            </div>
+          </div>
+          <div className="field-wrap">
+            <label className="field-label">Door width</label>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <input className="field-input" type="number" min="1" placeholder="3" defaultValue={door.widthFt || 3} onBlur={(e) => patchDoor({ widthFt: parseFloat(e.target.value) || 3 })} />
+              <span className="field-unit">ft</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="field-wrap">
+        <label className="field-label">Are exact utility and obstruction locations known?</label>
+        <div className="chips">
+          <span className={`chip${answers.utility_locations_known === 'true' ? ' sel' : ''}`} onClick={() => setField('utility_locations_known', 'true')}>Yes, they can be mapped</span>
+          <span className={`chip${answers.utility_locations_known === 'false' ? ' sel' : ''}`} onClick={() => setField('utility_locations_known', 'false')}>Not yet</span>
+        </div>
+      </div>
+
+      {utilitiesKnown && (
+        <div className="field-wrap">
+          <label className="field-label">Utility connections (water, gas, electrical, vacuum)</label>
+          {utilities.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+              {utilities.map((u, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 13 }}>{UTILITY_TYPES.find(([v]) => v === u.type)?.[1] ?? u.type} — {WALL_OPTIONS.find(([v]) => v === u.wall)?.[1]} wall, {u.offsetFt} ft</span>
+                  <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => removeUtility(i)}>Remove</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <select className="field-input" style={{ width: 130 }} value={draftType} onChange={(e) => setDraftType(e.target.value)}>
+              {UTILITY_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+            <div className="chips">
+              {WALL_OPTIONS.map(([v, l]) => <span key={v} className={`chip${draftWall === v ? ' sel' : ''}`} onClick={() => setDraftWall(v)}>{l}</span>)}
+            </div>
+            <input className="field-input" style={{ width: 100 }} type="number" min="0" placeholder="offset ft" value={draftOffset} onChange={(e) => setDraftOffset(e.target.value)} />
+            <button type="button" className="btn-teal" style={{ padding: '6px 14px' }} onClick={addUtility}>Add</button>
+          </div>
+        </div>
+      )}
+
+      <div className="field-wrap">
+        <label className="field-label">Room notes</label>
+        <textarea className="field-input q-textarea" placeholder="Describe immovable objects, unusual geometry, utility limitations, or known HVAC constraints" defaultValue={String(answers.room_notes || '')} onBlur={(e) => setField('room_notes', e.target.value)} />
+      </div>
+    </>
+  );
 }
