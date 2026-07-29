@@ -2,10 +2,18 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { deriveCirculationSpace, fixtureFootprint, parseSandboxLayout } from '../lib/layout-sandbox';
 
+type DecisionReport = {
+  requiredProgram: Array<{ stationId: string; stationName: string; requiredUnits: number; weeklyHoursNeeded: number }>;
+  topologyProduced: { wallBenchPositions: number; doubleIslandPairs: number; singleIslandBenchPositions: number; totalBenchPositions: number };
+  structuralChecksPassed: string[];
+  notYetImplemented: string[];
+};
+
 type GeneratedLayout = {
   layoutId?: string;
   revision?: number;
   warnings?: string[];
+  decisionReport?: DecisionReport;
   data?: unknown;
 };
 
@@ -38,7 +46,7 @@ export function GeneratedLayoutPlan({ value }: { value: unknown }) {
           <div>
             <div className="generated-layout-title">{layout.name}</div>
             <div className="generated-layout-meta">
-              {layout.room.widthFt} × {layout.room.heightFt} ft · {layout.fixtures.length} workstations · Draft revision {generated.revision ?? 1}
+              {layout.room.widthFt} × {layout.room.heightFt} ft · {layout.fixtures.length} bench positions · Draft revision {generated.revision ?? 1}
             </div>
           </div>
           {generated.layoutId && <button className="btn-teal" onClick={() => navigate(`/layout-sandbox?layoutId=${encodeURIComponent(generated.layoutId!)}`)}>Open in sandbox</button>}
@@ -65,7 +73,51 @@ export function GeneratedLayoutPlan({ value }: { value: unknown }) {
         </div>
         {(generated.warnings?.length ?? 0) > 0 && <div className="generated-layout-warnings"><strong>Draft notes</strong>{generated.warnings!.map((warning) => <div key={warning}>{warning}</div>)}</div>}
         <p className="generated-layout-caption">This draft was generated from the questionnaire and MongoDB catalog. Open it in the sandbox to review clearances, utilities, routes, and make adjustments.</p>
+        {generated.decisionReport && <DecisionReportSection report={generated.decisionReport} />}
       </section>
     </>
+  );
+}
+
+// Reports only what the generator actually computed and actually checked —
+// no fabricated pass/fail counts, no claim of having compared topologies
+// that were never generated. "Not yet implemented" is listed explicitly
+// rather than silently omitted, so it's clear what this draft has NOT
+// verified, not just what it has.
+function DecisionReportSection({ report }: { report: DecisionReport }) {
+  const { requiredProgram, topologyProduced, structuralChecksPassed, notYetImplemented } = report;
+  return (
+    <div className="generated-layout-decision">
+      <div>
+        <h4>Required program</h4>
+        {requiredProgram.length ? (
+          <ul>
+            {requiredProgram.map((entry) => (
+              <li key={entry.stationId}>
+                {entry.requiredUnits} parallel {entry.stationName} position{entry.requiredUnits === 1 ? '' : 's'}
+                {entry.weeklyHoursNeeded > 0 ? ` (${entry.weeklyHoursNeeded}h/week demand)` : ''}
+              </li>
+            ))}
+          </ul>
+        ) : <ul><li>No station demand computed for this draft.</li></ul>}
+      </div>
+      <div>
+        <h4>Topology produced</h4>
+        <ul>
+          <li>{topologyProduced.wallBenchPositions} perimeter (wall) bench position{topologyProduced.wallBenchPositions === 1 ? '' : 's'}</li>
+          <li>{topologyProduced.doubleIslandPairs} double-sided island pair{topologyProduced.doubleIslandPairs === 1 ? '' : 's'}</li>
+          <li>{topologyProduced.singleIslandBenchPositions} single-sided island position{topologyProduced.singleIslandBenchPositions === 1 ? '' : 's'}</li>
+          <li>{topologyProduced.totalBenchPositions} total bench positions</li>
+        </ul>
+      </div>
+      <div>
+        <h4>Structural checks passed</h4>
+        <ul>{structuralChecksPassed.map((check) => <li key={check}>{check}</li>)}</ul>
+      </div>
+      <div className="decision-notyet">
+        <h4>Not yet implemented (not evaluated for this draft)</h4>
+        <ul>{notYetImplemented.map((item) => <li key={item}>{item}</li>)}</ul>
+      </div>
+    </div>
   );
 }

@@ -277,6 +277,11 @@ html,body{overflow:hidden;font-family:'Manrope',system-ui,-apple-system,sans-ser
 .generated-layout-warnings { background: #fff7e8; color: #765821; border-radius: 7px; padding: 10px 12px; margin-top: 12px; font-size: 11px; }
 .generated-layout-warnings div { margin-top: 4px; }
 .generated-layout-caption { color: var(--mid); font-size: 11px; line-height: 1.5; margin: 12px 0 0; }
+.generated-layout-decision { margin-top: 16px; padding-top: 14px; border-top: 1px solid #e3e0e6; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+.generated-layout-decision h4 { color: var(--dark); font-size: 12px; font-weight: 700; margin: 0 0 6px; }
+.generated-layout-decision ul { margin: 0; padding-left: 16px; color: var(--mid); font-size: 11px; line-height: 1.6; }
+.generated-layout-decision .decision-notyet { grid-column: 1 / -1; background: #f8fafb; border: 1px dashed #cbc7d1; border-radius: 7px; padding: 10px 12px; }
+.generated-layout-decision .decision-notyet ul { color: var(--mid); }
 .ls-derived-circulation { fill: rgba(79, 179, 172, .14); stroke: rgba(79, 179, 172, .18); stroke-width: .04; pointer-events: none; }
 .ls-derived-note { align-self: center; color: var(--mid); font-size: 11px; font-weight: 600; padding: 0 4px; }
 @media (max-width: 640px) { .generated-layout-heading { align-items: flex-start; flex-direction: column; } }
