@@ -1,4 +1,4 @@
-export type QuestionType = 'radio' | 'multi' | 'automation' | 'protocols' | 'space' | 'facilities' | 'budget' | 'staff' | 'schedule' | 'demand' | 'constraints' | 'growth' | 'priorities';
+export type QuestionType = 'radio' | 'multi' | 'space' | 'budget' | 'inventory' | 'priority_tiers' | 'protocol_demand';
 
 export interface QuestionOption {
   v: string;
@@ -6,19 +6,26 @@ export interface QuestionOption {
   d?: string;
   risk?: string;
   disabled?: boolean;
+  // Populated at render time (not part of the static catalog below) when a
+  // live match is found in the Damp Lab protocols.io workspace — see
+  // matchDamplabProtocol in QuestionsPage.tsx.
+  link?: { label: string; href: string };
 }
 
-export type WallSide = 'N' | 'S' | 'E' | 'W';
-export interface DoorAnswer {
-  wall: WallSide;
-  offsetFt: number;
-  widthFt: number;
-}
-export interface UtilityAnswer {
-  type: string;
-  wall: WallSide;
-  offsetFt: number;
-}
+// Keywords used to match a static catalog entry to a live Damp Lab
+// protocols.io protocol by title (case-insensitive substring). Kept here
+// rather than hardcoded protocol IDs so a Damp Lab protocol getting
+// retitled/re-versioned doesn't silently break the link — matching stays
+// live against whatever the workspace currently has.
+export const DAMPLAB_MATCH_KEYWORDS: Record<string, string[]> = {
+  glycerol_stocking: ['glycerol'],
+  making_overnight_cultures: ['overnight'],
+  nanodrop: ['nanodrop'],
+  gel_electrophoresis: ['electrophoresis'],
+  bca_assay: ['bca'],
+  miniprep: ['miniprep'],
+  send_to_sequencing: ['sequencing', 'plasmidsaurus'],
+};
 
 export interface Question {
   id: string;
@@ -31,63 +38,84 @@ export interface Question {
 
 export type Answers = Record<string, unknown>;
 
+// The full intake flow, in order: equipment_status -> existing_equipment ->
+// space -> operations (protocol selection) -> protocol_demand (expected
+// weekly runs per protocol) -> protocol_priorities (tiered prioritization)
+// -> budget. Each answer reframes how the next is interpreted
+// (equipment_status changes what "space" and "budget" mean; existing_equipment
+// is asked immediately after it, while "what do you already have" is still
+// the frame, rather than later once the conversation has moved on to
+// protocols; space is a hard physical ceiling checked against protocols
+// before budget is ever discussed; protocol selection, its demand, and its
+// prioritization are three separate steps — pick the list, size its
+// throughput, then decide how much each one matters — but all still precede
+// budget, since funding order depends on them). existing_equipment only
+// applies to the "already has equipment" branch (see shouldSkip).
+//
+// This is intentionally just the sizing-stage questions from the
+// generator's intake spec — no BSL/facilities/staff/schedule/constraints/
+// growth/layout-weights/business-model questions, and no "how long does
+// each run take" question (protocol_demand only asks frequency — duration
+// comes from each protocol's own Operation.estimatedTimeHours metadata, see
+// capacity-planner.ts's estimatedTimeHoursFor). BSL is fixed to 'BSL-1' in
+// buildFinalIntakeJson (the only value the layout generator has ever
+// supported — every other option was already disabled in the old BSL
+// question), and everything else is simply not collected; the backend
+// treats all of it as optional and defaults safely when absent (see
+// feasibility.service.ts / report-generator.service.ts / capacity-planner.ts).
+//
+// See FEASIBILITY_GATE_IDS below for exactly which steps trigger a
+// cross-field feasibility check against everything answered so far.
+export const OPERATION_OPTS: QuestionOption[] = [
+  { v: 'glycerol_stocking', l: 'Glycerol stocking' },
+  { v: 'making_overnight_cultures', l: 'Making overnight cultures' },
+  { v: 'nanodrop', l: 'Nanodrop (dsDNA quantification)' },
+  { v: 'gel_electrophoresis', l: 'Gel electrophoresis' },
+  { v: 'bca_assay', l: 'BCA assay' },
+  { v: 'miniprep', l: 'Plasmid miniprep (Monarch NEB kit)' },
+  { v: 'send_to_sequencing', l: 'Send to sequencing (Plasmidsaurus)' },
+  // Free-text/undefined protocol — there's no real definition behind it for
+  // the generator to plan a room against, unlike every option above (which
+  // now all map to a real seeded Operation; see SUPPORTED_OPERATION_IDS in
+  // the backend's intake-payload.type.ts).
+  { v: 'other', l: 'Other', d: 'Not supported by the layout generator — no protocol definition to size a room against.', disabled: true },
+];
+
 export const QS: Question[] = [
   {
-    id: 'bsl', n: 1, t: 'What biosafety level does your lab require?', h: 'Choose the level that fits your work', type: 'radio',
+    id: 'equipment_status', n: 1, t: 'Does your space already have equipment?', h: 'Changes what "space" and "budget" mean in the questions that follow', type: 'radio',
     opts: [
-      { v: 'BSL-1', l: 'BSL-1', d: 'Minimal risk — teaching labs, non-pathogenic organisms', risk: '#4FB3AC' },
-      { v: 'BSL-2', l: 'BSL-2', d: 'Moderate risk — most research, human cell lines. Not yet supported by the layout generator.', risk: '#C99A4A', disabled: true },
-      { v: 'BSL-3', l: 'BSL-3', d: 'Serious pathogens — TB, anthrax, West Nile. Not yet supported by the layout generator.', risk: '#D1316B', disabled: true },
-      { v: 'BSL-4', l: 'BSL-4', d: 'Highest risk — Ebola, hemorrhagic fevers. Not yet supported by the layout generator.', risk: '#7A1740', disabled: true },
-      { v: 'not_sure', l: 'Not sure yet', d: 'Not yet supported by the layout generator — choose BSL-1 if that fits, otherwise check back soon.', risk: '#E3E0E6', disabled: true },
+      { v: 'has_equipment', l: 'I have a space with existing equipment', d: 'Adding protocols or scaling up what you already run. Space means available/underutilized footprint; budget means incremental spend on top of what you already have.' },
+      { v: 'no_equipment', l: 'I have a space, no equipment yet', d: 'Full build-out from scratch. Space means total footprint; budget means the full build budget.' },
     ],
   },
-  {
-    id: 'operations', n: 2, t: 'Which operations will your lab run?', h: 'Select all that apply', type: 'multi',
-    opts: [
-      { v: 'glycerol_stocking', l: 'Glycerol stocking', d: 'Not yet supported by the layout generator.', disabled: true },
-      { v: 'making_overnight_cultures', l: 'Making overnight cultures', d: 'Not yet supported by the layout generator.', disabled: true },
-      { v: 'nanodrop', l: 'Nanodrop (dsDNA quantification)', d: 'Not yet supported by the layout generator.', disabled: true },
-      { v: 'gel_electrophoresis', l: 'Gel electrophoresis', d: 'Not yet supported by the layout generator.', disabled: true },
-      { v: 'bca_assay', l: 'BCA assay' },
-      { v: 'miniprep', l: 'Plasmid miniprep (Monarch NEB kit)' },
-      { v: 'send_to_sequencing', l: 'Send to sequencing (Plasmidsaurus)', d: 'Not yet supported by the layout generator.', disabled: true },
-      { v: 'other', l: 'Other', d: 'Not yet supported by the layout generator.', disabled: true },
-    ],
-  },
-  { id: 'protocols', n: 3, t: 'Which published protocols should this lab support?', h: 'Enter Protocols.io IDs now; equipment and timing mappings can be reviewed later', type: 'protocols' },
-  { id: 'automation', n: 3, t: 'Do you want an automation station in your lab?', h: 'Automation adds throughput and reproducibility but needs more equipment budget ($50k–$150k)', type: 'automation' },
-  { id: 'space', n: 4, t: 'Tell us about your space', h: 'Used to generate your floor plan', type: 'space' },
-  { id: 'facilities', n: 5, t: 'What is fixed in the room?', h: 'Utilities and obstructions constrain safe equipment placement', type: 'facilities' },
-  { id: 'budget', n: 5, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
-  { id: 'staff', n: 6, t: 'Who will work in this lab?', h: 'Helps size workflows and staffing plan', type: 'staff' },
-  { id: 'schedule', n: 7, t: 'When will the lab operate?', h: 'Used to simulate concurrent protocol execution', type: 'schedule' },
-  { id: 'demand', n: 7, t: 'How busy will this lab be?', h: 'Used to auto-optimize your floor plan layout', type: 'demand' },
-  { id: 'constraints', n: 8, t: 'What must the layout preserve?', h: 'Hard requirements are never traded away by the optimizer', type: 'constraints' },
-  { id: 'growth', n: 9, t: 'How should the lab grow?', h: 'Reserve capacity for future staff, equipment, and workload', type: 'growth' },
-  { id: 'priorities', n: 8, t: 'What matters most in your layout?', h: 'Drag the sliders — your floor plan is optimized around these automatically', type: 'priorities' },
-  {
-    id: 'business_model', n: 9, t: 'What is your business model?', h: 'Determines revenue projections in your report', type: 'radio',
-    opts: [
-      { v: 'internal_only', l: 'Internal research only', d: 'Lab serves only our team, no external clients' },
-      { v: 'fee_for_service', l: 'Fee-for-service', d: 'Offer services and equipment to outside clients' },
-      { v: 'hybrid', l: 'Hybrid', d: 'Mostly internal with some external services' },
-      { v: 'marketplace', l: 'Join Cirrus network', d: 'List on the shared cloud lab marketplace' },
-    ],
-  },
+  { id: 'existing_equipment', n: 2, t: 'What equipment do you already have?', h: 'Pulled from your equipment inventory — only the gap between this and what your protocols need gets sized', type: 'inventory' },
+  { id: 'space', n: 3, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
+  { id: 'operations', n: 4, t: 'Which protocols does this lab need to run?', h: 'Select from the supported protocol library', type: 'multi', opts: OPERATION_OPTS },
+  { id: 'protocol_demand', n: 5, t: 'How often will you run each protocol?', h: 'Weekly run volume — used to size bench count, not just equipment. Run duration is pulled from the protocol itself.', type: 'protocol_demand' },
+  { id: 'protocol_priorities', n: 6, t: 'How should these protocols be prioritized?', h: 'Optional — sort them into funding tiers if some matter more than others', type: 'priority_tiers' },
+  { id: 'budget', n: 7, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
 ];
+
+// Steps where advancing past them triggers a feasibilityCheck GraphQL call
+// against everything answered so far (see QuestionsPage.tsx's nextQ) —
+// 'protocol_demand' re-checks room-vs-required-benches now that demand-driven
+// bench replication is known (see capacity-planner.ts); 'protocol_priorities'
+// is the last of the protocol-related steps, so it fires once operations are
+// final; 'budget' re-checks with desired/max now known.
+export const FEASIBILITY_GATE_IDS = ['protocol_demand', 'protocol_priorities', 'budget'];
 
 export const INTAKE_FIELD_KEYS = [
-  'bsl', 'operations', 'wants_automation', 'width_ft', 'height_ft', 'ceiling_ft',
-  'rooms', 'renovation', 'budget_total', 'budget_scope', 'staff_counts', 'staff_roles', 'business_model',
-  'runs_per_week', 'batch_size', 'seasonal_variability',
-  'protocol_ids', 'hours_per_shift', 'shifts_per_day', 'simultaneous_protocols', 'unattended_runs',
-  'fixed_features', 'utility_locations_known', 'room_notes', 'hard_constraints', 'door', 'utilities',
-  'growth_horizon_years', 'workload_growth_pct', 'headcount_growth', 'spare_capacity_pct',
-  'priority_throughput', 'priority_walking_distance', 'priority_flexibility', 'priority_contamination', 'priority_equipment_utilization',
+  'equipment_status', 'existing_equipment_meta',
+  'space_method', 'width_ft', 'height_ft', 'space_floorplan_filename',
+  'operations', 'protocol_runs_per_week', 'wants_protocol_priorities', 'protocol_tiers', 'protocol_tier_order',
+  'budget_desired', 'budget_max', 'budget_scope',
 ];
 
-export function shouldSkip(_q: Question, _answers: Answers): boolean {
+// existing_equipment only makes sense once the client has told us they
+// already have equipment (Case 1) — otherwise there's nothing to inventory.
+export function shouldSkip(q: Question, answers: Answers): boolean {
+  if (q.id === 'existing_equipment') return answers.equipment_status !== 'has_equipment';
   return false;
 }
 
@@ -97,111 +125,128 @@ export function stepIndex(from: number, dir: 1 | -1, answers: Answers): number {
   return i;
 }
 
+// 'bca_assay' isn't itself a layout-generator-supported operation ID (only
+// its manual/automated variants are) — it maps to the manual variant since
+// there's no automation question anymore to choose otherwise. 'miniprep'
+// is already a supported ID as-is and needs no mapping. Exported (not just
+// used inline by resolveOperations) because protocol_runs_per_week is also
+// keyed by the raw catalog id and needs the same mapping when it's folded
+// into FinalIntakeJson.demand.
+export function resolveOperationId(op: string): string {
+  return op === 'bca_assay' ? 'bca_assay_manual' : op;
+}
+
 export function resolveOperations(a: Answers): string[] {
   const rawOps = (a.operations as string[]) || [];
-  const base = rawOps.filter((v) => v !== 'bca_assay' && v !== 'miniprep');
-  const ops = [...base];
-  const automated = a.wants_automation === 'yes';
-  if (rawOps.includes('bca_assay')) {
-    ops.push(automated ? 'bca_assay_automated' : 'bca_assay_manual');
-  }
-  if (rawOps.includes('miniprep')) {
-    ops.push(automated ? 'miniprep_automated' : 'miniprep');
-  }
-  return ops;
+  return rawOps.map(resolveOperationId);
 }
 
 export interface FinalIntakeJson {
   scenario: string;
-  bsl: string | null;
+  equipment_status: string | null;
+  // Always 'BSL-1' — the only biosafety level the layout generator
+  // supports (see intake-validator.ts's assertSupportedBsl), and the only
+  // value the old BSL question ever let a client actually pick.
+  bsl: string;
   operations: string[];
-  space: { sqft: number; width_ft: number; height_ft: number; ceiling_ft: number; rooms: string; renovation: boolean };
-  budget: { total: number; scope: string };
+  existing_equipment: { equipment_id: string; name: string; count: number }[];
+  space: {
+    sqft: number; width_ft: number; height_ft: number; ceiling_ft: number; rooms: string; renovation: boolean;
+    // How the client defined their space — 'sandbox' means width_ft/height_ft
+    // came from a room actually built in the layout sandbox; 'upload' means
+    // they submitted a floor plan file we don't parse yet (see
+    // floorplan_filename) — width_ft/height_ft fall back to the generator's
+    // own defaults until that's wired in; null means neither step was
+    // completed.
+    method: 'sandbox' | 'upload' | null;
+    floorplan_filename: string | null;
+  };
+  budget: { desired: number; max: number; scope: string };
   allocation: { equipment: number; construction: number; staffing: number; consumables: number; contingency: number };
-  staff: { role: string; count: number }[];
-  business_model: string;
-  demand: { runs_per_week: number; batch_size: number; seasonal_variability: number };
-  protocols: { protocol_ids: string[] };
-  schedule: { hours_per_shift: number; shifts_per_day: number; simultaneous_protocols: number; unattended_runs: boolean };
-  facilities: { fixed_features: string[]; utility_locations_known: boolean; room_notes: string };
-  door: DoorAnswer | null;
-  utilities: UtilityAnswer[];
-  hard_constraints: string[];
-  growth: { horizon_years: number; workload_growth_pct: number; headcount_growth: number; spare_capacity_pct: number };
-  layout_weights: {
-    throughput: number;
-    walking_distance: number;
-    flexibility: number;
-    contamination: number;
-    equipment_utilization: number;
+  // Expected weekly run volume per protocol (keyed by resolved operation
+  // id) — feeds capacity-planning/capacity-planner.ts's demand-driven bench
+  // count sizing. Run duration is never asked here; it comes from each
+  // operation's own estimatedTimeHours metadata on the backend.
+  demand: { runs_per_week_by_operation: Record<string, number> };
+  protocols: {
+    operation_ids: string[];
+    prioritization: {
+      enabled: boolean;
+      // Tier membership per raw catalog id (must_have / important / nice_to_have).
+      tiers: Record<string, string>;
+      // Full funding-priority order: all must_haves (in chosen order), then
+      // important (in chosen order), then nice_to_have (in chosen order).
+      // Empty when prioritization isn't enabled — no ordering is implied.
+      order: string[];
+    };
   };
 }
 
-const DEFAULT_PRIORITY = 50; // midpoint of the 0-100 sliders
-
 export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
-  const roles = (a.staff_roles as string[]) || [];
-  const counts = (a.staff_counts as Record<string, number>) || {};
-  const staff = roles.length
-    ? roles.map((r) => ({ role: r, count: Math.max(1, counts[r] ?? 1) }))
-    : [{ role: 'technician', count: 1 }];
   const hasCon = a.budget_scope === 'equipment_and_construction';
   const width_ft = parseFloat((a.width_ft as string) || '0') || 0;
   const height_ft = parseFloat((a.height_ft as string) || '0') || 0;
 
-  const priority = (key: string) => {
-  const raw = a[key];
-  const parsed = typeof raw === 'string' ? parseInt(raw, 10) : NaN;
-  return (Number.isNaN(parsed) ? DEFAULT_PRIORITY : parsed) / 100;
-  };
+  const equipmentStatus = (a.equipment_status as string) || null;
+  const existingMeta = (a.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
+  const budgetDesired = parseInt((a.budget_desired as string) || '0', 10) || 0;
+  const budgetMax = parseInt((a.budget_max as string) || '0', 10) || 0;
+
+  // Must-have < important < nice-to-have — the funding order from the
+  // sizing spec (must-haves covered first from the desired budget,
+  // important protocols are the primary desired->max spillover candidates,
+  // nice-to-haves are cut first if there's still unmet need at max budget).
+  const TIER_RANK: Record<string, number> = { must_have: 0, important: 1, nice_to_have: 2 };
+  const prioritizationEnabled = a.wants_protocol_priorities === 'yes';
+  const protocolTiers = (a.protocol_tiers as Record<string, string>) || {};
+  const protocolTierOrder = (a.protocol_tier_order as Record<string, number>) || {};
+  const rawSelectedOps = (a.operations as string[]) || [];
+  const rawRunsPerWeek = (a.protocol_runs_per_week as Record<string, number>) || {};
+  const runsPerWeekByOperation: Record<string, number> = {};
+  for (const rawOpId of rawSelectedOps) {
+    runsPerWeekByOperation[resolveOperationId(rawOpId)] = rawRunsPerWeek[rawOpId] ?? 0;
+  }
+  const prioritizedOrder = prioritizationEnabled
+    ? [...rawSelectedOps].sort((x, y) => {
+        const rankX = TIER_RANK[protocolTiers[x] ?? 'important'] ?? 1;
+        const rankY = TIER_RANK[protocolTiers[y] ?? 'important'] ?? 1;
+        if (rankX !== rankY) return rankX - rankY;
+        return (protocolTierOrder[x] ?? 0) - (protocolTierOrder[y] ?? 0);
+      })
+    : [];
 
   return {
     scenario: 'lab_design',
-    bsl: (a.bsl as string) || null,
+    equipment_status: equipmentStatus,
+    bsl: 'BSL-1',
     operations: resolveOperations(a),
+    existing_equipment: equipmentStatus === 'has_equipment'
+      ? Object.entries(existingMeta).map(([equipment_id, meta]) => ({ equipment_id, name: meta.name, count: Math.max(1, meta.count ?? 1) }))
+      : [],
     space: {
       sqft: Math.round(width_ft * height_ft) || 0,
       width_ft, height_ft,
-      ceiling_ft: parseInt((a.ceiling_ft as string) || '0', 10) || 0,
-      rooms: (a.rooms as string) || 'single_open',
-      renovation: a.renovation === 'true',
+      // Neither the sandbox (no ceiling concept) nor the floor-plan-upload
+      // stub captures this — defaulted to a typical lab ceiling rather than
+      // asked as a third manual field.
+      ceiling_ft: 10,
+      rooms: 'single_open',
+      // Derived from equipment_status rather than asked a second time —
+      // "has existing equipment" implies building into existing space.
+      renovation: equipmentStatus === 'has_equipment',
+      method: (a.space_method as 'sandbox' | 'upload' | undefined) ?? null,
+      floorplan_filename: (a.space_floorplan_filename as string) || null,
     },
-    budget: { total: parseInt((a.budget_total as string) || '0', 10) || 0, scope: (a.budget_scope as string) || 'equipment_only' },
+    budget: { desired: budgetDesired, max: budgetMax || budgetDesired, scope: (a.budget_scope as string) || 'equipment_only' },
     allocation: { equipment: hasCon ? 0.5 : 0.7, construction: hasCon ? 0.25 : 0, staffing: 0.1, consumables: 0.1, contingency: 0.05 },
-    staff,
-    business_model: (a.business_model as string) || 'internal_only',
-    demand: {
-      runs_per_week: parseFloat((a.runs_per_week as string) || '0') || 0,
-      batch_size: parseFloat((a.batch_size as string) || '0') || 0,
-      seasonal_variability: parseFloat((a.seasonal_variability as string) || '0') || 0,
-    },
-    protocols: { protocol_ids: String(a.protocol_ids || '').split(/[\s,]+/).map((id) => id.trim()).filter(Boolean) },
-    schedule: {
-      hours_per_shift: parseFloat((a.hours_per_shift as string) || '8') || 8,
-      shifts_per_day: parseInt((a.shifts_per_day as string) || '1', 10) || 1,
-      simultaneous_protocols: parseInt((a.simultaneous_protocols as string) || '1', 10) || 1,
-      unattended_runs: a.unattended_runs === 'true',
-    },
-    facilities: {
-      fixed_features: (a.fixed_features as string[]) || [],
-      utility_locations_known: a.utility_locations_known === 'true',
-      room_notes: String(a.room_notes || ''),
-    },
-    door: (a.door as DoorAnswer) || null,
-    utilities: (a.utilities as UtilityAnswer[]) || [],
-    hard_constraints: (a.hard_constraints as string[]) || [],
-    growth: {
-      horizon_years: parseInt((a.growth_horizon_years as string) || '3', 10) || 3,
-      workload_growth_pct: parseFloat((a.workload_growth_pct as string) || '0') || 0,
-      headcount_growth: parseInt((a.headcount_growth as string) || '0', 10) || 0,
-      spare_capacity_pct: parseFloat((a.spare_capacity_pct as string) || '20') || 20,
-    },
-    layout_weights: {
-      throughput: priority('priority_throughput'),
-      walking_distance: priority('priority_walking_distance'),
-      flexibility: priority('priority_flexibility'),
-      contamination: priority('priority_contamination'),
-      equipment_utilization: priority('priority_equipment_utilization'),
+    demand: { runs_per_week_by_operation: runsPerWeekByOperation },
+    protocols: {
+      operation_ids: resolveOperations(a),
+      prioritization: {
+        enabled: prioritizationEnabled,
+        tiers: prioritizationEnabled ? protocolTiers : {},
+        order: prioritizedOrder,
+      },
     },
   };
 }

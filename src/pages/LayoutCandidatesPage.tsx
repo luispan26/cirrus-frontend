@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@apollo/client/react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { APPROVED_LAYOUT_SEEDS_QUERY, DELETE_LAYOUT_SEED_MUTATION, REVIEW_LAYOUT_CANDIDATE_MUTATION, START_LAYOUT_OPTIMIZATION_MUTATION } from '../graphql/operations';
 import { fixtureFootprint, parseSandboxLayout, type SandboxLayout } from '../lib/layout-sandbox';
 
@@ -9,7 +9,6 @@ type Candidate = { index: number; strategy: string; layout: SandboxLayout; metri
 type OptimizationResult = { selectedCandidate: number; candidates: Candidate[] };
 type OptimizationResponse = { startLayoutOptimization: { runId: string; result: OptimizationResult } };
 type ApprovedSeed = { seedId: string; strategy: string; layout: unknown; createdAt: string; metrics: Metrics };
-const SANDBOX_LAYOUT_KEY = 'cirrus.layout-sandbox.v2';
 
 function CandidatePreview({ layout }: { layout: SandboxLayout }) {
   return <svg className="lc-preview" viewBox={`0 0 ${layout.room.widthFt} ${layout.room.heightFt}`} preserveAspectRatio="xMidYMid meet" aria-label={`Preview of ${layout.name}`}>
@@ -24,10 +23,18 @@ function CandidatePreview({ layout }: { layout: SandboxLayout }) {
 
 export function LayoutCandidatesPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  // Handed in from the sandbox via router state (see sendToSeedGenerator in
+  // LayoutSandboxPage.tsx) — a one-shot hand-off, not a persisted document,
+  // so a direct/refreshed visit to this page has no source layout.
   const [sourceLayout] = useState<SandboxLayout | null>(() => {
-    try { return parseSandboxLayout(JSON.parse(localStorage.getItem(SANDBOX_LAYOUT_KEY) || 'null')); }
-    catch { return null; }
+    const state = location.state as { sourceLayout?: unknown } | null;
+    return state?.sourceLayout ? parseSandboxLayout(state.sourceLayout) : null;
   });
+  useEffect(() => {
+    if (location.state) navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [seed, setSeed] = useState(1);
   const [result, setResult] = useState<OptimizationResult | null>(null);
   const [runId, setRunId] = useState('');
@@ -90,8 +97,7 @@ export function LayoutCandidatesPage() {
   }
 
   function openCandidate(candidate: Candidate) {
-    localStorage.setItem('cirrus.layout-sandbox.v2', JSON.stringify({ ...candidate.layout, name: `${candidate.layout.name} — ${candidate.strategy}` }));
-    navigate('/layout-sandbox');
+    navigate('/layout-sandbox', { state: { loadLayout: { ...candidate.layout, name: `${candidate.layout.name} — ${candidate.strategy}` } } });
   }
 
   return <div className="screen lc-screen">

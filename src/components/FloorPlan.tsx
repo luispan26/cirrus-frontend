@@ -155,7 +155,7 @@ export function FloorPlan({ reportData }: { reportData: Record<string, unknown> 
           <span className="field-unit">ft</span>
           <button className="btn-out" onClick={regenerate}>Regenerate</button>
           {fp.overCapacity && (
-            <span style={{ color: '#D1316B', fontSize: 12 }}>
+            <span style={{ color: '#FF3FA4', fontSize: 12 }}>
               ⚠ Needs ~{fp.neededTotal} positions, space fits ~{fp.capacityPositions}
             </span>
           )}
@@ -163,7 +163,7 @@ export function FloorPlan({ reportData }: { reportData: Record<string, unknown> 
 
         <div className="fp-util">
           <div className="fp-util-bar">
-            <div className="fp-util-fill" style={{ width: `${pct}%`, background: pct < 80 ? '#4FB3AC' : '#D1316B' }} />
+            <div className="fp-util-fill" style={{ width: `${pct}%`, background: pct < 80 ? '#00D5D5' : '#FF3FA4' }} />
           </div>
           <span className="fp-util-label">
             Using ~{pct}% of available space ({fp.neededTotal}/{fp.capacityPositions} positions)
@@ -194,10 +194,10 @@ export function FloorPlan({ reportData }: { reportData: Record<string, unknown> 
         )}
 
         <div className="fp-legend">
-          <span><i style={{ background: '#4FB3AC' }} />Wet lab</span>
-          <span><i style={{ background: '#221F2E' }} />Dry lab</span>
-          <span><i style={{ background: '#D1316B' }} />Automation</span>
-          <span><i style={{ background: '#E3E0E6' }} />Unassigned</span>
+          <span><i style={{ background: '#00D5D5' }} />Wet lab</span>
+          <span><i style={{ background: '#5B4FE0' }} />Dry lab</span>
+          <span><i style={{ background: '#FF3FA4' }} />Automation</span>
+          <span><i style={{ background: '#E7EAF0' }} />Unassigned</span>
         </div>
 
         <div className="fp-grid">
@@ -211,7 +211,7 @@ export function FloorPlan({ reportData }: { reportData: Record<string, unknown> 
                     className="fp-cell"
                     title={`${c.posLabel}${c.name ? ' — ' + c.name : ''}`}
                     draggable
-                    style={{ background: c.stationId ? ZONE_COLORS[c.zone] || '#E3E0E6' : '#E3E0E6', color: c.stationId ? 'white' : '#5B5770' }}
+                    style={{ background: c.stationId ? ZONE_COLORS[c.zone] || '#E7EAF0' : '#E7EAF0', color: c.stationId ? 'white' : '#69707F' }}
                     onClick={() => setSelectedCell(c.posLabel)}
                     onDragStart={(e) => e.dataTransfer.setData('text/plain', c.posLabel)}
                     onDragOver={(e) => e.preventDefault()}
@@ -244,7 +244,7 @@ export function FloorPlan({ reportData }: { reportData: Record<string, unknown> 
               <div className="fp-info-row"><b>Supports:</b> {supportedOps.length ? supportedOps.map(cap).join(', ') : 'General support'}</div>
               <div className="fp-info-row"><b>{equipSource}:</b></div>
               <div className="proto-tags">
-                {equip.length ? equip.map((e) => <span className="proto-tag" key={e.name}>{e.name}</span>) : <span style={{ color: '#5B5770', fontSize: 11 }}>None found</span>}
+                {equip.length ? equip.map((e) => <span className="proto-tag" key={e.name}>{e.name}</span>) : <span style={{ color: '#69707F', fontSize: 11 }}>None found</span>}
               </div>
             </div>
           )}

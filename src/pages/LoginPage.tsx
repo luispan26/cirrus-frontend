@@ -36,11 +36,11 @@ export function LoginPage({ mode }: { mode: 'login' | 'register' }) {
   return (
     <div className="screen splash" style={{ padding: 24 }}>
       <div className="cloud-wrap">
-        <div className="cloud cl" style={{ top: '9%', animationDuration: '26s' }}>
-          <svg viewBox="0 0 220 110" width="230"><ellipse cx="90" cy="65" rx="80" ry="48" fill="#4FB3AC" /></svg>
+        <div className="cloud cl" style={{ top: '9%', animationDuration: '26s', color: '#00D5D5' }}>
+          <svg viewBox="0 0 220 110" width="230"><ellipse cx="90" cy="65" rx="80" ry="48" fill="#00D5D5" /></svg>
         </div>
-        <div className="cloud cr" style={{ top: '64%', animationDuration: '32s', animationDelay: '-12s' }}>
-          <svg viewBox="0 0 200 100" width="200"><ellipse cx="80" cy="60" rx="70" ry="42" fill="#D1316B" /></svg>
+        <div className="cloud cr" style={{ top: '64%', animationDuration: '32s', animationDelay: '-12s', color: '#FF3FA4' }}>
+          <svg viewBox="0 0 200 100" width="200"><ellipse cx="80" cy="60" rx="70" ry="42" fill="#FF3FA4" /></svg>
         </div>
       </div>
       <div className="q-card" style={{ maxWidth: 400, width: '100%', position: 'relative', zIndex: 2 }}>

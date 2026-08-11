@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { deriveCirculationSpace, fixtureFootprint, parseSandboxLayout } from '../lib/layout-sandbox';
+import { parseSandboxLayout } from '../lib/layout-sandbox';
+import { LayoutFloorPlan, stationColor } from './LayoutFloorPlan';
 
 type DecisionReport = {
   requiredProgram: Array<{ stationId: string; stationName: string; requiredUnits: number; weeklyHoursNeeded: number }>;
   topologyProduced: { wallBenchPositions: number; doubleIslandPairs: number; singleIslandBenchPositions: number; totalBenchPositions: number };
   structuralChecksPassed: string[];
+  adjustments: string[];
   notYetImplemented: string[];
 };
 
@@ -17,15 +19,6 @@ type GeneratedLayout = {
   data?: unknown;
 };
 
-const STATION_COLORS = ['#4FB3AC', '#D1316B', '#8A7BB0', '#4A7B93', '#C99A4A', '#5E9E72', '#D77B4A', '#6476B8'];
-
-function stationColor(stationId?: string) {
-  if (!stationId) return '#A7A2AD';
-  let hash = 0;
-  for (const character of stationId) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
-  return STATION_COLORS[Math.abs(hash) % STATION_COLORS.length];
-}
-
 export function GeneratedLayoutPlan({ value }: { value: unknown }) {
   const navigate = useNavigate();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -36,8 +29,6 @@ export function GeneratedLayoutPlan({ value }: { value: unknown }) {
   const hovered = layout.fixtures.find((fixture) => fixture.instanceId === hoveredId);
   const hoveredStation = hovered?.stations[0];
   const hoverEquipment = hovered?.stations.flatMap((station) => station.equipment) ?? [];
-  const circulation = deriveCirculationSpace(layout);
-
   return (
     <>
       <div className="sec-head">Generated lab plan<div className="sec-line" /></div>
@@ -51,22 +42,7 @@ export function GeneratedLayoutPlan({ value }: { value: unknown }) {
           </div>
           {generated.layoutId && <button className="btn-teal" onClick={() => navigate(`/layout-sandbox?layoutId=${encodeURIComponent(generated.layoutId!)}`)}>Open in sandbox</button>}
         </div>
-        <svg className="generated-layout-preview" viewBox={`0 0 ${layout.room.widthFt} ${layout.room.heightFt}`} role="img" aria-label="Generated laboratory floor plan">
-          <rect className="generated-layout-room" x="0" y="0" width={layout.room.widthFt} height={layout.room.heightFt} />
-          {circulation.reachable.map((cell) => <rect key={`circulation-${cell.x}-${cell.y}`} className="generated-layout-route" x={cell.x * circulation.gridFt} y={cell.y * circulation.gridFt} width={circulation.gridFt} height={circulation.gridFt} />)}
-          {layout.fixtures.map((fixture) => {
-            const size = fixtureFootprint(fixture, layout.room.gridFt);
-            const x = fixture.x * layout.room.gridFt;
-            const y = fixture.y * layout.room.gridFt;
-            const width = size.width * layout.room.gridFt;
-            const height = size.height * layout.room.gridFt;
-            const station = fixture.stations[0];
-            const equipmentNames = fixture.stations.flatMap((assignment) => assignment.equipment.map((item) => item.name));
-            const summary = `${station?.name ?? fixture.name}. ${equipmentNames.length ? `Equipment: ${equipmentNames.join(', ')}` : 'No equipment assigned.'}`;
-            return <g key={fixture.instanceId} className={hoveredId === fixture.instanceId ? 'is-hovered' : ''} tabIndex={0} role="button" aria-label={summary} onMouseEnter={() => setHoveredId(fixture.instanceId)} onMouseLeave={() => setHoveredId(null)} onFocus={() => setHoveredId(fixture.instanceId)} onBlur={() => setHoveredId(null)}><title>{summary}</title><rect className="generated-layout-fixture" style={{ fill: stationColor(station?.stationId) }} x={x} y={y} width={width} height={height} rx=".2" /></g>;
-          })}
-          {layout.baseObjects.filter((object) => object.kind === 'door').map((door) => <polygon key={door.id} className="generated-layout-exit" points={door.footprint.points.map((point) => `${point.x},${point.y}`).join(' ')} />)}
-        </svg>
+        <LayoutFloorPlan layout={layout} hoveredId={hoveredId} onHoverChange={setHoveredId} />
         <div className="generated-layout-legend" aria-label="Station colors">{stations.map((station) => <span key={station.stationId}><i style={{ background: stationColor(station.stationId) }} />{station.name}</span>)}</div>
         <div className={`generated-layout-hover-card ${hovered ? 'visible' : ''}`} aria-live="polite">
           {hovered ? <><strong>{hoveredStation?.name ?? hovered.name}</strong><span>{hovered.name} · {hovered.widthFt} × {hovered.depthFt} ft</span>{hoverEquipment.length ? <ul>{hoverEquipment.map((equipment) => <li key={equipment.equipmentId}>{equipment.name}<small>{equipment.widthFt ?? '?'} × {equipment.depthFt ?? '?'} ft</small></li>)}</ul> : <span>No equipment assigned to this bench.</span>}</> : <span>Hover or focus a colored bench to inspect its station and equipment assignments.</span>}
@@ -85,9 +61,15 @@ export function GeneratedLayoutPlan({ value }: { value: unknown }) {
 // rather than silently omitted, so it's clear what this draft has NOT
 // verified, not just what it has.
 function DecisionReportSection({ report }: { report: DecisionReport }) {
-  const { requiredProgram, topologyProduced, structuralChecksPassed, notYetImplemented } = report;
+  const { requiredProgram, topologyProduced, structuralChecksPassed, adjustments, notYetImplemented } = report;
   return (
     <div className="generated-layout-decision">
+      {adjustments?.length > 0 && (
+        <div className="decision-adjustments">
+          <h4>What we changed to make this buildable</h4>
+          <ul>{adjustments.map((adjustment) => <li key={adjustment}>{adjustment}</li>)}</ul>
+        </div>
+      )}
       <div>
         <h4>Required program</h4>
         {requiredProgram.length ? (

@@ -37,22 +37,22 @@ export function ReportView({ data }: { data: Record<string, any> }) {
   return (
     <div className="rep-content">
       <div className="stat-grid">
-        <div className="stat"><div className="stat-val" style={{ color: '#4FB3AC' }}>{fmt(data.total_budget)}</div><div className="stat-lbl">Total budget</div></div>
-        <div className="stat"><div className="stat-val" style={{ color: '#D1316B' }}>{fmt(data.total_equipment_cost)}</div><div className="stat-lbl">Equipment cost</div></div>
-        <div className="stat"><div className="stat-val" style={{ color: '#4FB3AC' }}>{data.total_monthly_consumables ? fmt(data.total_monthly_consumables) + '/mo' : '—'}</div><div className="stat-lbl">Monthly consumables</div></div>
-        <div className="stat"><div className="stat-val" style={{ color: '#D1316B' }}>{data.estimated_roi_months ? data.estimated_roi_months + ' months' : '—'}</div><div className="stat-lbl">Est. ROI</div></div>
+        <div className="stat"><div className="stat-val" style={{ color: '#049295' }}>{fmt(data.total_budget)}</div><div className="stat-lbl">Total budget</div></div>
+        <div className="stat"><div className="stat-val" style={{ color: '#FF3FA4' }}>{fmt(data.total_equipment_cost)}</div><div className="stat-lbl">Equipment cost</div></div>
+        <div className="stat"><div className="stat-val" style={{ color: '#049295' }}>{data.total_monthly_consumables ? fmt(data.total_monthly_consumables) + '/mo' : '—'}</div><div className="stat-lbl">Monthly consumables</div></div>
+        <div className="stat"><div className="stat-val" style={{ color: '#FF3FA4' }}>{data.estimated_roi_months ? data.estimated_roi_months + ' months' : '—'}</div><div className="stat-lbl">Est. ROI</div></div>
       </div>
 
       {pieData.length > 0 && (
         <>
           <div className="sec-head">Budget breakdown<div className="sec-line" /></div>
-          <div style={{ background: '#fff', borderRadius: 12, padding: '18px 20px', border: '1px solid #E3E0E6', marginBottom: 4 }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: '18px 20px', border: '1px solid var(--br)', boxShadow: 'var(--shadow-sm)', marginBottom: 4 }}>
             <div className="pie-wrap">
               <div><DonutChart data={pieData} /></div>
               <div className="pie-legend">
                 {pieData.map((e, i) => (
                   <div className="legend-row" key={e.name}>
-                    <div className="legend-dot" style={{ background: ['#4FB3AC', '#D1316B', '#8A7BB0', '#4A7B93', '#C99A4A', '#5E9E72'][i % 6] }} />
+                    <div className="legend-dot" style={{ background: ['#00D5D5', '#FF3FA4', '#8C7CFF', '#049295', '#FF8FCB', '#5EC9E8'][i % 6] }} />
                     <span className="legend-name">{e.name}</span>
                     <span className="legend-val">{fmt(e.value)}</span>
                   </div>
@@ -73,10 +73,10 @@ export function ReportView({ data }: { data: Record<string, any> }) {
                 {essential.map((e, i) => (
                   <tr className={i % 2 === 1 ? 'odd' : ''} key={e.name + i}>
                     <td style={{ fontWeight: 600 }}>{e.name}</td>
-                    <td style={{ color: '#5B5770' }}>{e.vendor || '—'}</td>
-                    <td style={{ fontSize: 11, color: '#5B5770', maxWidth: 150 }}>{(e.supports_protocols || []).join(', ') || e.purpose || '—'}</td>
+                    <td style={{ color: '#69707F' }}>{e.vendor || '—'}</td>
+                    <td style={{ fontSize: 11, color: '#69707F', maxWidth: 150 }}>{(e.supports_protocols || []).join(', ') || e.purpose || '—'}</td>
                     <td>{e.quantity_needed || e.quantity || 1}</td>
-                    <td style={{ fontWeight: 600, color: '#358C86' }}>{fmt(e.estimated_cost_usd || e.estimated_cost)}</td>
+                    <td style={{ fontWeight: 600, color: '#049295' }}>{fmt(e.estimated_cost_usd || e.estimated_cost)}</td>
                     <td><span className="badge-e">Essential</span></td>
                   </tr>
                 ))}
@@ -96,10 +96,10 @@ export function ReportView({ data }: { data: Record<string, any> }) {
                 {recommended.map((e, i) => (
                   <tr className={i % 2 === 1 ? 'odd' : ''} key={e.name + i}>
                     <td style={{ fontWeight: 600 }}>{e.name}</td>
-                    <td style={{ color: '#5B5770' }}>{e.vendor || '—'}</td>
-                    <td style={{ color: '#5B5770' }}>{e.purpose || '—'}</td>
+                    <td style={{ color: '#69707F' }}>{e.vendor || '—'}</td>
+                    <td style={{ color: '#69707F' }}>{e.purpose || '—'}</td>
                     <td>{e.quantity || 1}</td>
-                    <td style={{ fontWeight: 600, color: '#D1316B' }}>{fmt(e.estimated_cost)}</td>
+                    <td style={{ fontWeight: 600, color: '#FF3FA4' }}>{fmt(e.estimated_cost)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -115,8 +115,8 @@ export function ReportView({ data }: { data: Record<string, any> }) {
             <div className="proto-card" key={(p.id || p.name) + i}>
               <div className="proto-name">{p.name || p.id}</div>
               <div className="proto-meta">
-                <span className="proto-badge" style={{ background: '#E9F6F5', color: '#358C86' }}>{p.bsl_requirements || '—'}</span>
-                <span className="proto-badge" style={{ background: '#FBEBF1', color: '#D1316B' }}>{p.estimated_time_hours || '?'} hrs</span>
+                <span className="proto-badge" style={{ background: '#E6FBFB', color: '#049295' }}>{p.bsl_requirements || '—'}</span>
+                <span className="proto-badge" style={{ background: '#FFEAF5', color: '#C41678' }}>{p.estimated_time_hours || '?'} hrs</span>
               </div>
               <div className="proto-tags">
                 {(p.required_equipment || []).map((e: any) => <span className="proto-tag" key={e.name}>{e.name}</span>)}
@@ -139,8 +139,8 @@ export function ReportView({ data }: { data: Record<string, any> }) {
                   <tr className={i % 2 === 1 ? 'odd' : ''} key={s.role + i}>
                     <td style={{ fontWeight: 600 }}>{ROLE_LABELS[s.role] || cap(s.role)}</td>
                     <td>{s.count}</td>
-                    <td style={{ color: '#5B5770' }}>{fmt(s.annual_wage_usd)}/yr</td>
-                    <td style={{ fontWeight: 600, color: '#358C86' }}>{fmt(s.annual_cost_usd)}</td>
+                    <td style={{ color: '#69707F' }}>{fmt(s.annual_wage_usd)}/yr</td>
+                    <td style={{ fontWeight: 600, color: '#049295' }}>{fmt(s.annual_cost_usd)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -165,7 +165,7 @@ export function ReportView({ data }: { data: Record<string, any> }) {
                 {consumables.map((c, i) => (
                   <tr className={i % 2 === 1 ? 'odd' : ''} key={c.name + i}>
                     <td>{c.name}</td>
-                    <td style={{ fontWeight: 600, color: '#358C86' }}>{fmt(c.estimated_monthly_cost)}/mo</td>
+                    <td style={{ fontWeight: 600, color: '#049295' }}>{fmt(c.estimated_monthly_cost)}/mo</td>
                   </tr>
                 ))}
               </tbody>
@@ -184,8 +184,8 @@ export function ReportView({ data }: { data: Record<string, any> }) {
                 {([['Year 1', revenue.year_1], ['Year 2', revenue.year_2], ['Year 3', revenue.year_3]] as [string, number][]).map(([yr, v], i) => (
                   <tr className={i % 2 === 1 ? 'odd' : ''} key={yr}>
                     <td>{yr}</td>
-                    <td style={{ fontWeight: 700, color: '#358C86' }}>{fmt(v)}</td>
-                    <td style={{ color: v > data.total_budget ? '#16a34a' : '#5B5770' }}>
+                    <td style={{ fontWeight: 700, color: '#049295' }}>{fmt(v)}</td>
+                    <td style={{ color: v > data.total_budget ? '#16a34a' : '#69707F' }}>
                       {v && data.total_budget ? ((v / data.total_budget) * 100).toFixed(0) + '% of budget' : '—'}
                     </td>
                   </tr>

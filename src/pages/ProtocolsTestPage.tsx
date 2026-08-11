@@ -2,10 +2,15 @@ import { useState } from 'react';
 import { useQuery, useLazyQuery, useMutation } from '@apollo/client/react';
 import { useNavigate } from 'react-router-dom';
 import {
-  PROTOCOLS_IO_PROTOCOL_QUERY, EQUIPMENT_LIST_QUERY,
+  PROTOCOLS_IO_PROTOCOL_QUERY, PROTOCOLS_IO_SEARCH_QUERY, EQUIPMENT_LIST_QUERY,
   STEP_EQUIPMENT_MAPPINGS_FOR_PROTOCOL_QUERY,
   ASSIGN_EQUIPMENT_TO_STEP_MUTATION, REMOVE_STEP_EQUIPMENT_MAPPING_MUTATION,
+  PROTOCOL_BSL_QUERY, SET_PROTOCOL_BSL_MUTATION,
 } from '../graphql/operations';
+
+const SEARCH_PAGE_SIZE = 10;
+
+const BSL_LEVELS = ['BSL-1', 'BSL-2'] as const;
 
 interface ProtocolStepFile { name: string; url: string; }
 interface ProtocolStepImage { url: string; legend?: string; width?: number; height?: number; }
@@ -25,6 +30,9 @@ interface ProtocolsIoProtocol {
 }
 interface EquipmentRow { equipmentId: string; name: string; }
 interface StepEquipmentMapping { id: string; protocolId: string; stepId: string; stepNumber?: string; equipmentId: string; }
+interface ProtocolBsl { id: string; protocolId: string; bslLevel: string; }
+interface ProtocolSummary { id: string; title: string; sourceUrl: string; doi?: string; publishedOn?: string; authorNames: string[]; }
+interface ProtocolSearchResult { currentPage: number; totalPages: number; totalResults: number; items: ProtocolSummary[]; }
 
 function durationLabel(seconds?: number): string | null {
   if (seconds === undefined || seconds === null) return null;
@@ -45,6 +53,39 @@ export function ProtocolsTestPage() {
   );
   const protocol = data?.protocolsIoProtocol;
 
+  // Browses/searches protocols rather than requiring a protocol ID to
+  // already be known — key defaults to '' (the backend treats that as
+  // "browse everything in scope", not a narrowed search). Runs on mount so
+  // results are visible immediately, not gated behind a first search.
+  // Scope defaults to the Damp Lab workspace (omitting workspaceUri lets
+  // the backend's own default apply) with an explicit opt-out to the full
+  // public catalog — passing null (not omitting the variable) is what
+  // actually overrides the backend default for that case.
+  const [scope, setScope] = useState<'workspace' | 'public'>('workspace');
+  const [searchDraft, setSearchDraft] = useState('');
+  const [searchKey, setSearchKey] = useState('');
+  const [searchPage, setSearchPage] = useState(1);
+  const { data: searchData, loading: searching, error: searchErrorObj } = useQuery<{ protocolsIoSearch: ProtocolSearchResult }>(
+    PROTOCOLS_IO_SEARCH_QUERY,
+    { variables: { key: searchKey, page: searchPage, pageSize: SEARCH_PAGE_SIZE, workspaceUri: scope === 'public' ? null : undefined } },
+  );
+  const searchResult = searchData?.protocolsIoSearch;
+
+  function handleSearch() {
+    setSearchPage(1);
+    setSearchKey(searchDraft.trim());
+  }
+
+  function handleScopeChange(next: 'workspace' | 'public') {
+    setScope(next);
+    setSearchPage(1);
+  }
+
+  function handleBrowseSelect(id: string) {
+    setProtocolId(id);
+    fetchProtocol({ variables: { protocolId: id } });
+  }
+
   const { data: equipmentData } = useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
   const equipmentList = equipmentData?.equipmentList ?? [];
 
@@ -56,6 +97,14 @@ export function ProtocolsTestPage() {
 
   const [assignEquipmentToStep] = useMutation(ASSIGN_EQUIPMENT_TO_STEP_MUTATION);
   const [removeStepEquipmentMapping] = useMutation(REMOVE_STEP_EQUIPMENT_MAPPING_MUTATION);
+
+  const { data: bslData, refetch: refetchBsl } = useQuery<{ protocolBsl: ProtocolBsl | null }>(
+    PROTOCOL_BSL_QUERY,
+    { variables: { protocolId: protocol?.id ?? '' }, skip: !protocol?.id },
+  );
+  const currentBsl = bslData?.protocolBsl?.bslLevel ?? null;
+  const [setProtocolBsl, { loading: settingBsl }] = useMutation(SET_PROTOCOL_BSL_MUTATION);
+  const [bslError, setBslError] = useState('');
 
   const [pickerSelection, setPickerSelection] = useState<Record<string, string>>({});
   const [assignError, setAssignError] = useState<Record<string, string>>({});
@@ -90,6 +139,17 @@ export function ProtocolsTestPage() {
     refetchMappings();
   }
 
+  async function handleSetBsl(bslLevel: string) {
+    if (!protocol) return;
+    setBslError('');
+    try {
+      await setProtocolBsl({ variables: { input: { protocolId: protocol.id, bslLevel } } });
+      refetchBsl();
+    } catch (e) {
+      setBslError(errMsg(e));
+    }
+  }
+
   return (
     <div className="screen">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', flexShrink: 0, borderBottom: '1px solid var(--br)' }}>
@@ -117,6 +177,92 @@ export function ProtocolsTestPage() {
           </button>
         </div>
 
+        <div style={{ border: '1px solid var(--br)', borderRadius: 10, padding: 14, marginBottom: 24 }}>
+          <div className="sec-head" style={{ marginBottom: 10 }}>
+            Browse published protocols
+            <div className="sec-line" />
+          </div>
+          <div className="chips" style={{ marginBottom: 12 }}>
+            <span className={`chip${scope === 'workspace' ? ' sel' : ''}`} onClick={() => handleScopeChange('workspace')}>Damp Lab workspace</span>
+            <span className={`chip${scope === 'public' ? ' sel' : ''}`} onClick={() => handleScopeChange('public')}>All public protocols</span>
+          </div>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+            <input
+              className="field-input"
+              style={{ flex: 1 }}
+              placeholder="Search published protocols (leave blank to browse all)"
+              value={searchDraft}
+              onChange={(e) => setSearchDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
+            />
+            <button className="btn-out" onClick={handleSearch} disabled={searching}>
+              {searching ? 'Searching…' : 'Search'}
+            </button>
+          </div>
+
+          {searchErrorObj && (
+            <div style={{ padding: 10, borderRadius: 8, background: '#fdecea', color: '#a33', fontSize: 12, marginBottom: 12 }}>
+              {searchErrorObj.message}
+            </div>
+          )}
+
+          {searchResult && (
+            <>
+              <div style={{ fontSize: 11, color: 'var(--mid)', marginBottom: 8 }}>
+                {searchResult.totalResults.toLocaleString()} published protocol{searchResult.totalResults === 1 ? '' : 's'}
+                {searchKey ? ` matching "${searchKey}"` : ''} in {scope === 'workspace' ? 'the Damp Lab workspace' : 'the public catalog'}
+                {searchResult.totalResults > 0 && ` — page ${searchResult.currentPage} of ${searchResult.totalPages.toLocaleString()}`}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
+                {searchResult.items.map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => handleBrowseSelect(item.id)}
+                    style={{
+                      padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+                      background: protocolId === item.id ? 'var(--teal)' : 'transparent',
+                      color: protocolId === item.id ? 'white' : 'inherit',
+                    }}
+                  >
+                    <div style={{ fontWeight: 600 }}>{item.title}</div>
+                    <div style={{ fontSize: 11, opacity: 0.8, marginTop: 2 }}>
+                      {item.authorNames.length > 0 && <span>{item.authorNames.join(', ')} · </span>}
+                      {item.publishedOn && <span>{new Date(item.publishedOn).toLocaleDateString()} · </span>}
+                      <span>ID {item.id}</span>
+                    </div>
+                  </div>
+                ))}
+                {searchResult.items.length === 0 && scope === 'workspace' && (
+                  <div style={{ fontSize: 12, color: 'var(--mid)', padding: '8px 0' }}>
+                    No protocols published to the Damp Lab workspace yet — switch to "All public protocols" to browse the wider catalog.
+                  </div>
+                )}
+                {searchResult.items.length === 0 && scope === 'public' && (
+                  <div style={{ fontSize: 12, color: 'var(--mid)', padding: '8px 0' }}>No published protocols matched.</div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  className="btn-out"
+                  style={{ padding: '4px 10px', fontSize: 12 }}
+                  disabled={searchResult.currentPage <= 1 || searching}
+                  onClick={() => setSearchPage((p) => Math.max(1, p - 1))}
+                >
+                  ← Prev
+                </button>
+                <button
+                  className="btn-out"
+                  style={{ padding: '4px 10px', fontSize: 12 }}
+                  disabled={searchResult.currentPage >= searchResult.totalPages || searching}
+                  onClick={() => setSearchPage((p) => p + 1)}
+                >
+                  Next →
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
         {error && (
           <div style={{ padding: 14, borderRadius: 8, background: '#fdecea', color: '#a33', fontSize: 13, marginBottom: 20 }}>
             {error.message}
@@ -129,6 +275,23 @@ export function ProtocolsTestPage() {
             <a href={protocol.sourceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--teal)' }}>
               {protocol.sourceUrl}
             </a>
+
+            <div className="field-wrap" style={{ marginTop: 16, marginBottom: 0 }}>
+              <label className="field-label">Biosafety level</label>
+              <div className="chips">
+                {BSL_LEVELS.map((level) => (
+                  <span
+                    key={level}
+                    className={`chip${currentBsl === level ? ' sel' : ''}`}
+                    onClick={() => !settingBsl && handleSetBsl(level)}
+                  >
+                    {level}
+                  </span>
+                ))}
+                {!currentBsl && <span style={{ fontSize: 11, color: 'var(--mid)', alignSelf: 'center' }}>Not tagged yet</span>}
+              </div>
+              {bslError && <div style={{ color: '#a33', fontSize: 11, marginTop: 4 }}>{bslError}</div>}
+            </div>
 
             {protocol.abstract && (
               <div style={{ marginTop: 16 }}>

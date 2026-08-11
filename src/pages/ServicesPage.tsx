@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@apollo/client/react';
-import { MY_REPORTS_QUERY } from '../graphql/operations';
+import { MY_REPORTS_QUERY, PROTOCOLS_IO_SEARCH_QUERY } from '../graphql/operations';
 import { KB, ZONE_COLORS, computeFloorPlan } from '../lib/kb';
 
 interface ReportSummary {
@@ -11,8 +11,82 @@ interface ReportSummary {
   data: Record<string, any> | null;
 }
 
+interface ProtocolSummary { id: string; title: string; sourceUrl: string; publishedOn?: string; authorNames: string[]; }
+interface ProtocolSearchResult { totalResults: number; items: ProtocolSummary[]; }
+
 function cap(s: string | undefined): string {
   return s ? s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '';
+}
+
+// Read-only reference list — links out to protocols.io rather than
+// reimplementing step/equipment editing (that's ProtocolsTestPage's job).
+// Scoped to the Damp Lab workspace only (no public-catalog toggle here);
+// leaving the search box blank browses everything currently published.
+function DamplabLibraryPanel() {
+  const [draft, setDraft] = useState('');
+  const [key, setKey] = useState('');
+  const { data, loading, error } = useQuery<{ protocolsIoSearch: ProtocolSearchResult }>(
+    PROTOCOLS_IO_SEARCH_QUERY,
+    { variables: { key, pageSize: 25 } },
+  );
+  const result = data?.protocolsIoSearch;
+
+  return (
+    <div className="q-card" style={{ marginBottom: 24 }}>
+      <div className="sec-head" style={{ marginBottom: 10 }}>
+        Damp Lab protocol library
+        <div className="sec-line" />
+      </div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+        <input
+          className="field-input"
+          style={{ flex: 1 }}
+          placeholder="Search the Damp Lab workspace"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') setKey(draft.trim()); }}
+        />
+        <button className="btn-out" onClick={() => setKey(draft.trim())} disabled={loading}>
+          {loading ? 'Searching…' : 'Search'}
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ padding: 10, borderRadius: 8, background: '#fdecea', color: '#a33', fontSize: 12, marginBottom: 12 }}>
+          {error.message}
+        </div>
+      )}
+
+      {result && (
+        <>
+          <div style={{ fontSize: 11, color: 'var(--mid)', marginBottom: 8 }}>
+            {result.totalResults.toLocaleString()} protocol{result.totalResults === 1 ? '' : 's'} published to the Damp Lab workspace
+            {key ? ` matching "${key}"` : ''}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {result.items.map((item) => (
+              <a
+                key={item.id}
+                href={item.sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{ padding: '8px 10px', borderRadius: 6, fontSize: 13, color: 'inherit', textDecoration: 'none' }}
+              >
+                <div style={{ fontWeight: 600 }}>{item.title}</div>
+                <div style={{ fontSize: 11, color: 'var(--mid)', marginTop: 2 }}>
+                  {item.authorNames.length > 0 && <span>{item.authorNames.join(', ')} · </span>}
+                  {item.publishedOn && <span>{new Date(item.publishedOn).toLocaleDateString()}</span>}
+                </div>
+              </a>
+            ))}
+            {result.items.length === 0 && (
+              <div style={{ fontSize: 12, color: 'var(--mid)', padding: '8px 0' }}>No protocols matched.</div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 const STEP_INTERVAL_MS = 1800;
@@ -99,10 +173,12 @@ export function ServicesPage() {
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '32px 24px' }}>
         <div style={{ maxWidth: 900, margin: '0 auto' }}>
-          <h2 style={{ fontSize: 24, fontWeight: 800, color: 'var(--dark)', marginBottom: 4, letterSpacing: '-0.01em' }}>Services</h2>
+          <h2 style={{ fontFamily: 'var(--head)', fontSize: 26, fontWeight: 500, color: 'var(--dark)', marginBottom: 4, letterSpacing: '-0.01em' }}>Services</h2>
           <p style={{ fontSize: 13, color: 'var(--mid)', marginBottom: 24 }}>
-            Pick a lab you've designed and a protocol to run through it — watch which stations it uses, in order.
+            Browse what Damp Lab has published, or pick a lab you've designed and simulate a protocol running through it.
           </p>
+
+          <DamplabLibraryPanel />
 
           {loading && <p style={{ color: 'var(--mid)', fontSize: 13 }}>Loading your designs…</p>}
 
@@ -173,10 +249,10 @@ export function ServicesPage() {
                   <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
                     <div style={{ flex: '1 1 320px' }}>
                       <div className="fp-legend">
-                        <span><i style={{ background: '#4FB3AC' }} />Wet lab</span>
-                        <span><i style={{ background: '#221F2E' }} />Dry lab</span>
-                        <span><i style={{ background: '#D1316B' }} />Automation</span>
-                        <span><i style={{ background: '#E3E0E6' }} />Unassigned</span>
+                        <span><i style={{ background: '#00D5D5' }} />Wet lab</span>
+                        <span><i style={{ background: '#5B4FE0' }} />Dry lab</span>
+                        <span><i style={{ background: '#FF3FA4' }} />Automation</span>
+                        <span><i style={{ background: '#E7EAF0' }} />Unassigned</span>
                       </div>
                       <div className="fp-grid">
                         {fp.grid.map((row) => (
@@ -191,11 +267,11 @@ export function ServicesPage() {
                                   className="fp-cell"
                                   title={c.name || c.posLabel}
                                   style={{
-                                    background: c.stationId ? ZONE_COLORS[c.zone] || '#E3E0E6' : '#E3E0E6',
-                                    color: c.stationId ? 'white' : '#5B5770',
+                                    background: c.stationId ? ZONE_COLORS[c.zone] || '#E7EAF0' : '#E7EAF0',
+                                    color: c.stationId ? 'white' : '#69707F',
                                     cursor: 'default',
                                     opacity: isInProtocol && !isActive ? 0.35 : 1,
-                                    boxShadow: isActive ? '0 0 0 3px #D1316B, 0 0 16px rgba(209,49,107,.6)' : 'none',
+                                    boxShadow: isActive ? '0 0 0 3px #FF3FA4, 0 0 16px rgba(255,63,164,.6)' : 'none',
                                     transform: isActive ? 'scale(1.12)' : 'scale(1)',
                                     transition: 'all .3s ease',
                                   }}
@@ -235,7 +311,7 @@ export function ServicesPage() {
                             <div
                               style={{
                                 width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
-                                background: isCurrent ? '#D1316B' : isPast ? '#4FB3AC' : '#E3E0E6',
+                                background: isCurrent ? '#FF3FA4' : isPast ? '#00D5D5' : '#E7EAF0',
                                 color: 'white', fontSize: 10, fontWeight: 700,
                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                               }}

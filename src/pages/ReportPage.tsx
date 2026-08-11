@@ -45,7 +45,7 @@ export function ReportPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 15, color: 'white', letterSpacing: '.08em' }}>CIRRUS</div>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'white' }}>Lab Design Report</div>
+            <div style={{ fontFamily: 'var(--head)', fontSize: 14, fontWeight: 500, color: 'white' }}>Lab Design Report</div>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,.5)' }}>Powered by Cirrus + n8n</div>
           </div>
         </div>
@@ -54,7 +54,7 @@ export function ReportPage() {
       <div className="rep-body">
         {!data ? (
           <div className="rep-paste">
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--dark)', marginBottom: 4 }}>Paste a report JSON manually</div>
+            <div style={{ fontFamily: 'var(--head)', fontSize: 16, fontWeight: 500, color: 'var(--dark)', marginBottom: 4 }}>Paste a report JSON manually</div>
             <div style={{ fontSize: 12, color: 'var(--mid)', marginBottom: 14 }}>
               Normally you land here automatically after Guided Mode or chat finishes. This is a manual fallback for testing.
             </div>

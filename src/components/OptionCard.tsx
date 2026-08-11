@@ -23,6 +23,17 @@ export function OptionCard({
       <div className="opt-body">
         <h4>{option.l}{disabled && <span style={{ fontWeight: 600, fontSize: 11, marginLeft: 6, color: 'var(--mid)' }}>Coming soon</span>}</h4>
         {option.d && <p>{option.d}</p>}
+        {option.link && (
+          <a
+            href={option.link.href}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            style={{ fontSize: 11, color: 'var(--teal)', display: 'inline-block', marginTop: 4 }}
+          >
+            {option.link.label} →
+          </a>
+        )}
       </div>
       <div className="opt-check">✓</div>
     </div>

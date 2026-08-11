@@ -1,5 +1,14 @@
 import { gql } from '@apollo/client';
 
+export const FEASIBILITY_CHECK_QUERY = gql`
+  query FeasibilityCheck($input: JSON!) {
+    feasibilityCheck(input: $input) {
+      ok
+      issues { field message }
+    }
+  }
+`;
+
 export const INTAKE_SESSION_QUERY = gql`
   query IntakeSession($sessionId: ID!) {
     intakeSession(sessionId: $sessionId) {
@@ -94,6 +103,24 @@ export const MY_REPORTS_QUERY = gql`
 export const DELETE_REPORT_MUTATION = gql`
   mutation DeleteReport($id: ID!) {
     deleteReport(id: $id)
+  }
+`;
+
+export const PROTOCOLS_IO_SEARCH_QUERY = gql`
+  query ProtocolsIoSearch($key: String, $page: Int, $pageSize: Int, $workspaceUri: String) {
+    protocolsIoSearch(key: $key, page: $page, pageSize: $pageSize, workspaceUri: $workspaceUri) {
+      currentPage
+      totalPages
+      totalResults
+      items {
+        id
+        title
+        sourceUrl
+        doi
+        publishedOn
+        authorNames
+      }
+    }
   }
 `;
 
@@ -275,6 +302,26 @@ export const ASSIGN_EQUIPMENT_TO_STEP_MUTATION = gql`
 export const REMOVE_STEP_EQUIPMENT_MAPPING_MUTATION = gql`
   mutation RemoveStepEquipmentMapping($id: ID!) {
     removeStepEquipmentMapping(id: $id)
+  }
+`;
+
+export const PROTOCOL_BSL_QUERY = gql`
+  query ProtocolBsl($protocolId: ID!) {
+    protocolBsl(protocolId: $protocolId) {
+      id
+      protocolId
+      bslLevel
+    }
+  }
+`;
+
+export const SET_PROTOCOL_BSL_MUTATION = gql`
+  mutation SetProtocolBsl($input: SetProtocolBslInput!) {
+    setProtocolBsl(input: $input) {
+      id
+      protocolId
+      bslLevel
+    }
   }
 `;
 

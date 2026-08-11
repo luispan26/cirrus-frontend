@@ -161,7 +161,7 @@ export function ChatWidget({
       </div>
       <div className="wb-body" ref={bodyRef}>
         {messages.map((m) => (
-          <div key={m.id} className={`wb-msg ${m.role}`} style={m.isNote ? { fontSize: 11, color: m.text.startsWith('Connection') || m.text.startsWith('Could not') ? '#D1316B' : '#5B5770' } : undefined}>
+          <div key={m.id} className={`wb-msg ${m.role}`} style={m.isNote ? { fontSize: 11, color: m.text.startsWith('Connection') || m.text.startsWith('Could not') ? '#FF3FA4' : '#69707F' } : undefined}>
             {m.text}
           </div>
         ))}

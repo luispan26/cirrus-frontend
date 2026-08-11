@@ -1,7 +1,7 @@
 export type FixtureKind = 'bench' | 'laminarHood' | 'sink' | 'cabinet' | 'refrigerator' | 'door' | 'waste';
 export type FixtureOrientation = 0 | 90 | 180 | 270;
 export interface FixtureClearance { frontFt: number; backFt: number; sideFt: number; overheadFt?: number; }
-export type SandboxLayer = 'base' | 'stations' | 'equipment' | 'circulation' | 'electrical' | 'validation';
+export type SandboxLayer = 'base' | 'stations' | 'equipment' | 'circulation' | 'electrical' | 'plumbing' | 'ventilation' | 'validation';
 export type AccessFace = 'front' | 'back' | 'left' | 'right';
 export const BENCH_WIDTH_FT = 6;
 export const BENCH_DEPTH_FT = 2.5;
@@ -9,7 +9,24 @@ export const BENCH_SURFACE_AREA_SQFT = BENCH_WIDTH_FT * BENCH_DEPTH_FT;
 export interface SandboxPoint { x: number; y: number; }
 export interface SandboxPolygon { points: SandboxPoint[]; }
 export interface ClearanceZone { id: string; purpose: 'operation' | 'maintenance' | 'certification' | 'ventilation'; polygon: SandboxPolygon; hard: boolean; }
-export interface SandboxBaseObject { id: string; kind: 'wall' | 'column' | 'shaft' | 'casework' | 'door' | 'sink' | 'fume_hood' | 'bsc' | 'electrical_panel' | 'utility_connection' | 'restricted_region'; name: string; footprint: SandboxPolygon; locked: boolean; door?: { clearWidthIn: number; swingArc?: SandboxPolygon; isExit: boolean } }
+// Infrastructure kinds (window/electrical_point/plumbing_point/ventilation_point)
+// intentionally carry the minimum a placement generator needs to answer "can
+// equipment reasonably connect here" — not real MEP design detail (no pipe
+// sizing, no duct CFM, no circuit routing). The older sink/fume_hood/bsc/
+// electrical_panel/utility_connection kinds stay for backward compatibility
+// with previously-saved layouts and backend-generated utility points; new
+// placements from this editor use the typed point kinds instead.
+export interface SandboxBaseObject {
+  id: string;
+  kind: 'wall' | 'column' | 'shaft' | 'casework' | 'door' | 'window' | 'sink' | 'fume_hood' | 'bsc' | 'electrical_panel' | 'utility_connection' | 'electrical_point' | 'plumbing_point' | 'ventilation_point' | 'restricted_region';
+  name: string;
+  footprint: SandboxPolygon;
+  locked: boolean;
+  door?: { clearWidthIn: number; isExit: boolean };
+  electrical?: { voltage: 120 | 208 | 240 | 'other'; voltageOther?: string; phase: 'single' | 'three'; dedicated: boolean; emergencyPower: boolean };
+  plumbing?: { coldWater: boolean; hotWater: boolean; drain: boolean; diWater: boolean };
+  ventilation?: { type: 'ducted_exhaust' | 'general_exhaust' | 'supply_air' | 'return_air' };
+}
 export interface CirculationRequirements { personnelWidthIn: number; accessibleWidthIn: number; egressWidthIn: number; }
 export interface ElectricalEndpoint { id: string; position: SandboxPoint; voltage: number; amperage: number; phase: number; frequencyHz: number; plugType: string; circuitId: string; powerClass: 'normal' | 'emergency' | 'ups'; }
 export interface ElectricalCircuit { id: string; allowableLoadVa: number; existingLoadVa: number; dedicatedEquipmentId?: string; }
@@ -76,29 +93,162 @@ export function fixtureFootprint(fixture: SandboxFixture, gridFt: number) {
   return { width: Math.max(1, Math.ceil(width / gridFt)), height: Math.max(1, Math.ceil(depth / gridFt)) };
 }
 
-type GridClearance = { top: number; right: number; bottom: number; left: number };
-
-function fixtureClearance(fixture: SandboxFixture, gridFt: number): GridClearance {
-  const front = Math.ceil(5 / gridFt);
-  if (fixture.orientation === 90) return { top: 0, right: front, bottom: 0, left: 0 };
-  if (fixture.orientation === 180) return { top: front, right: 0, bottom: 0, left: 0 };
-  if (fixture.orientation === 270) return { top: 0, right: 0, bottom: 0, left: front };
-  return { top: 0, right: 0, bottom: front, left: 0 };
+export function polygonBounds(polygon: SandboxPolygon) {
+  return {
+    left: Math.min(...polygon.points.map((p) => p.x)),
+    right: Math.max(...polygon.points.map((p) => p.x)),
+    top: Math.min(...polygon.points.map((p) => p.y)),
+    bottom: Math.max(...polygon.points.map((p) => p.y)),
+  };
 }
 
-export function canPlaceFixture(candidate: SandboxFixture, fixtures: SandboxFixture[], columns: number, rows: number, gridFt: number) {
+function rectsIntersect(a: { left: number; right: number; top: number; bottom: number }, b: { left: number; right: number; top: number; bottom: number }) {
+  return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+}
+
+export type WallSide = 'top' | 'bottom' | 'left' | 'right';
+type RoomSize = { widthFt: number; heightFt: number };
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+// Which of the room's four edges a point or footprint sits closest to —
+// shared by door/window/utility-point placement (wall-mounted kinds always
+// snap to whichever wall they're nearest) and by door swing rendering
+// (the swing direction depends on which wall the door is on).
+export function nearestWallSide(point: SandboxPoint, room: RoomSize): WallSide {
+  const distances: Array<[WallSide, number]> = [
+    ['top', point.y],
+    ['bottom', room.heightFt - point.y],
+    ['left', point.x],
+    ['right', room.widthFt - point.x],
+  ];
+  return distances.reduce((closest, entry) => (entry[1] < closest[1] ? entry : closest))[0];
+}
+
+export function wallSideOfBounds(bounds: { left: number; right: number; top: number; bottom: number }, room: RoomSize): WallSide {
+  const distances: Array<[WallSide, number]> = [
+    ['top', bounds.top],
+    ['bottom', room.heightFt - bounds.bottom],
+    ['left', bounds.left],
+    ['right', room.widthFt - bounds.right],
+  ];
+  return distances.reduce((closest, entry) => (entry[1] < closest[1] ? entry : closest))[0];
+}
+
+// Clamps an arbitrary clicked point onto the room's nearest wall line —
+// used to place single-point infrastructure markers (electrical/plumbing/
+// ventilation) flush against a wall regardless of where exactly the user
+// clicked near it.
+export function snapToNearestWall(point: SandboxPoint, room: RoomSize): { point: SandboxPoint; side: WallSide } {
+  const side = nearestWallSide(point, room);
+  if (side === 'top') return { point: { x: clamp(point.x, 0, room.widthFt), y: 0 }, side };
+  if (side === 'bottom') return { point: { x: clamp(point.x, 0, room.widthFt), y: room.heightFt }, side };
+  if (side === 'left') return { point: { x: 0, y: clamp(point.y, 0, room.heightFt) }, side };
+  return { point: { x: room.widthFt, y: clamp(point.y, 0, room.heightFt) }, side };
+}
+
+// A rectangular footprint (door/window) flush against the nearest wall,
+// centered on the clicked point and clamped so it never runs past the
+// wall's corners.
+export function wallRectFootprint(point: SandboxPoint, room: RoomSize, widthFt: number, depthFt: number): { footprint: SandboxPolygon; side: WallSide } {
+  const { point: snapped, side } = snapToNearestWall(point, room);
+  const alongWall = side === 'top' || side === 'bottom';
+  const runLength = alongWall ? room.widthFt : room.heightFt;
+  const half = widthFt / 2;
+  const centerAlong = clamp(alongWall ? snapped.x : snapped.y, half, Math.max(half, runLength - half));
+  let rect: { left: number; right: number; top: number; bottom: number };
+  if (side === 'top') rect = { left: centerAlong - half, right: centerAlong + half, top: 0, bottom: depthFt };
+  else if (side === 'bottom') rect = { left: centerAlong - half, right: centerAlong + half, top: room.heightFt - depthFt, bottom: room.heightFt };
+  else if (side === 'left') rect = { left: 0, right: depthFt, top: centerAlong - half, bottom: centerAlong + half };
+  else rect = { left: room.widthFt - depthFt, right: room.widthFt, top: centerAlong - half, bottom: centerAlong + half };
+  return {
+    footprint: { points: [{ x: rect.left, y: rect.top }, { x: rect.right, y: rect.top }, { x: rect.right, y: rect.bottom }, { x: rect.left, y: rect.bottom }] },
+    side,
+  };
+}
+
+function arcBetween(hinge: SandboxPoint, from: SandboxPoint, to: SandboxPoint, radius: number, steps = 14): SandboxPoint[] {
+  const a0 = Math.atan2(from.y - hinge.y, from.x - hinge.x);
+  const rawA1 = Math.atan2(to.y - hinge.y, to.x - hinge.x);
+  let delta = rawA1 - a0;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+  const points: SandboxPoint[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const a = a0 + (delta * i) / steps;
+    points.push({ x: hinge.x + Math.cos(a) * radius, y: hinge.y + Math.sin(a) * radius });
+  }
+  return points;
+}
+
+export interface DoorSwing { hinge: SandboxPoint; leafTip: SandboxPoint; jamb: SandboxPoint; arcPoints: SandboxPoint[]; }
+
+// Derives the door's swing geometry from its footprint and which wall it's
+// on, rather than storing a swing polygon that would need to be kept in
+// sync by hand every time the door moves or rotates — the door is always
+// shown open 90 degrees, hinged at one jamb, arcing back to the other.
+export function computeDoorSwing(object: SandboxBaseObject, room: RoomSize): DoorSwing | null {
+  if (!object.footprint.points.length) return null;
+  const bounds = polygonBounds(object.footprint);
+  const side = wallSideOfBounds(bounds, room);
+  const alongWall = side === 'top' || side === 'bottom';
+  const doorWidthFt = alongWall ? bounds.right - bounds.left : bounds.bottom - bounds.top;
+  const centerAlong = alongWall ? (bounds.left + bounds.right) / 2 : (bounds.top + bounds.bottom) / 2;
+  const dir = alongWall ? { x: 1, y: 0 } : { x: 0, y: 1 };
+  const normal = side === 'top' ? { x: 0, y: 1 } : side === 'bottom' ? { x: 0, y: -1 } : side === 'left' ? { x: 1, y: 0 } : { x: -1, y: 0 };
+  const wallCoord = side === 'top' ? 0 : side === 'bottom' ? room.heightFt : side === 'left' ? 0 : room.widthFt;
+  const center = alongWall ? { x: centerAlong, y: wallCoord } : { x: wallCoord, y: centerAlong };
+  const hinge = { x: center.x - (dir.x * doorWidthFt) / 2, y: center.y - (dir.y * doorWidthFt) / 2 };
+  const jamb = { x: center.x + (dir.x * doorWidthFt) / 2, y: center.y + (dir.y * doorWidthFt) / 2 };
+  const leafTip = { x: hinge.x + normal.x * doorWidthFt, y: hinge.y + normal.y * doorWidthFt };
+  return { hinge, leafTip, jamb, arcPoints: arcBetween(hinge, leafTip, jamb, doorWidthFt) };
+}
+
+// The only placement rule enforced: a fixture may not occupy the same
+// space as another fixture or a base object (door, casework, utility
+// connection, etc). No clearance zones, no room-bounds check — those were
+// intentionally removed.
+export function canPlaceFixture(candidate: SandboxFixture, fixtures: SandboxFixture[], baseObjects: SandboxBaseObject[], gridFt: number): boolean {
   const size = fixtureFootprint(candidate, gridFt);
-  const clearance = fixtureClearance(candidate, gridFt);
-  if (candidate.x - clearance.left < 0 || candidate.y - clearance.top < 0 || candidate.x + size.width + clearance.right > columns || candidate.y + size.height + clearance.bottom > rows) return false;
-  return fixtures.every((fixture) => {
-    if (fixture.instanceId === candidate.instanceId) return true;
+  const overlapsFixture = fixtures.some((fixture) => {
+    if (fixture.instanceId === candidate.instanceId) return false;
     const other = fixtureFootprint(fixture, gridFt);
-    const otherClearance = fixtureClearance(fixture, gridFt);
-    return candidate.x + size.width + Math.max(clearance.right, otherClearance.left) <= fixture.x
-      || fixture.x + other.width + Math.max(otherClearance.right, clearance.left) <= candidate.x
-      || candidate.y + size.height + Math.max(clearance.bottom, otherClearance.top) <= fixture.y
-      || fixture.y + other.height + Math.max(otherClearance.bottom, clearance.top) <= candidate.y;
+    return candidate.x < fixture.x + other.width && fixture.x < candidate.x + size.width
+      && candidate.y < fixture.y + other.height && fixture.y < candidate.y + size.height;
   });
+  if (overlapsFixture) return false;
+  const candidateBounds = { left: candidate.x * gridFt, right: (candidate.x + size.width) * gridFt, top: candidate.y * gridFt, bottom: (candidate.y + size.height) * gridFt };
+  return baseObjects.every((object) => !object.footprint.points.length || !rectsIntersect(candidateBounds, polygonBounds(object.footprint)));
+}
+
+// One entry per grid cell (row-major, [y][x]) saying whether a fixture of
+// this size/orientation could have its top-left corner there — the basis
+// for the sandbox's live green/red placement highlight. `excludeInstanceId`
+// drops the fixture currently being moved out of the collision check
+// (mirrors canPlaceFixture's own self-exclusion), so moving a fixture over
+// its own current footprint doesn't falsely read as blocked.
+export function computePlacementAvailability(
+  size: { widthFt: number; depthFt: number; orientation: FixtureOrientation },
+  fixtures: SandboxFixture[],
+  baseObjects: SandboxBaseObject[],
+  gridFt: number,
+  columns: number,
+  rows: number,
+  excludeInstanceId?: string,
+): boolean[][] {
+  const others = excludeInstanceId ? fixtures.filter((f) => f.instanceId !== excludeInstanceId) : fixtures;
+  const grid: boolean[][] = [];
+  for (let y = 0; y < rows; y++) {
+    const row: boolean[] = [];
+    for (let x = 0; x < columns; x++) {
+      const candidate: SandboxFixture = { instanceId: '__placement-preview__', kind: 'bench', name: '', x, y, widthFt: size.widthFt, depthFt: size.depthFt, orientation: size.orientation, stations: [] };
+      row.push(canPlaceFixture(candidate, others, baseObjects, gridFt));
+    }
+    grid.push(row);
+  }
+  return grid;
 }
 
 export function parseSandboxLayout(value: unknown): SandboxLayout | null {
@@ -171,49 +321,25 @@ export function deriveCirculationSpace(layout: SandboxLayout) {
   return { gridFt: grid, reachable: [...reachable].map((key) => { const [x, y] = key.split(',').map(Number); return { x, y }; }), reachableKeys: reachable };
 }
 
-export function validateSandboxLayout(layout: SandboxLayout, columns: number, rows: number): LayoutViolation[] {
+// Only rule enforced: no two placed objects (fixtures or base objects) may
+// occupy the same physical space. Everything else this used to check
+// (clearance zones, exit/door-swing clearance, circulation routing, bench
+// capacity, station access faces, electrical circuit wiring) has been
+// intentionally removed.
+export function validateSandboxLayout(layout: SandboxLayout): LayoutViolation[] {
   const violations: LayoutViolation[] = [];
-  const bounds = (polygon: SandboxPolygon) => ({ left: Math.min(...polygon.points.map((p) => p.x)), right: Math.max(...polygon.points.map((p) => p.x)), top: Math.min(...polygon.points.map((p) => p.y)), bottom: Math.max(...polygon.points.map((p) => p.y)) });
-  const intersects = (a: { left: number; right: number; top: number; bottom: number }, b: { left: number; right: number; top: number; bottom: number }) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-  const exitFrontZone = (exit: SandboxBaseObject) => {
-    const door = bounds(exit.footprint), center = { x: (door.left + door.right) / 2, y: (door.top + door.bottom) / 2 };
-    const swing = exit.door?.swingArc?.points ?? [];
-    const swingCenter = swing.length ? { x: swing.reduce((sum, point) => sum + point.x, 0) / swing.length, y: swing.reduce((sum, point) => sum + point.y, 0) / swing.length } : center;
-    if (door.right - door.left >= door.bottom - door.top) {
-      const towardBottom = swingCenter.y !== center.y ? swingCenter.y > center.y : center.y <= layout.room.heightFt / 2;
-      return towardBottom ? { left: door.left, right: door.right, top: door.bottom, bottom: Math.min(layout.room.heightFt, door.bottom + 20) } : { left: door.left, right: door.right, top: Math.max(0, door.top - 20), bottom: door.top };
-    }
-    const towardRight = swingCenter.x !== center.x ? swingCenter.x > center.x : center.x <= layout.room.widthFt / 2;
-    return towardRight ? { left: door.right, right: Math.min(layout.room.widthFt, door.right + 20), top: door.top, bottom: door.bottom } : { left: Math.max(0, door.left - 20), right: door.left, top: door.top, bottom: door.bottom };
-  };
-  const exits = layout.baseObjects.filter((object) => object.kind === 'door' && object.door?.isExit);
-  for (const object of layout.baseObjects) if (object.kind === 'door' && (object.door?.clearWidthIn ?? 0) < 32) violations.push({ id: `door-${object.id}`, severity: 'error', layer: 'base', objectIds: [object.id], message: `${object.name} provides less than 32 in of clear opening.`, fix: { type: 'set-door-width', targetId: object.id, value: 32, label: 'Set clear opening to 32 in' } });
-  const circulation = deriveCirculationSpace(layout);
-  if (layout.fixtures.some((fixture) => fixture.stations.length > 0) && exits.length === 0) violations.push({ id: 'missing-exit', severity: 'error', layer: 'circulation', objectIds: [], message: 'The derived circulation space has no defined exit.', fix: { type: 'add-exit', label: 'Add a 36 in exit' } });
   for (const fixture of layout.fixtures) {
-    if (!canPlaceFixture(fixture, layout.fixtures, columns, rows, layout.room.gridFt)) violations.push({ id: `placement-${fixture.instanceId}`, severity: 'error', layer: 'validation', objectIds: [fixture.instanceId], message: `${fixture.name} overlaps another object, violates clearance, or extends outside the room.`, fix: { type: 'move-fixture', targetId: fixture.instanceId, label: 'Move to nearest valid position' } });
-    const size = fixtureFootprint(fixture, layout.room.gridFt);
-    const fixtureBounds = { left: fixture.x * layout.room.gridFt, right: (fixture.x + size.width) * layout.room.gridFt, top: fixture.y * layout.room.gridFt, bottom: (fixture.y + size.height) * layout.room.gridFt };
-    const clearance = fixtureClearance(fixture, layout.room.gridFt);
-    const clearanceBounds = { left: fixtureBounds.left - clearance.left * layout.room.gridFt, right: fixtureBounds.right + clearance.right * layout.room.gridFt, top: fixtureBounds.top - clearance.top * layout.room.gridFt, bottom: fixtureBounds.bottom + clearance.bottom * layout.room.gridFt };
-    const blockingExit = exits.find((exit) => exit.footprint.points.length && intersects(fixtureBounds, exitFrontZone(exit)));
-    if (blockingExit) violations.push({ id: `exit-front-${fixture.instanceId}-${blockingExit.id}`, severity: 'error', layer: 'circulation', objectIds: [fixture.instanceId, blockingExit.id], message: `${fixture.name} is inside the required 20 ft front clearance for ${blockingExit.name}.`, fix: { type: 'move-fixture', targetId: fixture.instanceId, label: 'Move fixture out of exit clearance' } });
-    const blockedSwing = exits.find((exit) => (exit.door?.swingArc?.points.length ?? 0) > 0 && intersects(fixtureBounds, bounds(exit.door!.swingArc!)));
-    if (blockedSwing) violations.push({ id: `exit-swing-${fixture.instanceId}-${blockedSwing.id}`, severity: 'error', layer: 'circulation', objectIds: [fixture.instanceId, blockedSwing.id], message: `${fixture.name} blocks the side where ${blockedSwing.name} opens.`, fix: { type: 'move-fixture', targetId: fixture.instanceId, label: 'Clear the door swing side' } });
-    for (const object of layout.baseObjects) if (object.footprint.points.length && intersects(clearanceBounds, bounds(object.footprint))) violations.push({ id: `base-overlap-${fixture.instanceId}-${object.id}`, severity: 'error', layer: 'base', objectIds: [fixture.instanceId, object.id], message: `${fixture.name} or its required 5 ft front clearance overlaps ${object.name}.`, fix: { type: 'move-fixture', targetId: fixture.instanceId, label: 'Move fixture clear of obstruction' } });
-    if (exits.length > 0) {
-      const clearanceCells = Math.ceil(5 / layout.room.gridFt);
-      const targetX = fixture.orientation === 90 ? fixture.x + size.width + clearanceCells : fixture.orientation === 270 ? fixture.x - clearanceCells - 1 : fixture.x + Math.floor(size.width / 2);
-      const targetY = fixture.orientation === 0 ? fixture.y + size.height + clearanceCells : fixture.orientation === 180 ? fixture.y - clearanceCells - 1 : fixture.y + Math.floor(size.height / 2);
-      if (!circulation.reachableKeys.has(`${targetX},${targetY}`)) violations.push({ id: `route-${fixture.instanceId}`, severity: 'error', layer: 'circulation', objectIds: [fixture.instanceId], message: `${fixture.name} front is not accessible from an exit through derived clear space.`, fix: { type: 'move-fixture', targetId: fixture.instanceId, label: 'Move fixture next to reachable clear space' } });
-    }
-    if (fixture.kind === 'bench') {
-      const capacity = BENCH_SURFACE_AREA_SQFT;
-      const used = fixture.stations.flatMap((station) => station.equipment).reduce((sum, equipment) => sum + Math.max(0, equipment.widthFt ?? 0) * Math.max(0, equipment.depthFt ?? 0), 0);
-      if (used > capacity + Number.EPSILON) violations.push({ id: `capacity-${fixture.instanceId}`, severity: 'error', layer: 'equipment', objectIds: [fixture.instanceId], message: `${fixture.name} equipment uses ${used.toFixed(2)} sq ft; only ${capacity.toFixed(2)} sq ft is available.`, fix: { type: 'remove-largest-equipment', targetId: fixture.instanceId, label: 'Remove largest assigned item' } });
-      for (const station of fixture.stations) if ((station.accessFaces?.length ?? 0) === 0) violations.push({ id: `access-${station.instanceId}`, severity: 'warning', layer: 'stations', objectIds: [fixture.instanceId, station.instanceId], message: `${station.name} has no defined access face.`, fix: { type: 'set-access-face', targetId: station.instanceId, label: 'Set front as access face' } });
+    if (!canPlaceFixture(fixture, layout.fixtures, layout.baseObjects, layout.room.gridFt)) {
+      violations.push({ id: `placement-${fixture.instanceId}`, severity: 'error', layer: 'validation', objectIds: [fixture.instanceId], message: `${fixture.name} overlaps another object.`, fix: { type: 'move-fixture', targetId: fixture.instanceId, label: 'Move to nearest open position' } });
     }
   }
-  for (const endpoint of layout.electricalEndpoints) if (!layout.electricalCircuits.some((circuit) => circuit.id === endpoint.circuitId)) violations.push({ id: `circuit-${endpoint.id}`, severity: 'error', layer: 'electrical', objectIds: [endpoint.id], message: `Electrical endpoint ${endpoint.id} references missing circuit ${endpoint.circuitId}.`, fix: { type: 'add-circuit', targetId: endpoint.id, label: `Create circuit ${endpoint.circuitId}` } });
+  for (let i = 0; i < layout.baseObjects.length; i++) {
+    for (let j = i + 1; j < layout.baseObjects.length; j++) {
+      const a = layout.baseObjects[i], b = layout.baseObjects[j];
+      if (a.footprint.points.length && b.footprint.points.length && rectsIntersect(polygonBounds(a.footprint), polygonBounds(b.footprint))) {
+        violations.push({ id: `base-overlap-${a.id}-${b.id}`, severity: 'error', layer: 'base', objectIds: [a.id, b.id], message: `${a.name} overlaps ${b.name}.` });
+      }
+    }
+  }
   return violations;
 }

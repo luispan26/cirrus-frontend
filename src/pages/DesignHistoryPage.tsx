@@ -29,9 +29,9 @@ function fmtMoney(n: unknown): string {
 }
 function statusBadge(status: string) {
   const styles: Record<string, { bg: string; color: string; label: string }> = {
-    ready: { bg: '#E9F6F5', color: '#358C86', label: 'Ready' },
-    pending: { bg: '#FBEBF1', color: '#D1316B', label: 'Generating…' },
-    failed: { bg: '#FBEBF1', color: '#A8215A', label: 'Failed' },
+    ready: { bg: '#E6FBFB', color: '#049295', label: 'Ready' },
+    pending: { bg: '#FFEAF5', color: '#FF3FA4', label: 'Generating…' },
+    failed: { bg: '#FFEAF5', color: '#C41678', label: 'Failed' },
   };
   const s = styles[status] || styles.pending;
   return <span className="proto-badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>;
@@ -64,7 +64,7 @@ export function DesignHistoryPage() {
         <div style={{ maxWidth: 800, margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
             <div>
-              <h2 style={{ fontSize: 24, fontWeight: 800, color: 'var(--dark)', letterSpacing: '-0.01em' }}>Design history</h2>
+              <h2 style={{ fontFamily: 'var(--head)', fontSize: 26, fontWeight: 500, color: 'var(--dark)', letterSpacing: '-0.01em' }}>Design history</h2>
               <p style={{ fontSize: 13, color: 'var(--mid)', marginTop: 4 }}>Every lab design report you've generated, newest first.</p>
             </div>
             <button className="btn-teal" onClick={() => navigate('/scenario')}>+ New lab design</button>

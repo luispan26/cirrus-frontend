@@ -21,10 +21,10 @@ export interface OperationMeta {
 }
 
 export const ZONE_COLORS: Record<string, string> = {
-  wet_lab: '#4FB3AC',
-  dry_lab: '#221F2E',
-  automation: '#D1316B',
-  unassigned: '#E3E0E6',
+  wet_lab: '#00D5D5',
+  dry_lab: '#5B4FE0',
+  automation: '#FF3FA4',
+  unassigned: '#E7EAF0',
 };
 
 export const KB = {

@@ -5,7 +5,7 @@ export interface DonutDatum {
   value: number;
 }
 
-const PALETTE = ['#4FB3AC', '#D1316B', '#8A7BB0', '#4A7B93', '#C99A4A', '#5E9E72'];
+const PALETTE = ['#00D5D5', '#FF3FA4', '#8C7CFF', '#049295', '#FF8FCB', '#5EC9E8'];
 
 export function DonutChart({ data, size = 200 }: { data: DonutDatum[]; size?: number }) {
   const cx = size / 2;

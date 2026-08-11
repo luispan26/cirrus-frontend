@@ -12,7 +12,7 @@ export function ScenarioPage() {
       </div>
       <div style={{ textAlign: 'center', padding: '56px 24px 32px' }}>
         <div className="sc-eyebrow">Choose your path</div>
-        <h2 style={{ fontSize: 28, fontWeight: 800, color: 'var(--dark)', marginBottom: 8, letterSpacing: '-0.01em' }}>
+        <h2 style={{ fontFamily: 'var(--head)', fontSize: 30, fontWeight: 500, color: 'var(--dark)', marginBottom: 8, letterSpacing: '-0.01em' }}>
           What best describes your situation?
         </h2>
       </div>
