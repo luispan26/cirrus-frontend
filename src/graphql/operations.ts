@@ -1,5 +1,128 @@
 import { gql } from '@apollo/client';
 
+export const FLOOR_PLAN_PARSE_QUERY = gql`
+  query FloorPlanParse($parseId: ID!) {
+    floorPlanParse(parseId: $parseId) {
+      parseId
+      status
+      originalFilename
+      format
+      parsed
+      locked
+      failureReason
+    }
+  }
+`;
+
+export const CONFIRM_FLOOR_PLAN_MUTATION = gql`
+  mutation ConfirmFloorPlan($input: ConfirmFloorPlanInput!) {
+    confirmFloorPlan(input: $input) {
+      locked
+      corrections
+    }
+  }
+`;
+
+export const GENERATE_ZONES_MUTATION = gql`
+  mutation GenerateZones($input: GenerateZonesInput!) {
+    generateZones(input: $input) {
+      solveStatus
+      validation {
+        state
+        violations
+      }
+      unassignedCells {
+        row
+        column
+      }
+      circulationCells {
+        row
+        column
+      }
+      zones {
+        id
+        family
+        areaCells
+        minimumWidthCells
+        cells {
+          row
+          column
+        }
+        boundingBox {
+          minimumRow
+          maximumRow
+          minimumColumn
+          maximumColumn
+        }
+        boundaryEdges {
+          side
+          cell {
+            row
+            column
+          }
+        }
+        circulationAccessCells {
+          row
+          column
+        }
+        adjacentFeatureIds
+        nearbyUtilities {
+          featureId
+          type
+          distanceCells
+        }
+      }
+    }
+  }
+`;
+
+export const PLACE_BENCHES_MUTATION = gql`
+  mutation PlaceBenches($input: PlaceBenchesInput!) {
+    placeBenches(input: $input) {
+      solveStatus
+      accessConnectivityMode
+      validation {
+        state
+        violations
+      }
+      placementGrid {
+        rows
+        columns
+        cellSizeInches
+        sourceCellSizeInches
+        scaleFactor
+      }
+      remainingZoneCells {
+        row
+        column
+      }
+      remainingPlaceableCells {
+        row
+        column
+      }
+      benches {
+        id
+        requirementId
+        zoneId
+        origin {
+          row
+          column
+        }
+        rotationDegrees
+        accessSide
+        footprintCells {
+          row
+          column
+        }
+        accessCells {
+          row
+          column
+        }
+      }
+    }
+  }
+`;
+
 export const FEASIBILITY_CHECK_QUERY = gql`
   query FeasibilityCheck($input: JSON!) {
     feasibilityCheck(input: $input) {
@@ -161,6 +284,12 @@ export const STATIONS_QUERY = gql`
   }
 `;
 
+export const DAMP_OPERATIONS_QUERY = gql`
+  query DampOperations {
+    operations { operationId name stationIds equipment approxCostUsd estimatedTimeHours spatialKind baseOperationId executionPlatform catalogueSource catalogueRevision }
+  }
+`;
+
 export const UPDATE_STATION_MUTATION = gql`
   mutation UpdateStation($stationId: String!, $input: UpdateStationInput!) {
     updateStation(stationId: $stationId, input: $input) {
@@ -177,7 +306,7 @@ export const DELETE_STATION_MUTATION = gql`
 
 export const EQUIPMENT_LIST_QUERY = gql`
   query EquipmentList {
-    equipmentList { equipmentId name costUsd widthFt depthFt heightFt stationId }
+    equipmentList { equipmentId name costUsd widthFt depthFt heightFt stationId utilityRequirements mounting }
   }
 `;
 
@@ -214,6 +343,128 @@ export const LAB_LAYOUTS_QUERY = gql`
 export const LAYOUT_SANDBOX_CAPABILITIES_QUERY = gql`
   query LayoutSandboxCapabilities {
     layoutSandboxCapabilities
+  }
+`;
+
+// Kept as a regression fixture (cirrus-backend/scripts hits it directly via
+// Docker-side GraphQL calls) — no longer called from the sandbox UI, which
+// uses SOLVE_ZONE_REQUIREMENTS_MUTATION so zones come from the operations
+// actually selected, not an even-split heuristic.
+export const SOLVE_TOY_ZONING_MUTATION = gql`
+  mutation SolveToyZoning($input: ToyZoningInput!) {
+    solveToyZoning(input: $input) {
+      cellZones
+      zones
+      status
+      score
+    }
+  }
+`;
+
+export const SOLVE_ZONE_REQUIREMENTS_MUTATION = gql`
+  mutation SolveZoneRequirements($input: SolveZoneRequirementsInput!) {
+    solveZoneRequirements(input: $input) {
+      status
+      solveStatus
+      cellZones
+      blockingDiagnostics {
+        operationId
+        disposition
+        reason
+      }
+      insufficientDataDiagnostics {
+        operationIds
+        reason
+      }
+      zoneRequirements {
+        id
+        family
+        operationIds
+        materialClasses
+        requiresBsc
+        sharingPolicy
+        confirmedBiosafetyLevel
+        minimumAreaCells
+        targetAreaCells
+      }
+    }
+  }
+`;
+
+// A saved plan's operation entries carry both the zone-policy context the
+// user entered AND a snapshot of what the catalogue said about that
+// operation at save time — see cirrus-backend's zoning-plans/zoning-plan.schema.ts
+// for why the snapshot exists (it's what lets zoningPlanCatalogueDrift below
+// detect a re-seed/import changing an operationId's meaning after the fact).
+const PLANNED_OPERATION_SNAPSHOT_FIELDS = `
+  key
+  operationId
+  operationNameSnapshot
+  spatialKindSnapshot
+  equipmentSnapshot
+  catalogueSource
+  catalogueRevision
+  materialClass
+  confirmedBiosafetyLevel
+  aerosolPotential
+  amplificationStage
+`;
+
+// Engine-state snapshot — see cirrus-backend's lab-program/engine-versions.ts
+// and zoning/toy-zoning.model.ts. gridSizeFeet is client-supplied (part of
+// SaveZoningPlanInput, like roomWidthFt/roomHeightFt); the three version
+// fields are stamped server-side and only ever read back, never sent.
+const PLAN_VERSION_FIELDS = `
+  gridSizeFeet
+  zoneCompilerVersion
+  miniZincModelVersion
+  areaCalculationVersion
+`;
+
+export const SAVE_ZONING_PLAN_MUTATION = gql`
+  mutation SaveZoningPlan($input: SaveZoningPlanInput!) {
+    saveZoningPlan(input: $input) {
+      planId
+      name
+      roomWidthFt
+      roomHeightFt
+      operations { ${PLANNED_OPERATION_SNAPSHOT_FIELDS} }
+      ${PLAN_VERSION_FIELDS}
+      createdAt
+      updatedAt
+    }
+  }
+`;
+
+export const ZONING_PLANS_QUERY = gql`
+  query ZoningPlans {
+    zoningPlans { planId name roomWidthFt roomHeightFt updatedAt }
+  }
+`;
+
+export const ZONING_PLAN_QUERY = gql`
+  query ZoningPlan($planId: ID!) {
+    zoningPlan(planId: $planId) {
+      planId
+      name
+      roomWidthFt
+      roomHeightFt
+      operations { ${PLANNED_OPERATION_SNAPSHOT_FIELDS} }
+      ${PLAN_VERSION_FIELDS}
+      updatedAt
+    }
+  }
+`;
+
+export const ZONING_PLAN_CATALOGUE_DRIFT_QUERY = gql`
+  query ZoningPlanCatalogueDrift($planId: ID!) {
+    zoningPlanCatalogueDrift(planId: $planId) { operationId savedRevision currentRevision }
+  }
+`;
+
+export const DELETE_ZONING_PLAN_MUTATION = gql`
+  mutation DeleteZoningPlan($planId: ID!) {
+    deleteZoningPlan(planId: $planId)
   }
 `;
 
@@ -302,6 +553,21 @@ export const ASSIGN_EQUIPMENT_TO_STEP_MUTATION = gql`
 export const REMOVE_STEP_EQUIPMENT_MAPPING_MUTATION = gql`
   mutation RemoveStepEquipmentMapping($id: ID!) {
     removeStepEquipmentMapping(id: $id)
+  }
+`;
+
+export const EQUIPMENT_USAGE_FOR_PROTOCOL_QUERY = gql`
+  query EquipmentUsageForProtocol($protocolId: ID!) {
+    equipmentUsageForProtocol(protocolId: $protocolId) {
+      equipmentId
+      totalDurationSeconds
+      missingDurationStepCount
+      steps {
+        stepId
+        stepNumber
+        durationSeconds
+      }
+    }
   }
 `;
 

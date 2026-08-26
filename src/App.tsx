@@ -11,6 +11,9 @@ import { DesignHistoryPage } from './pages/DesignHistoryPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { ServicesPage } from './pages/ServicesPage';
 import { ProtocolsTestPage } from './pages/ProtocolsTestPage';
+import { FloorPlanParserTestPage } from './pages/FloorPlanParserTestPage';
+import { ZoneGenerationTestPage } from './pages/ZoneGenerationTestPage';
+import { BenchPlacementTestPage } from './pages/BenchPlacementTestPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { StationsPage } from './pages/StationsPage';
 import { LayoutSandboxPage } from './pages/LayoutSandboxPage';
@@ -35,6 +38,9 @@ export default function App() {
         <Route path="/report" element={<ReportPage />} />
         <Route path="/services" element={<ServicesPage />} />
         <Route path="/protocols-test" element={<ProtocolsTestPage />} />
+        <Route path="/floor-plan-parser-test" element={<FloorPlanParserTestPage />} />
+        <Route path="/zone-generation-test" element={<ZoneGenerationTestPage />} />
+        <Route path="/bench-placement-test" element={<BenchPlacementTestPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/stations" element={<StationsPage />} />
         <Route path="/layout-sandbox" element={<LayoutSandboxPage />} />

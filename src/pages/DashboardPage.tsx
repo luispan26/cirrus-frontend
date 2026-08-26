@@ -26,6 +26,9 @@ function cap(s: string | undefined): string {
   return s ? s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '';
 }
 
+// DAMPLab Canvas — separate app (see cumulab/canvas-deploy), not a route in this SPA.
+const CANVAS_URL = (import.meta.env.VITE_CANVAS_URL as string) || 'http://localhost:8088';
+
 function LayoutThumbnail({ reportData, label }: { reportData: Record<string, any> | null; label: string }) {
   const layout = reportData?.generated_layout?.data ? parseSandboxLayout(reportData.generated_layout.data) : null;
   if (!layout) return null;
@@ -112,11 +115,11 @@ export function DashboardPage() {
               <div className="sc-desc">Place bench stations manually, then assign equipment to each station.</div>
               <div className="sc-cta">Open →</div>
             </div>
-            <div className="sc-card dim">
+            <div className="sc-card active" onClick={() => window.open(CANVAS_URL, '_blank', 'noopener,noreferrer')}>
               <div className="sc-tag">CANVAS</div>
-              <div className="sc-title">Set up Canvas</div>
-              <div className="sc-desc">Configure a collaborative canvas workspace for your team.</div>
-              <span className="cs-badge">Coming soon</span>
+              <div className="sc-title">Open Canvas</div>
+              <div className="sc-desc">Build workflows from your lab's services on the DAMPLab Canvas workspace.</div>
+              <div className="sc-cta">Open →</div>
             </div>
             <div className="sc-card dim">
               <div className="sc-tag">AEOLUS</div>

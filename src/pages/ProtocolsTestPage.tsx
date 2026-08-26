@@ -3,7 +3,7 @@ import { useQuery, useLazyQuery, useMutation } from '@apollo/client/react';
 import { useNavigate } from 'react-router-dom';
 import {
   PROTOCOLS_IO_PROTOCOL_QUERY, PROTOCOLS_IO_SEARCH_QUERY, EQUIPMENT_LIST_QUERY,
-  STEP_EQUIPMENT_MAPPINGS_FOR_PROTOCOL_QUERY,
+  STEP_EQUIPMENT_MAPPINGS_FOR_PROTOCOL_QUERY, EQUIPMENT_USAGE_FOR_PROTOCOL_QUERY,
   ASSIGN_EQUIPMENT_TO_STEP_MUTATION, REMOVE_STEP_EQUIPMENT_MAPPING_MUTATION,
   PROTOCOL_BSL_QUERY, SET_PROTOCOL_BSL_MUTATION,
 } from '../graphql/operations';
@@ -31,13 +31,15 @@ interface ProtocolsIoProtocol {
 interface EquipmentRow { equipmentId: string; name: string; }
 interface StepEquipmentMapping { id: string; protocolId: string; stepId: string; stepNumber?: string; equipmentId: string; }
 interface ProtocolBsl { id: string; protocolId: string; bslLevel: string; }
+interface EquipmentUsageStep { stepId: string; stepNumber?: string; durationSeconds?: number | null; }
+interface EquipmentUsage { equipmentId: string; totalDurationSeconds: number; missingDurationStepCount: number; steps: EquipmentUsageStep[]; }
 interface ProtocolSummary { id: string; title: string; sourceUrl: string; doi?: string; publishedOn?: string; authorNames: string[]; }
 interface ProtocolSearchResult { currentPage: number; totalPages: number; totalResults: number; items: ProtocolSummary[]; }
 
 function durationLabel(seconds?: number): string | null {
   if (seconds === undefined || seconds === null) return null;
   const minutes = Math.round(seconds / 60);
-  return minutes < 60 ? '${minutes} min' : '${(minutes / 60).toFixed(1)} hr';
+  return minutes < 60 ? `${minutes} min` : `${(minutes / 60).toFixed(1)} hr`;
 }
 
 function errMsg(e: unknown): string {
@@ -95,6 +97,16 @@ export function ProtocolsTestPage() {
   );
   const mappings = mappingsData?.stepEquipmentMappingsForProtocol ?? [];
 
+  // Joins those same mappings against protocols.io's own step durations
+  // server-side (see step-equipment-map.service.ts's
+  // getEquipmentUsageForProtocol) — refetched alongside mappings since
+  // assigning/removing equipment changes the totals.
+  const { data: usageData, refetch: refetchUsage } = useQuery<{ equipmentUsageForProtocol: EquipmentUsage[] }>(
+    EQUIPMENT_USAGE_FOR_PROTOCOL_QUERY,
+    { variables: { protocolId: protocol?.id ?? '' }, skip: !protocol?.id },
+  );
+  const equipmentUsage = usageData?.equipmentUsageForProtocol ?? [];
+
   const [assignEquipmentToStep] = useMutation(ASSIGN_EQUIPMENT_TO_STEP_MUTATION);
   const [removeStepEquipmentMapping] = useMutation(REMOVE_STEP_EQUIPMENT_MAPPING_MUTATION);
 
@@ -129,6 +141,7 @@ export function ProtocolsTestPage() {
       });
       setPickerSelection((prev) => ({ ...prev, [step.id]: '' }));
       refetchMappings();
+      refetchUsage();
     } catch (e) {
       setAssignError((prev) => ({ ...prev, [step.id]: errMsg(e) }));
     }
@@ -137,6 +150,7 @@ export function ProtocolsTestPage() {
   async function handleRemove(mappingId: string) {
     await removeStepEquipmentMapping({ variables: { id: mappingId } });
     refetchMappings();
+    refetchUsage();
   }
 
   async function handleSetBsl(bslLevel: string) {
@@ -309,6 +323,29 @@ export function ProtocolsTestPage() {
               <div style={{ marginTop: 16 }}>
                 <div className="field-label">Guidelines</div>
                 <p style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>{protocol.guidelines}</p>
+              </div>
+            )}
+
+            {equipmentUsage.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <div className="sec-head">
+                  Equipment usage
+                  <div className="sec-line" />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {equipmentUsage.map((usage) => (
+                    <div
+                      key={usage.equipmentId}
+                      style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', border: '1px solid var(--br)', borderRadius: 8, padding: '8px 12px', fontSize: 13 }}
+                    >
+                      <span>{equipmentName(usage.equipmentId)}</span>
+                      <span style={{ fontSize: 12, color: 'var(--mid)' }}>
+                        {durationLabel(usage.totalDurationSeconds) ?? '0 min'} across {usage.steps.length} step{usage.steps.length === 1 ? '' : 's'}
+                        {usage.missingDurationStepCount > 0 && ` (${usage.missingDurationStepCount} untimed)`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
