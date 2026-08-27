@@ -212,8 +212,10 @@ export interface FinalIntakeJson {
   biosafety_level: string | null;
   biomaterials: string[];
   // The finalized (post-Q5-edit) Basic Lab Equipment List — see
-  // computeBasicLabEquipment/applyBasicLabEquipmentOverrides below.
-  basic_lab_equipment: { equipment_id: string; name: string; quantity: number }[];
+  // computeBasicLabEquipment/applyBasicLabEquipmentOverrides below. sources
+  // mirrors BasicLabEquipmentRow.sources, threaded through so the Lab
+  // Design Report's BOM can reuse Q5's color-coded-by-source grouping.
+  basic_lab_equipment: { equipment_id: string; name: string; quantity: number; sources: string[] }[];
   operations: string[];
   existing_equipment: { equipment_id: string; name: string; count: number }[];
   space: {
@@ -291,7 +293,7 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
     bsl: 'BSL-1',
     biosafety_level: (a.biosafety_level as string) || null,
     biomaterials: (a.biomaterials as string[]) || [],
-    basic_lab_equipment: (a.basic_lab_equipment_final as { equipment_id: string; name: string; quantity: number }[]) || [],
+    basic_lab_equipment: (a.basic_lab_equipment_final as { equipment_id: string; name: string; quantity: number; sources: string[] }[]) || [],
     operations: resolveOperations(a),
     existing_equipment: Object.entries(existingMeta).map(([equipment_id, meta]) => ({ equipment_id, name: meta.name, count: Math.max(1, meta.count ?? 1) })),
     space: {

@@ -1,5 +1,6 @@
 import { DonutChart } from './DonutChart';
 import { GeneratedLayoutPlan } from './GeneratedLayoutPlan';
+import { BASIC_EQUIPMENT_CATEGORIES } from '../lib/questions';
 
 function cap(s: string): string {
   return s ? s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '';
@@ -19,6 +20,95 @@ const ROLE_LABELS: Record<string, string> = {
   technician: 'Technician',
   student_intern: 'Student / intern',
 };
+
+function bomTable(rows: any[]) {
+  return (
+    <table className="rep-table">
+      <thead><tr><th>Equipment Specification</th><th>Quantity</th><th>Cost per Unit</th><th>Total Cost</th></tr></thead>
+      <tbody>
+        {rows.map((row, i) => (
+          <tr className={i % 2 === 1 ? 'odd' : ''} key={(row.equipmentId || row.equipmentSpecification) + i}>
+            <td style={{ fontWeight: 600 }}>{row.equipmentSpecification}</td>
+            <td>{row.quantity}</td>
+            <td style={{ color: '#69707F' }}>{row.costPerUnit === 'TBD' ? 'TBD' : fmt(row.costPerUnit)}</td>
+            <td style={{ fontWeight: 600, color: '#049295' }}>{row.totalCost === 'TBD' ? 'TBD' : fmt(row.totalCost)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// Same color-coded-by-source grouping as Q5's finalization step
+// (BASIC_EQUIPMENT_CATEGORIES in lib/questions.ts) — each row carries the
+// list(s) it was drawn from (see bom-generator.ts's BomRow.sources), grouped
+// here by its primary (first-contributing) source with cross-reference pills
+// for any others, same as QuestionsPage.tsx's BasicLabEquipmentBody. Reports
+// generated before this field existed have no sources on any row, so this
+// falls back to one flat table rather than a single "uncategorized" bucket.
+function BomSection({ bom }: { bom: any[] }) {
+  const hasSources = bom.some((row) => Array.isArray(row.sources) && row.sources.length > 0);
+  if (!hasSources) {
+    return (
+      <div style={{ borderRadius: 10, overflow: 'hidden', marginBottom: 4 }}>
+        {bomTable(bom)}
+      </div>
+    );
+  }
+
+  const categoryByKey = new Map(BASIC_EQUIPMENT_CATEGORIES.map((c) => [c.key, c]));
+  const rowsByCategory = new Map<string, any[]>();
+  for (const row of bom) {
+    const key = (Array.isArray(row.sources) && row.sources[0]) || 'general';
+    const bucket = rowsByCategory.get(key);
+    if (bucket) bucket.push(row);
+    else rowsByCategory.set(key, [row]);
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, marginBottom: 4 }}>
+      {BASIC_EQUIPMENT_CATEGORIES.map((category) => {
+        const rows = rowsByCategory.get(category.key);
+        if (!rows || rows.length === 0) return null;
+        const decoratedRows = rows.map((row) => ({
+          ...row,
+          equipmentSpecification: (
+            <>
+              {row.equipmentSpecification}
+              {(row.sources as string[]).filter((s) => s !== category.key).map((sourceKey) => {
+                const meta = categoryByKey.get(sourceKey);
+                if (!meta) return null;
+                return (
+                  <span
+                    key={sourceKey}
+                    title={`Also required by ${meta.label}`}
+                    style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: meta.color, border: `1px solid ${meta.color}`, borderRadius: 10, padding: '1px 7px' }}
+                  >
+                    + {meta.label}
+                  </span>
+                );
+              })}
+            </>
+          ),
+        }));
+        return (
+          <div key={category.key}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: category.color, flexShrink: 0 }} />
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.03em', color: category.color, textTransform: 'uppercase' }}>
+                {category.label}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--mid)' }}>({rows.length})</span>
+            </div>
+            <div style={{ borderLeft: `3px solid ${category.color}`, borderRadius: 10, overflow: 'hidden' }}>
+              {bomTable(decoratedRows)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export function ReportView({ data }: { data: Record<string, any> }) {
   const bom = asArray(data.bom);
@@ -66,21 +156,7 @@ export function ReportView({ data }: { data: Record<string, any> }) {
       {bom.length > 0 && (
         <>
           <div className="sec-head">Bill of materials<div className="sec-line" /></div>
-          <div style={{ borderRadius: 10, overflow: 'hidden', marginBottom: 4 }}>
-            <table className="rep-table">
-              <thead><tr><th>Equipment Specification</th><th>Quantity</th><th>Cost per Unit</th><th>Total Cost</th></tr></thead>
-              <tbody>
-                {bom.map((row, i) => (
-                  <tr className={i % 2 === 1 ? 'odd' : ''} key={(row.equipmentId || row.equipmentSpecification) + i}>
-                    <td style={{ fontWeight: 600 }}>{row.equipmentSpecification}</td>
-                    <td>{row.quantity}</td>
-                    <td style={{ color: '#69707F' }}>{row.costPerUnit === 'TBD' ? 'TBD' : fmt(row.costPerUnit)}</td>
-                    <td style={{ fontWeight: 600, color: '#049295' }}>{row.totalCost === 'TBD' ? 'TBD' : fmt(row.totalCost)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <BomSection bom={bom} />
         </>
       )}
 

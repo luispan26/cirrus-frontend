@@ -691,7 +691,7 @@ function InventoryBody({ answers, setField }: { answers: Answers; setField: (k: 
             style={{ width: 260 }}
             value={draftId}
             onChange={setDraftId}
-            placeholder="Select equipment…"
+            placeholder="Search for equipment…"
             options={addable.map((eq) => ({ value: eq.equipmentId, label: eq.name }))}
           />
           <button type="button" className="btn-teal" style={{ padding: '6px 14px' }} onClick={addSelected}>Add</button>
@@ -782,11 +782,14 @@ function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setFie
 
   const computed = computeBasicLabEquipment(answers, lists, catalog);
   const rows = applyBasicLabEquipmentOverrides(computed, answers);
-  const serialized = JSON.stringify(rows.map((r) => [r.equipmentId, r.quantity]));
+  const serialized = JSON.stringify(rows.map((r) => [r.equipmentId, r.quantity, r.sources.join(',')]));
 
   useEffect(() => {
     if (loading) return;
-    setField('basic_lab_equipment_final', rows.map(({ equipmentId, name, quantity }) => ({ equipment_id: equipmentId, name, quantity })));
+    // sources travels through to the report's BOM (see reports.service.ts's
+    // extractBasicLabEquipment) so the Lab Design Report can apply the same
+    // color-coded-by-source grouping used here.
+    setField('basic_lab_equipment_final', rows.map(({ equipmentId, name, quantity, sources }) => ({ equipment_id: equipmentId, name, quantity, sources })));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serialized, loading]);
 
