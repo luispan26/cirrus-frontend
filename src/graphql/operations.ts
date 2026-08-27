@@ -306,7 +306,10 @@ export const DELETE_STATION_MUTATION = gql`
 
 export const EQUIPMENT_LIST_QUERY = gql`
   query EquipmentList {
-    equipmentList { equipmentId name costUsd widthFt depthFt heightFt stationId utilityRequirements mounting }
+    equipmentList {
+      equipmentId name costUsd widthFt depthFt heightFt stationId utilityRequirements mounting
+      needsDimensions canvasDeleted
+    }
   }
 `;
 
@@ -519,6 +522,38 @@ export const ASSIGN_INVENTORY_ITEM_TO_STATION_MUTATION = gql`
 export const DELETE_EQUIPMENT_MUTATION = gql`
   mutation DeleteEquipment($equipmentId: String!) {
     deleteEquipment(equipmentId: $equipmentId)
+  }
+`;
+
+export const UPDATE_EQUIPMENT_MUTATION = gql`
+  mutation UpdateEquipment($equipmentId: String!, $input: UpdateEquipmentInput!) {
+    updateEquipment(equipmentId: $equipmentId, input: $input) {
+      equipmentId name costUsd widthFt depthFt heightFt mounting needsDimensions
+    }
+  }
+`;
+
+export const EQUIPMENT_LISTS_QUERY = gql`
+  query EquipmentLists {
+    equipmentLists { listKey displayName equipmentIds }
+  }
+`;
+
+export const ADD_EQUIPMENT_TO_LIST_MUTATION = gql`
+  mutation AddEquipmentToList($listKey: String!, $equipmentId: String!) {
+    addEquipmentToList(listKey: $listKey, equipmentId: $equipmentId) { listKey equipmentIds }
+  }
+`;
+
+export const ADD_EQUIPMENT_TO_LIST_BULK_MUTATION = gql`
+  mutation AddEquipmentToListBulk($listKey: String!, $equipmentIds: [String!]!) {
+    addEquipmentToListBulk(listKey: $listKey, equipmentIds: $equipmentIds) { listKey equipmentIds }
+  }
+`;
+
+export const REMOVE_EQUIPMENT_FROM_LIST_MUTATION = gql`
+  mutation RemoveEquipmentFromList($listKey: String!, $equipmentId: String!) {
+    removeEquipmentFromList(listKey: $listKey, equipmentId: $equipmentId) { listKey equipmentIds }
   }
 `;
 

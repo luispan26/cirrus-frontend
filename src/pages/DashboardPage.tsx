@@ -56,11 +56,12 @@ export function DashboardPage() {
   const recentReports = readyReports.slice(1, 5);
 
   const protocols: any[] = Array.isArray(reportData?.protocols_json) ? reportData.protocols_json : [];
+  // bom (Prompt 3) replaced essential_equipment as the report's equipment
+  // source — its rows use equipmentSpecification, not name, hence the map.
   const equipment: string[] = Array.from(
     new Set(
       ([] as any[])
-        .concat(reportData?.essential_equipment || [], reportData?.recommended_equipment || [])
-        .map((e) => e?.name)
+        .concat((reportData?.bom || []).map((r: any) => r?.equipmentSpecification), reportData?.recommended_equipment?.map((e: any) => e?.name) || [])
         .filter(Boolean),
     ),
   );

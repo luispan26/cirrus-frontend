@@ -21,7 +21,7 @@ const ROLE_LABELS: Record<string, string> = {
 };
 
 export function ReportView({ data }: { data: Record<string, any> }) {
-  const essential = asArray(data.essential_equipment);
+  const bom = asArray(data.bom);
   const staff = asArray(data.staff);
   const recommended = asArray(data.recommended_equipment);
   const consumables = asArray(data.consumables_monthly);
@@ -63,21 +63,19 @@ export function ReportView({ data }: { data: Record<string, any> }) {
         </>
       )}
 
-      {essential.length > 0 && (
+      {bom.length > 0 && (
         <>
-          <div className="sec-head">Essential equipment<div className="sec-line" /></div>
+          <div className="sec-head">Bill of materials<div className="sec-line" /></div>
           <div style={{ borderRadius: 10, overflow: 'hidden', marginBottom: 4 }}>
             <table className="rep-table">
-              <thead><tr><th>Equipment</th><th>Vendor</th><th>Protocols</th><th>Qty</th><th>Est. cost</th><th>Priority</th></tr></thead>
+              <thead><tr><th>Equipment Specification</th><th>Quantity</th><th>Cost per Unit</th><th>Total Cost</th></tr></thead>
               <tbody>
-                {essential.map((e, i) => (
-                  <tr className={i % 2 === 1 ? 'odd' : ''} key={e.name + i}>
-                    <td style={{ fontWeight: 600 }}>{e.name}</td>
-                    <td style={{ color: '#69707F' }}>{e.vendor || '—'}</td>
-                    <td style={{ fontSize: 11, color: '#69707F', maxWidth: 150 }}>{(e.supports_protocols || []).join(', ') || e.purpose || '—'}</td>
-                    <td>{e.quantity_needed || e.quantity || 1}</td>
-                    <td style={{ fontWeight: 600, color: '#049295' }}>{fmt(e.estimated_cost_usd || e.estimated_cost)}</td>
-                    <td><span className="badge-e">Essential</span></td>
+                {bom.map((row, i) => (
+                  <tr className={i % 2 === 1 ? 'odd' : ''} key={(row.equipmentId || row.equipmentSpecification) + i}>
+                    <td style={{ fontWeight: 600 }}>{row.equipmentSpecification}</td>
+                    <td>{row.quantity}</td>
+                    <td style={{ color: '#69707F' }}>{row.costPerUnit === 'TBD' ? 'TBD' : fmt(row.costPerUnit)}</td>
+                    <td style={{ fontWeight: 600, color: '#049295' }}>{row.totalCost === 'TBD' ? 'TBD' : fmt(row.totalCost)}</td>
                   </tr>
                 ))}
               </tbody>

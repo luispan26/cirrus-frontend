@@ -1,4 +1,4 @@
-export type QuestionType = 'radio' | 'multi' | 'space' | 'budget' | 'inventory' | 'priority_tiers' | 'protocol_demand';
+export type QuestionType = 'radio' | 'multi' | 'space' | 'budget' | 'inventory' | 'priority_tiers' | 'protocol_demand' | 'checklist' | 'analytical_equipment' | 'basic_equipment';
 
 export interface QuestionOption {
   v: string;
@@ -38,29 +38,34 @@ export interface Question {
 
 export type Answers = Record<string, unknown>;
 
-// The full intake flow, in order: equipment_status -> existing_equipment ->
-// space -> operations (protocol selection) -> protocol_demand (expected
-// weekly runs per protocol) -> protocol_priorities (tiered prioritization)
-// -> budget. Each answer reframes how the next is interpreted
-// (equipment_status changes what "space" and "budget" mean; existing_equipment
-// is asked immediately after it, while "what do you already have" is still
-// the frame, rather than later once the conversation has moved on to
-// protocols; space is a hard physical ceiling checked against protocols
-// before budget is ever discussed; protocol selection, its demand, and its
-// prioritization are three separate steps — pick the list, size its
-// throughput, then decide how much each one matters — but all still precede
-// budget, since funding order depends on them). existing_equipment only
-// applies to the "already has equipment" branch (see shouldSkip).
+// The full intake flow, in order: existing_equipment -> biosafety_level ->
+// biomaterials -> analytical_equipment -> basic_lab_equipment (the computed,
+// user-editable Basic Lab Equipment List — see computeBasicLabEquipment/
+// applyBasicLabEquipmentOverrides below) -> space -> operations (protocol
+// selection) -> protocol_demand (expected weekly runs per protocol) ->
+// protocol_priorities (tiered prioritization) -> budget. existing_equipment
+// is asked first, unconditionally (there used to be a gating "does your
+// space already have equipment?" question ahead of it; removed — whether any
+// equipment was actually entered here is now itself the signal, see
+// hasExistingEquipment in buildFinalIntakeJson and questionHint in
+// QuestionsPage.tsx). biosafety_level/biomaterials/analytical_equipment feed
+// directly into basic_lab_equipment, so they're grouped right after
+// existing_equipment, before space/protocols/budget.
 //
 // This is intentionally just the sizing-stage questions from the
-// generator's intake spec — no BSL/facilities/staff/schedule/constraints/
-// growth/layout-weights/business-model questions, and no "how long does
-// each run take" question (protocol_demand only asks frequency — duration
-// comes from each protocol's own Operation.estimatedTimeHours metadata, see
-// capacity-planner.ts's estimatedTimeHoursFor). BSL is fixed to 'BSL-1' in
-// buildFinalIntakeJson (the only value the layout generator has ever
-// supported — every other option was already disabled in the old BSL
-// question), and everything else is simply not collected; the backend
+// generator's intake spec, plus the Prompt 1/2 equipment-planning questions
+// — no facilities/staff/schedule/constraints/growth/layout-weights/
+// business-model questions, and no "how long does each run take" question
+// (protocol_demand only asks frequency — duration comes from each
+// protocol's own Operation.estimatedTimeHours metadata, see
+// capacity-planner.ts's estimatedTimeHoursFor). FinalIntakeJson.bsl (the
+// field the layout generator itself reads) is still fixed to 'BSL-1'
+// regardless of the biosafety_level answer — the generator only ever
+// supported that one value (see intake-validator.ts's assertSupportedBsl)
+// and wiring a real BSL-2 answer through to generation/BOM is Prompt 3's
+// job, not this one. biosafety_level's real answer is fully used for the
+// Basic Lab Equipment List computation below, just not for FinalIntakeJson.bsl
+// yet. Everything else not asked here is simply not collected; the backend
 // treats all of it as optional and defaults safely when absent (see
 // feasibility.service.ts / report-generator.service.ts / capacity-planner.ts).
 //
@@ -81,20 +86,53 @@ export const OPERATION_OPTS: QuestionOption[] = [
   { v: 'other', l: 'Other', d: 'Not supported by the layout generator — no protocol definition to size a room against.', disabled: true },
 ];
 
+// New Q2's options — same values/colors as the old BSL question (see git
+// history: BSL-1/#4FB3AC, BSL-2/#C99A4A), before it was simplified down to a
+// BSL-1-only stub. BSL-3/4/not_sure are dropped: the spec for this question
+// is only BSL-1/BSL-2.
+export const BIOSAFETY_LEVEL_OPTS: QuestionOption[] = [
+  { v: 'BSL-1', l: 'BSL-1', d: 'Minimal risk — teaching labs, non-pathogenic organisms', risk: '#4FB3AC' },
+  { v: 'BSL-2', l: 'BSL-2', d: 'Moderate risk — most research, human cell lines', risk: '#C99A4A' },
+];
+
+// New Q3's options.
+export const BIOMATERIAL_OPTS: QuestionOption[] = [
+  { v: 'bacteria', l: 'Bacteria' },
+  { v: 'yeast', l: 'Yeast' },
+  { v: 'mammalian_adherent', l: 'Mammalian - Adherent' },
+  { v: 'mammalian_suspension', l: 'Mammalian - Suspension' },
+  { v: 'mice', l: 'Mice' },
+];
+
+// Prompt 1's nine fixed equipment membership list keys (see the backend's
+// src/equipment-lists/equipment-list.service.ts LIST_DEFINITIONS) that the
+// Basic Lab Equipment List computation below draws from. Kept in sync by
+// hand since the frontend and backend don't share types.
+export const GENERAL_LAB_LIST_KEY = 'general_lab_equipment_list';
+export const BSL_REQUIRED_LIST_KEYS: Record<string, string> = {
+  'BSL-1': 'bsl1_required_equipment',
+  'BSL-2': 'bsl2_required_equipment',
+};
+export const BIOMATERIAL_LIST_KEYS: Record<string, string> = {
+  bacteria: 'bacterial_basic_equipment',
+  yeast: 'yeast_basic_equipment',
+  mammalian_adherent: 'mammalian_adherent_basic_equipment',
+  mammalian_suspension: 'mammalian_suspension_basic_equipment',
+  mice: 'mice_basic_equipment',
+};
+export const ANALYTICAL_EQUIPMENT_LIST_KEY = 'analytical_equipment_catalog';
+
 export const QS: Question[] = [
-  {
-    id: 'equipment_status', n: 1, t: 'Does your space already have equipment?', h: 'Changes what "space" and "budget" mean in the questions that follow', type: 'radio',
-    opts: [
-      { v: 'has_equipment', l: 'I have a space with existing equipment', d: 'Adding protocols or scaling up what you already run. Space means available/underutilized footprint; budget means incremental spend on top of what you already have.' },
-      { v: 'no_equipment', l: 'I have a space, no equipment yet', d: 'Full build-out from scratch. Space means total footprint; budget means the full build budget.' },
-    ],
-  },
-  { id: 'existing_equipment', n: 2, t: 'What equipment do you already have?', h: 'Pulled from your equipment inventory — only the gap between this and what your protocols need gets sized', type: 'inventory' },
-  { id: 'space', n: 3, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
-  { id: 'operations', n: 4, t: 'Which protocols does this lab need to run?', h: 'Select from the supported protocol library', type: 'multi', opts: OPERATION_OPTS },
-  { id: 'protocol_demand', n: 5, t: 'How often will you run each protocol?', h: 'Weekly run volume — used to size bench count, not just equipment. Run duration is pulled from the protocol itself.', type: 'protocol_demand' },
-  { id: 'protocol_priorities', n: 6, t: 'How should these protocols be prioritized?', h: 'Optional — sort them into funding tiers if some matter more than others', type: 'priority_tiers' },
-  { id: 'budget', n: 7, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
+  { id: 'existing_equipment', n: 1, t: 'What equipment do you already have?', h: 'Pulled from your equipment inventory — only the gap between this and what your protocols need gets sized', type: 'inventory' },
+  { id: 'biosafety_level', n: 2, t: 'What biosafety level is your labspace compliant with?', h: 'Adds that level\'s required equipment to your Basic Lab Equipment List', type: 'radio', opts: BIOSAFETY_LEVEL_OPTS },
+  { id: 'biomaterials', n: 3, t: 'What type of biomaterials would you like to work with?', h: 'Each one adds its own basic equipment set to your Basic Lab Equipment List', type: 'checklist', opts: BIOMATERIAL_OPTS },
+  { id: 'analytical_equipment', n: 4, t: 'Would you like any additional analytical equipment?', h: 'Optional — check anything you need beyond the basics, and set how many', type: 'analytical_equipment' },
+  { id: 'basic_lab_equipment', n: 5, t: 'Finalize equipment quantity', h: 'Your computed Basic Lab Equipment List — adjust quantities or remove anything you don’t need', type: 'basic_equipment' },
+  { id: 'space', n: 6, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
+  { id: 'operations', n: 7, t: 'Which protocols does this lab need to run?', h: 'Select from the supported protocol library', type: 'multi', opts: OPERATION_OPTS },
+  { id: 'protocol_demand', n: 8, t: 'How often will you run each protocol?', h: 'Weekly run volume — used to size bench count, not just equipment. Run duration is pulled from the protocol itself.', type: 'protocol_demand' },
+  { id: 'protocol_priorities', n: 9, t: 'How should these protocols be prioritized?', h: 'Optional — sort them into funding tiers if some matter more than others', type: 'priority_tiers' },
+  { id: 'budget', n: 10, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
 ];
 
 // Steps where advancing past them triggers a feasibilityCheck GraphQL call
@@ -106,16 +144,19 @@ export const QS: Question[] = [
 export const FEASIBILITY_GATE_IDS = ['protocol_demand', 'protocol_priorities', 'budget'];
 
 export const INTAKE_FIELD_KEYS = [
-  'equipment_status', 'existing_equipment_meta',
+  'existing_equipment_meta',
+  'biosafety_level', 'biomaterials', 'analytical_equipment_quantities',
+  'basic_lab_equipment_quantity_overrides', 'basic_lab_equipment_removed', 'basic_lab_equipment_final',
   'space_method', 'width_ft', 'height_ft', 'space_floorplan_filename',
   'operations', 'protocol_runs_per_week', 'wants_protocol_priorities', 'protocol_tiers', 'protocol_tier_order',
   'budget_desired', 'budget_max', 'budget_scope',
 ];
 
-// existing_equipment only makes sense once the client has told us they
-// already have equipment (Case 1) — otherwise there's nothing to inventory.
-export function shouldSkip(q: Question, answers: Answers): boolean {
-  if (q.id === 'existing_equipment') return answers.equipment_status !== 'has_equipment';
+// No steps are skipped today — existing_equipment used to be conditional on
+// a gating question that's since been removed (see the flow comment above
+// QS). Kept as a function (not deleted outright) since stepIndex/QuestionsPage
+// both call it, and a future question may need to be conditional again.
+export function shouldSkip(_q: Question, _answers: Answers): boolean {
   return false;
 }
 
@@ -143,11 +184,20 @@ export function resolveOperations(a: Answers): string[] {
 
 export interface FinalIntakeJson {
   scenario: string;
+  // Derived from whether existing_equipment_meta has any entries (see
+  // hasExistingEquipment below), not asked as its own question anymore.
   equipment_status: string | null;
   // Always 'BSL-1' — the only biosafety level the layout generator
-  // supports (see intake-validator.ts's assertSupportedBsl), and the only
-  // value the old BSL question ever let a client actually pick.
+  // supports (see intake-validator.ts's assertSupportedBsl). The real
+  // biosafety_level answer (below) is used for the Basic Lab Equipment List
+  // computation but deliberately NOT threaded through here yet — wiring a
+  // real BSL-2 value into generation/BOM is Prompt 3's job.
   bsl: string;
+  biosafety_level: string | null;
+  biomaterials: string[];
+  // The finalized (post-Q5-edit) Basic Lab Equipment List — see
+  // computeBasicLabEquipment/applyBasicLabEquipmentOverrides below.
+  basic_lab_equipment: { equipment_id: string; name: string; quantity: number }[];
   operations: string[];
   existing_equipment: { equipment_id: string; name: string; count: number }[];
   space: {
@@ -187,8 +237,12 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
   const width_ft = parseFloat((a.width_ft as string) || '0') || 0;
   const height_ft = parseFloat((a.height_ft as string) || '0') || 0;
 
-  const equipmentStatus = (a.equipment_status as string) || null;
   const existingMeta = (a.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
+  // Replaces the old equipment_status question (removed — see the flow
+  // comment above QS): whether the client entered any existing equipment is
+  // now itself the signal for "already has equipment", instead of asking
+  // separately and risking the two answers disagreeing.
+  const hasExistingEquipment = Object.keys(existingMeta).length > 0;
   const budgetDesired = parseInt((a.budget_desired as string) || '0', 10) || 0;
   const budgetMax = parseInt((a.budget_max as string) || '0', 10) || 0;
 
@@ -217,12 +271,13 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
 
   return {
     scenario: 'lab_design',
-    equipment_status: equipmentStatus,
+    equipment_status: hasExistingEquipment ? 'has_equipment' : 'no_equipment',
     bsl: 'BSL-1',
+    biosafety_level: (a.biosafety_level as string) || null,
+    biomaterials: (a.biomaterials as string[]) || [],
+    basic_lab_equipment: (a.basic_lab_equipment_final as { equipment_id: string; name: string; quantity: number }[]) || [],
     operations: resolveOperations(a),
-    existing_equipment: equipmentStatus === 'has_equipment'
-      ? Object.entries(existingMeta).map(([equipment_id, meta]) => ({ equipment_id, name: meta.name, count: Math.max(1, meta.count ?? 1) }))
-      : [],
+    existing_equipment: Object.entries(existingMeta).map(([equipment_id, meta]) => ({ equipment_id, name: meta.name, count: Math.max(1, meta.count ?? 1) })),
     space: {
       sqft: Math.round(width_ft * height_ft) || 0,
       width_ft, height_ft,
@@ -231,9 +286,8 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
       // asked as a third manual field.
       ceiling_ft: 10,
       rooms: 'single_open',
-      // Derived from equipment_status rather than asked a second time —
       // "has existing equipment" implies building into existing space.
-      renovation: equipmentStatus === 'has_equipment',
+      renovation: hasExistingEquipment,
       method: (a.space_method as 'sandbox' | 'upload' | undefined) ?? null,
       floorplan_filename: (a.space_floorplan_filename as string) || null,
     },
@@ -249,4 +303,81 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
       },
     },
   };
+}
+
+export interface EquipmentListSummary { listKey: string; equipmentIds: string[]; }
+export interface EquipmentCatalogEntry { equipmentId: string; name: string; }
+export interface BasicLabEquipmentRow { equipmentId: string; name: string; quantity: number; locked: boolean; }
+
+// Basic Lab Equipment List computation (Prompt 2 spec): start with 1 of
+// every item on the General Lab Equipment List; add 1 of every item on the
+// BSL-required list matching the biosafety_level answer (locked — can't be
+// removed in Q5, only quantity-increased, since it's below the count the
+// biosafety level actually requires); add 1 of every item on each checked
+// biomaterial's list (Q3); add each Q4 analytical item at its chosen
+// quantity. The same equipmentId touched by more than one source sums into a
+// single row rather than duplicating (e.g. a centrifuge on both General and
+// Bacterial Basic -> quantity 2, not two rows of 1).
+//
+// Deliberately pure over plain data (no GraphQL/Apollo here) so it can be
+// called from a component with already-fetched lists/catalog, or later
+// reused server-side without dragging a frontend query client along.
+export function computeBasicLabEquipment(
+  answers: Answers,
+  lists: EquipmentListSummary[],
+  catalog: EquipmentCatalogEntry[],
+): BasicLabEquipmentRow[] {
+  const listByKey = new Map(lists.map((l) => [l.listKey, l]));
+  const nameById = new Map(catalog.map((c) => [c.equipmentId, c.name]));
+  const quantities = new Map<string, number>();
+  const locked = new Set<string>();
+
+  function addList(listKey: string | undefined, isLockedSource: boolean) {
+    if (!listKey) return;
+    const list = listByKey.get(listKey);
+    if (!list) return;
+    for (const equipmentId of list.equipmentIds) {
+      quantities.set(equipmentId, (quantities.get(equipmentId) ?? 0) + 1);
+      if (isLockedSource) locked.add(equipmentId);
+    }
+  }
+
+  addList(GENERAL_LAB_LIST_KEY, false);
+  const bslLevel = answers.biosafety_level as string | undefined;
+  addList(bslLevel ? BSL_REQUIRED_LIST_KEYS[bslLevel] : undefined, true);
+  for (const biomaterial of (answers.biomaterials as string[]) || []) {
+    addList(BIOMATERIAL_LIST_KEYS[biomaterial], false);
+  }
+
+  const analyticalQuantities = (answers.analytical_equipment_quantities as Record<string, number>) || {};
+  for (const [equipmentId, qty] of Object.entries(analyticalQuantities)) {
+    quantities.set(equipmentId, (quantities.get(equipmentId) ?? 0) + Math.max(1, Math.round(qty) || 1));
+  }
+
+  return Array.from(quantities.entries())
+    // Guards against a listed equipmentId whose Equipment Specification
+    // List entry was since deleted — never render a row with no real name.
+    .filter(([equipmentId]) => nameById.has(equipmentId))
+    .map(([equipmentId, quantity]) => ({
+      equipmentId,
+      name: nameById.get(equipmentId)!,
+      quantity,
+      locked: locked.has(equipmentId),
+    }));
+}
+
+// Applies a user's Q5 edits on top of the computed list: quantity overrides
+// (floored at 1, per the "cannot go below 1 without removing the item
+// entirely" rule) and explicit removals. Locked (BSL-required) rows ignore
+// removal entirely — they can only have their quantity increased, matching
+// the Q5 editing rules exactly.
+export function applyBasicLabEquipmentOverrides(computed: BasicLabEquipmentRow[], answers: Answers): BasicLabEquipmentRow[] {
+  const removed = new Set((answers.basic_lab_equipment_removed as string[]) || []);
+  const overrides = (answers.basic_lab_equipment_quantity_overrides as Record<string, number>) || {};
+  return computed
+    .filter((row) => row.locked || !removed.has(row.equipmentId))
+    .map((row) => ({
+      ...row,
+      quantity: Math.max(1, overrides[row.equipmentId] ?? row.quantity),
+    }));
 }

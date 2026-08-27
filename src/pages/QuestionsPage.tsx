@@ -1,34 +1,27 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useLazyQuery, useQuery } from '@apollo/client/react';
+import { useApolloClient, useLazyQuery, useQuery } from '@apollo/client/react';
 import { OptionCard } from '../components/OptionCard';
 import { SyncBadge } from '../components/SyncBadge';
+import { SearchableSelect } from '../components/SearchableSelect';
 import { useIntakeSync } from '../hooks/useIntakeSync';
-import { QS, OPERATION_OPTS, DAMPLAB_MATCH_KEYWORDS, shouldSkip, stepIndex, buildFinalIntakeJson, FEASIBILITY_GATE_IDS, type Answers, type QuestionOption } from '../lib/questions';
-import { FEASIBILITY_CHECK_QUERY, EQUIPMENT_LIST_QUERY, PROTOCOLS_IO_SEARCH_QUERY } from '../graphql/operations';
+import {
+  QS, OPERATION_OPTS, DAMPLAB_MATCH_KEYWORDS, shouldSkip, stepIndex, buildFinalIntakeJson, FEASIBILITY_GATE_IDS,
+  ANALYTICAL_EQUIPMENT_LIST_KEY, computeBasicLabEquipment, applyBasicLabEquipmentOverrides,
+  type Answers, type QuestionOption,
+} from '../lib/questions';
+import { FEASIBILITY_CHECK_QUERY, EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, PROTOCOLS_IO_SEARCH_QUERY } from '../graphql/operations';
 
 type EquipmentRow = { equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null };
+type EquipmentListRow = { listKey: string; displayName: string; equipmentIds: string[] };
 type ProtocolSummary = { id: string; title: string; sourceUrl: string };
 type ProtocolSearchResult = { items: ProtocolSummary[] };
 
 type FeasibilityIssue = { field: string; message: string };
 type FeasibilityCheckResponse = { feasibilityCheck: { ok: boolean; issues: FeasibilityIssue[] } };
 
-// Finds the first Damp Lab protocol whose title contains one of this
-// catalog entry's match keywords (case-insensitive) — see
-// DAMPLAB_MATCH_KEYWORDS in questions.ts for why keyword matching rather
-// than a hardcoded protocol ID.
-function matchDamplabProtocol(optionValue: string, items: ProtocolSummary[]): ProtocolSummary | undefined {
-  const keywords = DAMPLAB_MATCH_KEYWORDS[optionValue];
-  if (!keywords || keywords.length === 0) return undefined;
-  return items.find((item) => {
-    const title = item.title.toLowerCase();
-    return keywords.some((kw) => title.includes(kw));
-  });
-}
-
 function validateQuestion(id: string, answers: Answers) {
-  if (id === 'equipment_status' && !answers.equipment_status) return 'Choose whether your space already has equipment.';
+  if (id === 'biosafety_level' && !answers.biosafety_level) return 'Choose a biosafety level.';
   if (id === 'operations' && ((answers.operations as string[]) || []).length === 0) return 'Select at least one protocol.';
   if (id === 'protocol_demand') {
     const ops = (answers.operations as string[]) || [];
@@ -59,10 +52,11 @@ function validateQuestion(id: string, answers: Answers) {
 }
 
 // space/budget mean different things depending on whether the client already
-// has equipment (see the equipment_status question) — the hint under the
-// question title reflects that instead of a single static string.
+// has equipment — inferred from whether existing_equipment (Q1) actually has
+// entries, since there's no separate gating question for it anymore — the
+// hint under the question title reflects that instead of a single static string.
 function questionHint(q: (typeof QS)[number], answers: Answers): string {
-  const hasEquipment = answers.equipment_status === 'has_equipment';
+  const hasEquipment = Object.keys((answers.existing_equipment_meta as Record<string, unknown>) || {}).length > 0;
   if (q.id === 'space') {
     return hasEquipment
       ? 'Used to generate your floor plan — the available/underutilized footprint you’re building into, not your whole facility.'
@@ -216,51 +210,91 @@ function QuestionBody({
         </div>
       )}
 
+      {q.type === 'checklist' && (
+        <div className="opt-grid">
+          {q.opts!.map((o) => (
+            <OptionCard key={o.v} option={o} selected={((answers[q.id] as string[]) || []).includes(o.v)} onClick={() => toggleMultiField(q.id, o.v)} />
+          ))}
+        </div>
+      )}
+
       {q.type === 'inventory' && <InventoryBody answers={answers} setField={setField} />}
       {q.type === 'space' && <SpaceBody answers={answers} setField={setField} />}
       {q.type === 'budget' && <BudgetBody answers={answers} setField={setField} />}
       {q.type === 'protocol_demand' && <ProtocolDemandBody answers={answers} setField={setField} />}
       {q.type === 'priority_tiers' && <ProtocolPrioritiesBody answers={answers} setField={setField} />}
+      {q.type === 'analytical_equipment' && <AnalyticalEquipmentBody answers={answers} setField={setField} />}
+      {q.type === 'basic_equipment' && <BasicLabEquipmentBody answers={answers} setField={setField} />}
     </div>
   );
 }
 
-// Dropdown, scoped to only what the Damp Lab workspace has actually
-// published — cross-referenced against the internal catalog so the stored
-// value stays a real operationId the backend understands (a live Damp Lab
-// protocol like "Optical Density Measurement" that has no catalog
-// counterpart at all can't be selected, since there'd be nothing valid to
-// send downstream). Catalog entries not yet supported by the layout
-// generator but still published to Damp Lab are listed separately, for
-// reference, rather than offered as selectable — picking one wouldn't
-// actually work yet.
-function ProtocolSelectBody({ answers, toggleMultiField }: { answers: Answers; toggleMultiField: (k: string, v: string) => void }) {
-  const { data, loading, error } = useQuery<{ protocolsIoSearch: ProtocolSearchResult }>(
+// Fetches every protocol published to the Damp Lab protocols.io workspace
+// (not just the ~9 with a curated Operation mapping) — page 1 at the
+// server's max page size, then any remaining pages in parallel, so this
+// stays the full catalog even if the workspace grows past 100 entries.
+function useAllDamplabProtocols(): { items: ProtocolSummary[]; loading: boolean; error: Error | undefined } {
+  const client = useApolloClient();
+  const { data, loading, error } = useQuery<{ protocolsIoSearch: ProtocolSearchResult & { totalPages: number } }>(
     PROTOCOLS_IO_SEARCH_QUERY,
-    { variables: { pageSize: 50 } },
+    { variables: { pageSize: 100 } },
   );
-  const damplabItems = data?.protocolsIoSearch.items ?? [];
-
-  const matched = OPERATION_OPTS
-    .map((opt) => ({ opt, match: matchDamplabProtocol(opt.v, damplabItems) }))
-    .filter((x): x is { opt: QuestionOption; match: ProtocolSummary } => !!x.match);
-  const selectable = matched.filter((x) => !x.opt.disabled);
-  const comingSoon = matched.filter((x) => x.opt.disabled);
-
-  const selected = (answers.operations as string[]) || [];
-  const addable = selectable.filter((x) => !selected.includes(x.opt.v));
-  const [draftValue, setDraftValue] = useState('');
+  const totalPages = data?.protocolsIoSearch.totalPages ?? 1;
+  const [restItems, setRestItems] = useState<ProtocolSummary[]>([]);
+  const [fetchingRest, setFetchingRest] = useState(false);
 
   useEffect(() => {
-    if (!addable.some((x) => x.opt.v === draftValue)) {
-      setDraftValue(addable[0]?.opt.v ?? '');
-    }
-  }, [addable, draftValue]);
+    if (totalPages <= 1) return;
+    setFetchingRest(true);
+    Promise.all(
+      Array.from({ length: totalPages - 1 }, (_, i) => i + 2).map((page) =>
+        client.query<{ protocolsIoSearch: ProtocolSearchResult }>({ query: PROTOCOLS_IO_SEARCH_QUERY, variables: { pageSize: 100, page } }),
+      ),
+    )
+      .then((pages) => setRestItems(pages.flatMap((p) => p.data?.protocolsIoSearch.items ?? [])))
+      .finally(() => setFetchingRest(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalPages]);
 
-  function addSelected() {
-    if (!draftValue) return;
-    toggleMultiField('operations', draftValue);
-  }
+  return {
+    items: [...(data?.protocolsIoSearch.items ?? []), ...restItems],
+    loading: loading || fetchingRest,
+    error,
+  };
+}
+
+// The full Damp Lab catalog is selectable, not just the curated subset with
+// a matching Operation definition — an unmatched protocol still gets
+// recorded in the final intake payload (see resolveOperationId in
+// questions.ts, which passes an unrecognized id through unchanged), it just
+// doesn't contribute equipment/space sizing since the backend has no
+// Operation to look it up against. Matched protocols use the catalog's own
+// value (a real operationId) so sizing still works exactly as before;
+// unmatched ones use the protocol's own protocols.io id.
+function findCatalogMatch(title: string): QuestionOption | undefined {
+  const lower = title.toLowerCase();
+  return OPERATION_OPTS.find((opt) => {
+    const keywords = DAMPLAB_MATCH_KEYWORDS[opt.v];
+    return keywords && !opt.disabled && keywords.some((kw) => lower.includes(kw));
+  });
+}
+
+function ProtocolSelectBody({ answers, toggleMultiField }: { answers: Answers; toggleMultiField: (k: string, v: string) => void }) {
+  const { items: damplabItems, loading, error } = useAllDamplabProtocols();
+
+  const allOptions = damplabItems.map((item) => {
+    const catalogMatch = findCatalogMatch(item.title);
+    return {
+      value: catalogMatch ? catalogMatch.v : item.id,
+      title: item.title,
+      sourceUrl: item.sourceUrl,
+      sized: !!catalogMatch,
+    };
+  });
+  const optionByValue = new Map(allOptions.map((o) => [o.value, o]));
+
+  const selected = (answers.operations as string[]) || [];
+  const addable = allOptions.filter((o) => !selected.includes(o.value));
 
   if (loading) return <p className="q-inline-help">Loading the Damp Lab protocol catalog…</p>;
   if (error) return <p className="q-validation-error">Couldn’t load Damp Lab protocols: {error.message}</p>;
@@ -268,22 +302,26 @@ function ProtocolSelectBody({ answers, toggleMultiField }: { answers: Answers; t
   return (
     <>
       <p className="q-inline-help">
-        {matched.length === 0
-          ? 'No protocols published to the Damp Lab workspace matched the supported catalog yet.'
-          : 'Sourced live from the Damp Lab protocols.io workspace.'}
+        {allOptions.length === 0
+          ? 'No protocols are published to the Damp Lab workspace yet.'
+          : 'The full Damp Lab protocols.io catalog — protocols without a size-planning match are still selectable, just flagged below.'}
       </p>
 
       {selected.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
           {selected.map((v) => {
-            const entry = matched.find((x) => x.opt.v === v);
-            const label = entry?.match.title ?? OPERATION_OPTS.find((o) => o.v === v)?.l ?? v;
+            const entry = optionByValue.get(v);
             return (
               <div key={v} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: 13 }}>
-                  {label}
+                  {entry?.title ?? v}
+                  {entry && !entry.sized && (
+                    <span title="No Operation definition to size a room against yet — still recorded, just not sized." style={{ marginLeft: 8, fontSize: 11, color: 'var(--mid)', border: '1px solid var(--br)', borderRadius: 4, padding: '1px 5px' }}>
+                      not sized yet
+                    </span>
+                  )}
                   {entry && (
-                    <a href={entry.match.sourceUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 11, color: 'var(--teal)', marginLeft: 8 }}>
+                    <a href={entry.sourceUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 11, color: 'var(--teal)', marginLeft: 8 }}>
                       View on Damp Lab →
                     </a>
                   )}
@@ -296,28 +334,25 @@ function ProtocolSelectBody({ answers, toggleMultiField }: { answers: Answers; t
       )}
 
       {addable.length > 0 && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <select className="field-input" style={{ width: 320 }} value={draftValue} onChange={(e) => setDraftValue(e.target.value)}>
-            {addable.map((x) => <option key={x.opt.v} value={x.opt.v}>{x.match.title}</option>)}
-          </select>
-          <button type="button" className="btn-teal" style={{ padding: '6px 14px' }} onClick={addSelected}>Add</button>
-        </div>
-      )}
-
-      {comingSoon.length > 0 && (
-        <div style={{ marginTop: 14 }}>
-          <p className="q-inline-help" style={{ marginBottom: 6 }}>Also published to Damp Lab, not yet supported by the layout generator:</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {comingSoon.map((x) => (
-              <div key={x.opt.v} style={{ fontSize: 12, color: 'var(--mid)' }}>
-                {x.match.title}{' '}
-                <a href={x.match.sourceUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--teal)' }}>View →</a>
-              </div>
-            ))}
-          </div>
-        </div>
+        <AddProtocolPicker addable={addable} onAdd={(v) => toggleMultiField('operations', v)} />
       )}
     </>
+  );
+}
+
+function AddProtocolPicker({ addable, onAdd }: { addable: { value: string; title: string; sized: boolean }[]; onAdd: (v: string) => void }) {
+  const [draftValue, setDraftValue] = useState('');
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+      <SearchableSelect
+        style={{ width: 320 }}
+        value={draftValue}
+        onChange={setDraftValue}
+        placeholder="Select a protocol…"
+        options={addable.map((o) => ({ value: o.value, label: o.sized ? o.title : `${o.title} (not sized yet)` }))}
+      />
+      <button type="button" className="btn-teal" style={{ padding: '6px 14px' }} onClick={() => { if (draftValue) { onAdd(draftValue); setDraftValue(''); } }}>Add</button>
+    </div>
   );
 }
 
@@ -408,13 +443,6 @@ function BudgetBody({ answers, setField }: { answers: Answers; setField: (k: str
           <label className="field-label">Absolute max spend (USD)</label>
           <input className="field-input" type="number" placeholder="e.g. 300000" defaultValue={max || ''} onBlur={(e) => setField('budget_max', e.target.value)} />
           <p className="q-inline-help">The hard ceiling you could go to if it's genuinely needed — sizing targets your desired spend first and only reaches into this range for unmet high-priority needs.</p>
-        </div>
-      </div>
-      <div className="field-wrap">
-        <label className="field-label">What does this cover?</label>
-        <div className="chips" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
-          <span className={`chip${answers.budget_scope === 'equipment_only' ? ' sel' : ''}`} onClick={() => setField('budget_scope', 'equipment_only')}>Equipment &amp; consumables only</span>
-          <span className={`chip${answers.budget_scope === 'equipment_and_construction' ? ' sel' : ''}`} onClick={() => setField('budget_scope', 'equipment_and_construction')}>Equipment + construction / renovation</span>
         </div>
       </div>
     </>
@@ -597,12 +625,14 @@ function InventoryBody({ answers, setField }: { answers: Answers; setField: (k: 
   const addable = catalog.filter((eq) => !meta[eq.equipmentId]);
   const [draftId, setDraftId] = useState('');
 
-  // Keeps the dropdown pointed at a real, still-addable option — needed
-  // because the catalog loads asynchronously and each Add/Remove changes
-  // which items are still addable out from under a stale selection.
+  // Clears the draft selection once it's no longer a real, still-addable
+  // option — needed because the catalog loads asynchronously and each
+  // Add/Remove changes which items are still addable out from under a
+  // stale selection. Clears to blank rather than defaulting to the first
+  // addable item, since the picker is search-first now.
   useEffect(() => {
-    if (!addable.some((eq) => eq.equipmentId === draftId)) {
-      setDraftId(addable[0]?.equipmentId ?? '');
+    if (draftId && !addable.some((eq) => eq.equipmentId === draftId)) {
+      setDraftId('');
     }
   }, [addable, draftId]);
 
@@ -657,12 +687,150 @@ function InventoryBody({ answers, setField }: { answers: Answers; setField: (k: 
 
       {addable.length > 0 && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <select className="field-input" style={{ width: 260 }} value={draftId} onChange={(e) => setDraftId(e.target.value)}>
-            {addable.map((eq) => <option key={eq.equipmentId} value={eq.equipmentId}>{eq.name}</option>)}
-          </select>
+          <SearchableSelect
+            style={{ width: 260 }}
+            value={draftId}
+            onChange={setDraftId}
+            placeholder="Select equipment…"
+            options={addable.map((eq) => ({ value: eq.equipmentId, label: eq.name }))}
+          />
           <button type="button" className="btn-teal" style={{ padding: '6px 14px' }} onClick={addSelected}>Add</button>
         </div>
       )}
     </>
+  );
+}
+
+// Sources its checkbox list from Prompt 1's "Analytical Equipment Catalog"
+// membership list (EQUIPMENT_LISTS_QUERY), cross-referenced against the
+// Equipment Specification List (EQUIPMENT_LIST_QUERY) for display names —
+// same live-data pattern as InventoryBody above, so once that list is
+// populated via the admin UI this reflects it on the next load with no code
+// change. Empty-state per the Prompt 2 spec: an empty catalog renders a
+// plain message, never a broken/placeholder grid.
+function AnalyticalEquipmentBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+  const { data: listsData, loading: listsLoading, error: listsError } = useQuery<{ equipmentLists: EquipmentListRow[] }>(EQUIPMENT_LISTS_QUERY);
+  const { data: equipmentData, loading: eqLoading, error: eqError } = useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
+
+  const analyticalList = listsData?.equipmentLists.find((l) => l.listKey === ANALYTICAL_EQUIPMENT_LIST_KEY);
+  const catalogById = new Map((equipmentData?.equipmentList ?? []).map((eq) => [eq.equipmentId, eq]));
+  const items = (analyticalList?.equipmentIds ?? [])
+    .map((id) => catalogById.get(id))
+    .filter((eq): eq is EquipmentRow => !!eq);
+
+  const quantities = (answers.analytical_equipment_quantities as Record<string, number>) || {};
+
+  function toggle(equipmentId: string) {
+    if (quantities[equipmentId] !== undefined) {
+      const { [equipmentId]: _removed, ...rest } = quantities;
+      setField('analytical_equipment_quantities', rest);
+    } else {
+      setField('analytical_equipment_quantities', { ...quantities, [equipmentId]: 1 });
+    }
+  }
+  function setQty(equipmentId: string, next: number) {
+    if (quantities[equipmentId] === undefined) return;
+    setField('analytical_equipment_quantities', { ...quantities, [equipmentId]: Math.max(1, Math.round(next)) });
+  }
+
+  if (listsLoading || eqLoading) return <p className="q-inline-help">Loading the analytical equipment catalog…</p>;
+  if (listsError) return <p className="q-validation-error">Couldn’t load equipment lists: {listsError.message}</p>;
+  if (eqError) return <p className="q-validation-error">Couldn’t load the equipment catalog: {eqError.message}</p>;
+
+  if (items.length === 0) {
+    return <p className="q-inline-help">No analytical equipment has been catalogued yet — skip this question, or check back once it's added via Settings → Equipment Membership Lists.</p>;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {items.map((eq) => {
+        const checked = quantities[eq.equipmentId] !== undefined;
+        return (
+          <div key={eq.equipmentId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: 'var(--dark)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={checked} onChange={() => toggle(eq.equipmentId)} />
+              {eq.name}
+            </label>
+            {checked && (
+              <div className="stepper">
+                <button type="button" onClick={() => setQty(eq.equipmentId, quantities[eq.equipmentId] - 1)}>−</button>
+                <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{quantities[eq.equipmentId]}</span>
+                <button type="button" onClick={() => setQty(eq.equipmentId, quantities[eq.equipmentId] + 1)}>+</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Renders computeBasicLabEquipment + applyBasicLabEquipmentOverrides (see
+// questions.ts) against live Prompt 1 data, then persists the finalized,
+// post-edit list into answers.basic_lab_equipment_final so
+// buildFinalIntakeJson can read it directly without recomputing. The sync
+// effect is keyed off a serialized snapshot of the visible rows, not the
+// array reference, so it only writes when the actual content changes —
+// otherwise every render (each of which produces new row objects) would
+// re-fire the debounced session write.
+function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+  const { data: listsData, loading: listsLoading, error: listsError } = useQuery<{ equipmentLists: EquipmentListRow[] }>(EQUIPMENT_LISTS_QUERY);
+  const { data: equipmentData, loading: eqLoading, error: eqError } = useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
+  const lists = listsData?.equipmentLists ?? [];
+  const catalog = equipmentData?.equipmentList ?? [];
+  const loading = listsLoading || eqLoading;
+
+  const computed = computeBasicLabEquipment(answers, lists, catalog);
+  const rows = applyBasicLabEquipmentOverrides(computed, answers);
+  const serialized = JSON.stringify(rows.map((r) => [r.equipmentId, r.quantity]));
+
+  useEffect(() => {
+    if (loading) return;
+    setField('basic_lab_equipment_final', rows.map(({ equipmentId, name, quantity }) => ({ equipment_id: equipmentId, name, quantity })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serialized, loading]);
+
+  function setQty(equipmentId: string, next: number) {
+    const overrides = (answers.basic_lab_equipment_quantity_overrides as Record<string, number>) || {};
+    setField('basic_lab_equipment_quantity_overrides', { ...overrides, [equipmentId]: Math.max(1, Math.round(next)) });
+  }
+  function remove(equipmentId: string) {
+    const removedIds = (answers.basic_lab_equipment_removed as string[]) || [];
+    if (removedIds.includes(equipmentId)) return;
+    setField('basic_lab_equipment_removed', [...removedIds, equipmentId]);
+  }
+
+  if (loading) return <p className="q-inline-help">Loading your equipment lists…</p>;
+  if (listsError) return <p className="q-validation-error">Couldn’t load equipment lists: {listsError.message}</p>;
+  if (eqError) return <p className="q-validation-error">Couldn’t load the equipment catalog: {eqError.message}</p>;
+
+  if (rows.length === 0) {
+    return <p className="q-inline-help">Nothing to finalize yet — the General Lab, biosafety, biomaterial, and analytical equipment lists you've drawn from are all empty or unselected.</p>;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <p className="q-inline-help" style={{ marginTop: 0 }}>
+        Adjust quantities as needed. Items required for your biosafety level can’t be removed, only increased.
+      </p>
+      {rows.map((row) => (
+        <div key={row.equipmentId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)' }}>
+            {row.name}
+            {row.locked && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(required)</span>}
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div className="stepper">
+              <button type="button" onClick={() => setQty(row.equipmentId, row.quantity - 1)}>−</button>
+              <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.quantity}</span>
+              <button type="button" onClick={() => setQty(row.equipmentId, row.quantity + 1)}>+</button>
+            </div>
+            {!row.locked && (
+              <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => remove(row.equipmentId)}>Remove</button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }

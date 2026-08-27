@@ -95,11 +95,17 @@ export function useIntakeSync(onComplete: (finalIntakeJson: Record<string, unkno
   const [runCompleteIntake] = useMutation(COMPLETE_INTAKE_MUTATION);
 
   const writeTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // Mirrors what each pending timer above is about to write — lets the
+  // unmount cleanup below flush real values instead of just cancelling the
+  // timers and losing whatever hadn't been saved yet.
+  const pendingWrites = useRef<Record<string, unknown>>({});
 
   const scheduleWrite = useCallback(
     (key: string, value: unknown) => {
       if (writeTimers.current[key]) clearTimeout(writeTimers.current[key]);
+      pendingWrites.current[key] = value;
       writeTimers.current[key] = setTimeout(() => {
+        delete pendingWrites.current[key];
         runUpdateFields({ variables: { sessionId, patch: { [key]: value }, updatedBy: 'form' } })
           .then(() => setStatus('live'))
           .catch(() => setStatus('err'));
@@ -143,11 +149,24 @@ export function useIntakeSync(onComplete: (finalIntakeJson: Record<string, unkno
     [runCompleteIntake, sessionId, onComplete],
   );
 
+  // Debounced writes are cancelled-and-rescheduled on every keystroke/click
+  // (see scheduleWrite) so a still-pending one hasn't reached the server
+  // yet. Without this, navigating away (or just closing the tab) inside the
+  // 500ms window silently drops that edit — the timer is torn down along
+  // with the component before it ever fires, and the next time this session
+  // loads it hydrates from the server's last-saved value, which looks
+  // exactly like the edit "reverted". Flushing every still-pending write in
+  // one patch on unmount (instead of only clearing the timers) closes that
+  // gap.
   useEffect(() => {
     return () => {
-      // eslint-disable-next-line react-hooks/exhaustive-deps
       Object.values(writeTimers.current).forEach(clearTimeout);
+      const pending = pendingWrites.current;
+      if (Object.keys(pending).length > 0) {
+        runUpdateFields({ variables: { sessionId, patch: pending, updatedBy: 'form' } }).catch(() => {});
+      }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return { sessionId, answers, status, setField, toggleMultiField, completeIntake, apolloClient: client };

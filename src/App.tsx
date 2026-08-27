@@ -15,6 +15,7 @@ import { FloorPlanParserTestPage } from './pages/FloorPlanParserTestPage';
 import { ZoneGenerationTestPage } from './pages/ZoneGenerationTestPage';
 import { BenchPlacementTestPage } from './pages/BenchPlacementTestPage';
 import { InventoryPage } from './pages/InventoryPage';
+import { EquipmentListsPage } from './pages/EquipmentListsPage';
 import { StationsPage } from './pages/StationsPage';
 import { LayoutSandboxPage } from './pages/LayoutSandboxPage';
 import { LayoutCandidatesPage } from './pages/LayoutCandidatesPage';
@@ -42,6 +43,7 @@ export default function App() {
         <Route path="/zone-generation-test" element={<ZoneGenerationTestPage />} />
         <Route path="/bench-placement-test" element={<BenchPlacementTestPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
+        <Route path="/equipment-lists" element={<EquipmentListsPage />} />
         <Route path="/stations" element={<StationsPage />} />
         <Route path="/layout-sandbox" element={<LayoutSandboxPage />} />
         <Route path="/layout-candidates" element={<LayoutCandidatesPage />} />

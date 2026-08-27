@@ -1,5 +1,10 @@
 import { useNavigate } from 'react-router-dom';
-import { IconGear } from '../components/Icons';
+import { IconFlask, IconLayers } from '../components/Icons';
+
+const ADMIN_LINKS = [
+  { label: 'Equipment & Inventory', hint: 'Equipment Specification List — cost, dimensions, station assignment.', path: '/inventory', icon: IconFlask },
+  { label: 'Equipment Membership Lists', hint: 'Assign equipment into the nine configurable lists (BSL requirements, workflow catalogs, etc).', path: '/equipment-lists', icon: IconLayers },
+];
 
 export function SettingsPage() {
   const navigate = useNavigate();
@@ -16,13 +21,21 @@ export function SettingsPage() {
           <h2 style={{ fontFamily: 'var(--head)', fontSize: 26, fontWeight: 500, color: 'var(--dark)', letterSpacing: '-0.01em', marginBottom: 4 }}>Settings</h2>
           <p style={{ fontSize: 13, color: 'var(--mid)', marginBottom: 24 }}>Workspace and account preferences.</p>
 
-          <div className="q-card" style={{ textAlign: 'center', maxWidth: 480, margin: '40px auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'center', color: 'var(--td)', marginBottom: 14 }}>
-              <IconGear size={30} />
+          <div className="sec-head">Admin<div className="sec-line" /></div>
+          {ADMIN_LINKS.map(({ label, hint, path, icon: Icon }) => (
+            <div
+              key={path}
+              className="q-card"
+              style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 12, cursor: 'pointer' }}
+              onClick={() => navigate(path)}
+            >
+              <div style={{ color: 'var(--td)' }}><Icon size={22} /></div>
+              <div>
+                <div className="q-title" style={{ fontSize: 15 }}>{label}</div>
+                <div className="q-hint">{hint}</div>
+              </div>
             </div>
-            <div className="q-title" style={{ fontSize: 18 }}>Settings are coming soon</div>
-            <div className="q-hint">Notification, billing, and team preferences will live here.</div>
-          </div>
+          ))}
         </div>
       </div>
     </div>

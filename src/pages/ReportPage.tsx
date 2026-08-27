@@ -60,7 +60,7 @@ export function ReportPage() {
             </div>
             <textarea
               className="paste-area"
-              placeholder='{"total_budget": 250000, "essential_equipment": "[...]", "protocols_json": "[...]", ...}'
+              placeholder='{"total_budget": 250000, "bom": "[...]", "protocols_json": "[...]", ...}'
               value={pasteValue}
               onChange={(e) => setPasteValue(e.target.value)}
             />

@@ -7,6 +7,7 @@ import {
   ASSIGN_EQUIPMENT_TO_STEP_MUTATION, REMOVE_STEP_EQUIPMENT_MAPPING_MUTATION,
   PROTOCOL_BSL_QUERY, SET_PROTOCOL_BSL_MUTATION,
 } from '../graphql/operations';
+import { SearchableSelect } from '../components/SearchableSelect';
 
 const SEARCH_PAGE_SIZE = 10;
 
@@ -392,14 +393,13 @@ export function ProtocolsTestPage() {
                           ))}
                         </div>
                         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                          <select
+                          <SearchableSelect
+                            style={{ width: 220 }}
                             value={pickerSelection[step.id] ?? ''}
-                            onChange={(e) => setPickerSelection((prev) => ({ ...prev, [step.id]: e.target.value }))}
-                            style={{ fontSize: 11 }}
-                          >
-                            <option value="">Assign equipment…</option>
-                            {equipmentList.map((eq) => <option key={eq.equipmentId} value={eq.equipmentId}>{eq.name}</option>)}
-                          </select>
+                            onChange={(v) => setPickerSelection((prev) => ({ ...prev, [step.id]: v }))}
+                            placeholder="Assign equipment…"
+                            options={equipmentList.map((eq) => ({ value: eq.equipmentId, label: eq.name }))}
+                          />
                           <button className="btn-out" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => handleAssign(step)}>+ Assign</button>
                         </div>
                         {assignError[step.id] && <div style={{ color: '#a33', fontSize: 11 }}>{assignError[step.id]}</div>}

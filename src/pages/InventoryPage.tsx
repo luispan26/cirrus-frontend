@@ -5,11 +5,15 @@ import {
   STATIONS_QUERY, EQUIPMENT_LIST_QUERY, INVENTORY_ITEMS_QUERY,
   CREATE_EQUIPMENT_MUTATION, CREATE_INVENTORY_ITEM_MUTATION,
   ASSIGN_EQUIPMENT_TO_STATION_MUTATION, ASSIGN_INVENTORY_ITEM_TO_STATION_MUTATION,
-  DELETE_EQUIPMENT_MUTATION, DELETE_INVENTORY_ITEM_MUTATION,
+  DELETE_EQUIPMENT_MUTATION, DELETE_INVENTORY_ITEM_MUTATION, UPDATE_EQUIPMENT_MUTATION,
 } from '../graphql/operations';
+import { SearchableSelect } from '../components/SearchableSelect';
 
 interface Station { stationId: string; name: string; }
-interface EquipmentRow { equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null; }
+interface EquipmentRow {
+  equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null;
+  needsDimensions: boolean; canvasDeleted: boolean;
+}
 interface InventoryRow { inventoryId: string; name: string; stockNumber: number; stationId: string | null; }
 
 function errMsg(e: unknown): string {
@@ -20,6 +24,7 @@ export function InventoryPage() {
   const navigate = useNavigate();
   const { data: stationsData } = useQuery<{ stations: Station[] }>(STATIONS_QUERY);
   const stations = stationsData?.stations ?? [];
+  const stationOptions = stations.map((s) => ({ value: s.stationId, label: s.name }));
 
   const { data: equipmentData, refetch: refetchEquipment, loading: eqLoading, error: eqError } =
     useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
@@ -32,9 +37,14 @@ export function InventoryPage() {
   const [assignInventory] = useMutation(ASSIGN_INVENTORY_ITEM_TO_STATION_MUTATION);
   const [deleteEquipment] = useMutation(DELETE_EQUIPMENT_MUTATION);
   const [deleteInventoryItem] = useMutation(DELETE_INVENTORY_ITEM_MUTATION);
+  const [updateEquipment] = useMutation(UPDATE_EQUIPMENT_MUTATION);
 
   const [eqForm, setEqForm] = useState({ equipmentId: '', name: '', costUsd: '', widthFt: '', depthFt: '', heightFt: '', stationId: '' });
   const [eqFormError, setEqFormError] = useState('');
+
+  const [editingEquipmentId, setEditingEquipmentId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ name: '', costUsd: '', widthFt: '', depthFt: '', heightFt: '' });
+  const [editFormError, setEditFormError] = useState('');
 
   const [invForm, setInvForm] = useState({ inventoryId: '', name: '', stockNumber: '', stationId: '' });
   const [invFormError, setInvFormError] = useState('');
@@ -89,6 +99,35 @@ export function InventoryPage() {
     await deleteInventoryItem({ variables: { inventoryId: id } });
     refetchInventory();
   }
+  function startEditEquipment(eq: EquipmentRow) {
+    setEditingEquipmentId(eq.equipmentId);
+    setEditForm({ name: eq.name, costUsd: String(eq.costUsd), widthFt: String(eq.widthFt), depthFt: String(eq.depthFt), heightFt: String(eq.heightFt) });
+    setEditFormError('');
+  }
+  function cancelEditEquipment() {
+    setEditingEquipmentId(null);
+    setEditFormError('');
+  }
+  async function handleSaveEquipment(id: string) {
+    setEditFormError('');
+    const { name, costUsd, widthFt, depthFt, heightFt } = editForm;
+    if (!name.trim() || !costUsd || !widthFt || !depthFt || !heightFt) {
+      setEditFormError('Name, cost, and all three dimensions are required.');
+      return;
+    }
+    try {
+      await updateEquipment({
+        variables: {
+          equipmentId: id,
+          input: { name: name.trim(), costUsd: parseFloat(costUsd), widthFt: parseFloat(widthFt), depthFt: parseFloat(depthFt), heightFt: parseFloat(heightFt) },
+        },
+      });
+      setEditingEquipmentId(null);
+      refetchEquipment();
+    } catch (e) {
+      setEditFormError(errMsg(e));
+    }
+  }
   async function handleReassignEquipment(id: string, stationId: string) {
     await assignEquipment({ variables: { equipmentId: id, stationId: stationId || null } });
     refetchEquipment();
@@ -110,9 +149,12 @@ export function InventoryPage() {
         <button className="btn-out" onClick={() => navigate('/dashboard')}>← Dashboard</button>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: 24, maxWidth: 1000, margin: '0 auto', width: '100%' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 24, maxWidth: 1300, margin: '0 auto', width: '100%' }}>
 
         <div className="sec-head">Equipment<div className="sec-line" /></div>
+        <p className="q-inline-help" style={{ marginTop: 0 }}>
+          Rows boxed in <span style={{ color: '#a67c00', fontWeight: 600 }}>amber</span> are still Canvas-synced placeholders — edit them to confirm real cost and dimensions.
+        </p>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 8 }}>
           <input className="field-input" placeholder="ID" value={eqForm.equipmentId} onChange={(e) => setEqForm({ ...eqForm, equipmentId: e.target.value })} />
@@ -123,37 +165,100 @@ export function InventoryPage() {
           <input className="field-input" placeholder="Height (ft)" type="number" value={eqForm.heightFt} onChange={(e) => setEqForm({ ...eqForm, heightFt: e.target.value })} />
         </div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          <select className="field-input" style={{ flex: 1 }} value={eqForm.stationId} onChange={(e) => setEqForm({ ...eqForm, stationId: e.target.value })}>
-            <option value="">No station (unassigned)</option>
-            {stations.map((s) => <option key={s.stationId} value={s.stationId}>{s.name}</option>)}
-          </select>
+          <SearchableSelect
+            style={{ flex: 1 }}
+            options={[{ value: '', label: 'No station (unassigned)' }, ...stationOptions]}
+            value={eqForm.stationId}
+            onChange={(v) => setEqForm({ ...eqForm, stationId: v })}
+            placeholder="No station (unassigned)"
+          />
           <button className="btn-teal" onClick={handleCreateEquipment}>+ Add equipment</button>
         </div>
         {eqFormError && <div style={{ color: '#a33', fontSize: 12, marginBottom: 12 }}>{eqFormError}</div>}
         {eqError && <div style={{ color: '#a33', fontSize: 12, marginBottom: 12 }}>{eqError.message}</div>}
 
-        <table style={{ width: '100%', fontSize: 13, marginBottom: 32, borderCollapse: 'collapse' }}>
+        <table style={{ width: '100%', fontSize: 13, marginBottom: 32, borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+          <colgroup>
+            <col style={{ width: 130 }} />
+            <col />
+            <col style={{ width: 100 }} />
+            <col style={{ width: 150 }} />
+            <col style={{ width: 220 }} />
+            <col style={{ width: 150 }} />
+          </colgroup>
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--br)' }}>
-              <th style={{ padding: 6 }}>ID</th><th>Name</th><th>Cost</th><th>Dimensions (ft)</th><th>Station</th><th></th>
+              <th style={{ padding: '6px 10px 6px 6px' }}>ID</th>
+              <th style={{ padding: '6px 10px' }}>Name</th>
+              <th style={{ padding: '6px 10px' }}>Cost</th>
+              <th style={{ padding: '6px 10px' }}>Dimensions (ft)</th>
+              <th style={{ padding: '6px 10px' }}>Station</th>
+              <th style={{ padding: '6px 10px' }}></th>
             </tr>
           </thead>
           <tbody>
-            {(equipmentData?.equipmentList ?? []).map((eq) => (
-              <tr key={eq.equipmentId} style={{ borderBottom: '1px solid var(--br)' }}>
-                <td style={{ padding: 6, fontFamily: 'var(--mono)' }}>{eq.equipmentId}</td>
-                <td>{eq.name}</td>
-                <td>${eq.costUsd.toLocaleString()}</td>
-                <td>{eq.widthFt} × {eq.depthFt} × {eq.heightFt}</td>
-                <td>
-                  <select value={eq.stationId ?? ''} onChange={(e) => handleReassignEquipment(eq.equipmentId, e.target.value)}>
-                    <option value="">Unassigned</option>
-                    {stations.map((s) => <option key={s.stationId} value={s.stationId}>{s.name}</option>)}
-                  </select>
-                </td>
-                <td><button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => handleDeleteEquipment(eq.equipmentId)}>Delete</button></td>
-              </tr>
-            ))}
+            {(equipmentData?.equipmentList ?? []).map((eq) => {
+              if (editingEquipmentId === eq.equipmentId) {
+                return (
+                  <tr key={eq.equipmentId} style={{ borderBottom: '1px solid var(--br)' }}>
+                    <td style={{ padding: '6px 10px 6px 6px', fontFamily: 'var(--mono)' }}>{eq.equipmentId}</td>
+                    <td colSpan={5} style={{ padding: '6px 10px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+                        <input className="field-input" placeholder="Name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+                        <input className="field-input" placeholder="Cost ($)" type="number" value={editForm.costUsd} onChange={(e) => setEditForm({ ...editForm, costUsd: e.target.value })} />
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <input className="field-input" placeholder="W" type="number" value={editForm.widthFt} onChange={(e) => setEditForm({ ...editForm, widthFt: e.target.value })} />
+                          <input className="field-input" placeholder="D" type="number" value={editForm.depthFt} onChange={(e) => setEditForm({ ...editForm, depthFt: e.target.value })} />
+                          <input className="field-input" placeholder="H" type="number" value={editForm.heightFt} onChange={(e) => setEditForm({ ...editForm, heightFt: e.target.value })} />
+                        </div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button className="btn-teal" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => handleSaveEquipment(eq.equipmentId)}>Save</button>
+                          <button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={cancelEditEquipment}>Cancel</button>
+                        </div>
+                      </div>
+                      {editFormError && <div style={{ color: '#a33', fontSize: 12, marginTop: 6 }}>{editFormError}</div>}
+                    </td>
+                  </tr>
+                );
+              }
+              return (
+                <tr
+                  key={eq.equipmentId}
+                  style={{
+                    borderBottom: '1px solid var(--br)',
+                    // Box around the row rather than an inline text flag —
+                    // needsDimensions means this row is still a Canvas-
+                    // synced placeholder (cost/dimensions never confirmed
+                    // by a human), i.e. every value shown is a default, not
+                    // a text detail worth calling out on its own.
+                    ...(eq.needsDimensions ? { outline: '2px solid #a67c00', outlineOffset: -1 } : {}),
+                  }}
+                >
+                  <td style={{ padding: '6px 10px 6px 6px', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{eq.equipmentId}</td>
+                  <td style={{ padding: '6px 10px' }}>
+                    {eq.name}
+                    {eq.canvasDeleted && (
+                      <span title="No longer seen in the last Canvas sync" style={{ marginLeft: 6, fontSize: 11, color: 'var(--mid)', border: '1px solid var(--br)', borderRadius: 4, padding: '1px 5px' }}>missing from Canvas</span>
+                    )}
+                  </td>
+                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>${eq.costUsd.toLocaleString()}</td>
+                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{eq.widthFt} × {eq.depthFt} × {eq.heightFt}</td>
+                  <td style={{ padding: '6px 10px' }}>
+                    <SearchableSelect
+                      style={{ width: '100%' }}
+                      options={[{ value: '', label: 'Unassigned' }, ...stationOptions]}
+                      value={eq.stationId ?? ''}
+                      onChange={(v) => handleReassignEquipment(eq.equipmentId, v)}
+                      placeholder="Unassigned"
+                    />
+                  </td>
+                  <td style={{ padding: '6px 10px', display: 'flex', gap: 6 }}>
+                    <button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => startEditEquipment(eq)}>Edit</button>
+                    <button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => handleDeleteEquipment(eq.equipmentId)}>Delete</button>
+                  </td>
+                </tr>
+              );
+            })}
             {!eqLoading && (equipmentData?.equipmentList ?? []).length === 0 && (
               <tr><td colSpan={6} style={{ padding: 12, color: 'var(--mid)' }}>No equipment yet.</td></tr>
             )}
@@ -168,10 +273,13 @@ export function InventoryPage() {
           <input className="field-input" placeholder="Stock number" type="number" value={invForm.stockNumber} onChange={(e) => setInvForm({ ...invForm, stockNumber: e.target.value })} />
         </div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          <select className="field-input" style={{ flex: 1 }} value={invForm.stationId} onChange={(e) => setInvForm({ ...invForm, stationId: e.target.value })}>
-            <option value="">No station (unassigned)</option>
-            {stations.map((s) => <option key={s.stationId} value={s.stationId}>{s.name}</option>)}
-          </select>
+          <SearchableSelect
+            style={{ flex: 1 }}
+            options={[{ value: '', label: 'No station (unassigned)' }, ...stationOptions]}
+            value={invForm.stationId}
+            onChange={(v) => setInvForm({ ...invForm, stationId: v })}
+            placeholder="No station (unassigned)"
+          />
           <button className="btn-teal" onClick={handleCreateInventoryItem}>+ Add inventory item</button>
         </div>
         {invFormError && <div style={{ color: '#a33', fontSize: 12, marginBottom: 12 }}>{invFormError}</div>}
@@ -190,10 +298,13 @@ export function InventoryPage() {
                 <td>{inv.name}</td>
                 <td>{inv.stockNumber}</td>
                 <td>
-                  <select value={inv.stationId ?? ''} onChange={(e) => handleReassignInventory(inv.inventoryId, e.target.value)}>
-                    <option value="">Unassigned</option>
-                    {stations.map((s) => <option key={s.stationId} value={s.stationId}>{s.name}</option>)}
-                  </select>
+                  <SearchableSelect
+                    style={{ width: 200 }}
+                    options={[{ value: '', label: 'Unassigned' }, ...stationOptions]}
+                    value={inv.stationId ?? ''}
+                    onChange={(v) => handleReassignInventory(inv.inventoryId, v)}
+                    placeholder="Unassigned"
+                  />
                 </td>
                 <td><button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => handleDeleteInventoryItem(inv.inventoryId)}>Delete</button></td>
               </tr>
