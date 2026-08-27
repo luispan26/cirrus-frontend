@@ -5,7 +5,6 @@ import {
   EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY,
   ADD_EQUIPMENT_TO_LIST_MUTATION, ADD_EQUIPMENT_TO_LIST_BULK_MUTATION, REMOVE_EQUIPMENT_FROM_LIST_MUTATION,
 } from '../graphql/operations';
-import { SearchableSelect } from '../components/SearchableSelect';
 
 interface EquipmentRow { equipmentId: string; name: string; }
 interface EquipmentListRow { listKey: string; displayName: string; equipmentIds: string[]; }
@@ -52,8 +51,6 @@ export function EquipmentListsPage() {
   const [addEquipmentToListBulk] = useMutation(ADD_EQUIPMENT_TO_LIST_BULK_MUTATION);
   const [removeEquipmentFromList] = useMutation(REMOVE_EQUIPMENT_FROM_LIST_MUTATION);
 
-  const [addSelection, setAddSelection] = useState<Record<string, string>>({});
-  const [listError, setListError] = useState<Record<string, string>>({});
   const [unassignedTarget, setUnassignedTarget] = useState<Record<string, string>>({});
   const [unassignedError, setUnassignedError] = useState<Record<string, string>>({});
   const [unassignedSearch, setUnassignedSearch] = useState('');
@@ -97,19 +94,6 @@ export function EquipmentListsPage() {
       setBulkError(errMsg(e));
     } finally {
       setBulkBusy(false);
-    }
-  }
-
-  async function handleAdd(listKey: string) {
-    const equipmentId = addSelection[listKey];
-    if (!equipmentId) return;
-    setListError({ ...listError, [listKey]: '' });
-    try {
-      await addEquipmentToList({ variables: { listKey, equipmentId } });
-      setAddSelection({ ...addSelection, [listKey]: '' });
-      refetch();
-    } catch (e) {
-      setListError({ ...listError, [listKey]: errMsg(e) });
     }
   }
 
@@ -189,7 +173,20 @@ export function EquipmentListsPage() {
                   <input type="checkbox" checked={allVisibleChecked} onChange={toggleAllVisible} />
                   Select all {unassignedSearch.trim() ? 'matching' : ''} ({visibleUnassigned.length})
                 </label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 420, overflowY: 'auto' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                    maxHeight: 420,
+                    overflowY: 'scroll',
+                    border: '1px solid var(--br)',
+                    borderRadius: 8,
+                    padding: '10px 10px 2px',
+                    background: '#fafafa',
+                    boxShadow: 'inset 0 6px 6px -6px rgba(0,0,0,.12), inset 0 -6px 6px -6px rgba(0,0,0,.12)',
+                  }}
+                >
                   {visibleUnassigned.map((eq) => (
                     <div key={eq.equipmentId} style={{ paddingBottom: 8, borderBottom: '1px solid var(--br)' }}>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginBottom: 6, cursor: 'pointer' }}>
@@ -253,8 +250,6 @@ export function EquipmentListsPage() {
 
           <div style={{ flex: 1, minWidth: 0 }}>
             {lists.map((list) => {
-              const memberIds = new Set(list.equipmentIds);
-              const availableEquipment = equipment.filter((eq) => !memberIds.has(eq.equipmentId));
               return (
                 <div key={list.listKey} style={{ marginBottom: 28 }}>
                   <div className="sec-head">
@@ -262,24 +257,6 @@ export function EquipmentListsPage() {
                     <span style={{ fontWeight: 500, color: 'var(--mid)', marginLeft: 6 }}>({list.equipmentIds.length})</span>
                     <div className="sec-line" />
                   </div>
-
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-                    <SearchableSelect
-                      style={{ flex: 1 }}
-                      value={addSelection[list.listKey] ?? ''}
-                      onChange={(v) => setAddSelection({ ...addSelection, [list.listKey]: v })}
-                      placeholder="Select equipment to add…"
-                      options={availableEquipment.map((eq) => {
-                        const currentLists = listsByEquipmentId.get(eq.equipmentId) ?? [];
-                        const hint = currentLists.length > 0
-                          ? ` (also on ${currentLists.map((l) => l.displayName).join(', ')})`
-                          : '';
-                        return { value: eq.equipmentId, label: `${eq.name}${hint}` };
-                      })}
-                    />
-                    <button className="btn-teal" onClick={() => handleAdd(list.listKey)}>+ Add</button>
-                  </div>
-                  {listError[list.listKey] && <div style={{ color: '#a33', fontSize: 12, marginBottom: 10 }}>{listError[list.listKey]}</div>}
 
                   {list.equipmentIds.length === 0 ? (
                     <div style={{ fontSize: 13, color: 'var(--mid)', padding: '6px 0' }}>No equipment assigned yet.</div>

@@ -153,7 +153,7 @@ export function InventoryPage() {
 
         <div className="sec-head">Equipment<div className="sec-line" /></div>
         <p className="q-inline-help" style={{ marginTop: 0 }}>
-          Rows boxed in <span style={{ color: '#a67c00', fontWeight: 600 }}>amber</span> are still Canvas-synced placeholders — edit them to confirm real cost and dimensions.
+          Fields boxed in <span style={{ color: '#a67c00', fontWeight: 600 }}>amber</span> are still Canvas-synced placeholders — edit them to confirm the real value.
         </p>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 8 }}>
@@ -221,19 +221,18 @@ export function InventoryPage() {
                   </tr>
                 );
               }
+              // needsDimensions means this row is still a Canvas-synced
+              // placeholder, but the placeholder only ever touches two
+              // areas — cost and the width/depth/height trio (see
+              // upsertEquipmentFromCanvas's placeholder values: costUsd 0,
+              // widthFt/depthFt/heightFt 1) — so only box the field(s) that
+              // still hold that sentinel value, not the whole row, matching
+              // what a human still needs to go confirm.
+              const costIsPlaceholder = eq.needsDimensions && eq.costUsd === 0;
+              const dimsArePlaceholder = eq.needsDimensions && eq.widthFt === 1 && eq.depthFt === 1 && eq.heightFt === 1;
+              const placeholderCellStyle = { outline: '2px solid #a67c00', outlineOffset: -2, borderRadius: 3 };
               return (
-                <tr
-                  key={eq.equipmentId}
-                  style={{
-                    borderBottom: '1px solid var(--br)',
-                    // Box around the row rather than an inline text flag —
-                    // needsDimensions means this row is still a Canvas-
-                    // synced placeholder (cost/dimensions never confirmed
-                    // by a human), i.e. every value shown is a default, not
-                    // a text detail worth calling out on its own.
-                    ...(eq.needsDimensions ? { outline: '2px solid #a67c00', outlineOffset: -1 } : {}),
-                  }}
-                >
+                <tr key={eq.equipmentId} style={{ borderBottom: '1px solid var(--br)' }}>
                   <td style={{ padding: '6px 10px 6px 6px', fontFamily: 'var(--mono)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{eq.equipmentId}</td>
                   <td style={{ padding: '6px 10px' }}>
                     {eq.name}
@@ -241,8 +240,8 @@ export function InventoryPage() {
                       <span title="No longer seen in the last Canvas sync" style={{ marginLeft: 6, fontSize: 11, color: 'var(--mid)', border: '1px solid var(--br)', borderRadius: 4, padding: '1px 5px' }}>missing from Canvas</span>
                     )}
                   </td>
-                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>${eq.costUsd.toLocaleString()}</td>
-                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>{eq.widthFt} × {eq.depthFt} × {eq.heightFt}</td>
+                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', ...(costIsPlaceholder ? placeholderCellStyle : {}) }}>${eq.costUsd.toLocaleString()}</td>
+                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', ...(dimsArePlaceholder ? placeholderCellStyle : {}) }}>{eq.widthFt} × {eq.depthFt} × {eq.heightFt}</td>
                   <td style={{ padding: '6px 10px' }}>
                     <SearchableSelect
                       style={{ width: '100%' }}

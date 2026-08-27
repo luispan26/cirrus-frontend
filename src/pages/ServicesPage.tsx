@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@apollo/client/react';
 import { MY_REPORTS_QUERY, PROTOCOLS_IO_SEARCH_QUERY } from '../graphql/operations';
-import { KB, ZONE_COLORS, computeFloorPlan } from '../lib/kb';
+import { KB, computeFloorPlan } from '../lib/kb';
 
 interface ReportSummary {
   id: string;
@@ -161,8 +161,6 @@ export function ServicesPage() {
     setPlaying(false);
   }
 
-  const activeStationId = steps[stepIndex] || null;
-
   return (
     <div className="screen" style={{ background: 'var(--light)' }}>
       <div className="qm-topbar">
@@ -247,44 +245,6 @@ export function ServicesPage() {
                   </div>
 
                   <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-                    <div style={{ flex: '1 1 320px' }}>
-                      <div className="fp-legend">
-                        <span><i style={{ background: '#00D5D5' }} />Wet lab</span>
-                        <span><i style={{ background: '#5B4FE0' }} />Dry lab</span>
-                        <span><i style={{ background: '#FF3FA4' }} />Automation</span>
-                        <span><i style={{ background: '#E7EAF0' }} />Unassigned</span>
-                      </div>
-                      <div className="fp-grid">
-                        {fp.grid.map((row) => (
-                          <div className="fp-rowcol" key={row.label}>
-                            <div className="fp-rowlabel">{row.label}</div>
-                            {row.cells.map((c) => {
-                              const isActive = c.stationId && c.stationId === activeStationId;
-                              const isInProtocol = c.stationId && steps.includes(c.stationId);
-                              return (
-                                <div
-                                  key={c.posLabel}
-                                  className="fp-cell"
-                                  title={c.name || c.posLabel}
-                                  style={{
-                                    background: c.stationId ? ZONE_COLORS[c.zone] || '#E7EAF0' : '#E7EAF0',
-                                    color: c.stationId ? 'white' : '#69707F',
-                                    cursor: 'default',
-                                    opacity: isInProtocol && !isActive ? 0.35 : 1,
-                                    boxShadow: isActive ? '0 0 0 3px #FF3FA4, 0 0 16px rgba(255,63,164,.6)' : 'none',
-                                    transform: isActive ? 'scale(1.12)' : 'scale(1)',
-                                    transition: 'all .3s ease',
-                                  }}
-                                >
-                                  {c.posLabel}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
                     <div style={{ flex: '1 1 240px' }}>
                       <div className="field-label" style={{ marginBottom: 10 }}>Steps</div>
                       {steps.map((stationId, i) => {
