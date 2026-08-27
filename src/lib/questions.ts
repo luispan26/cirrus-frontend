@@ -122,8 +122,24 @@ export const BIOMATERIAL_LIST_KEYS: Record<string, string> = {
 };
 export const ANALYTICAL_EQUIPMENT_LIST_KEY = 'analytical_equipment_catalog';
 
+// Q5's color-coded category legend — one entry per source that can
+// contribute equipment to the Basic Lab Equipment List (see
+// computeBasicLabEquipment below), in the same order they're added there.
+// Colors are chosen to stay visually distinct from each other and from the
+// existing amber "still a Canvas placeholder" convention used elsewhere.
+export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; color: string }[] = [
+  { key: 'general', label: 'General Lab Equipment', color: '#00A3A3' },
+  { key: 'bsl', label: 'Biosafety-Required', color: '#a67c00' },
+  { key: 'bacteria', label: 'Bacterial Basic', color: '#3D8B3D' },
+  { key: 'yeast', label: 'Yeast Basic', color: '#C9791C' },
+  { key: 'mammalian_adherent', label: 'Mammalian (Adherent) Basic', color: '#7B4FD6' },
+  { key: 'mammalian_suspension', label: 'Mammalian (Suspension) Basic', color: '#D64F9E' },
+  { key: 'mice', label: 'Mice Basic', color: '#8A5A3B' },
+  { key: 'analytical', label: 'Analytical Additions', color: '#3462C9' },
+];
+
 export const QS: Question[] = [
-  { id: 'existing_equipment', n: 1, t: 'What equipment do you already have?', h: 'Pulled from your equipment inventory — only the gap between this and what your protocols need gets sized', type: 'inventory' },
+  { id: 'existing_equipment', n: 1, t: 'Do you already have equipment?', h: 'Pulled from your equipment inventory — only the gap between this and what your protocols need gets sized', type: 'inventory' },
   { id: 'biosafety_level', n: 2, t: 'What biosafety level is your labspace compliant with?', h: 'Adds that level\'s required equipment to your Basic Lab Equipment List', type: 'radio', opts: BIOSAFETY_LEVEL_OPTS },
   { id: 'biomaterials', n: 3, t: 'What type of biomaterials would you like to work with?', h: 'Each one adds its own basic equipment set to your Basic Lab Equipment List', type: 'checklist', opts: BIOMATERIAL_OPTS },
   { id: 'analytical_equipment', n: 4, t: 'Would you like any additional analytical equipment?', h: 'Optional — check anything you need beyond the basics, and set how many', type: 'analytical_equipment' },
@@ -307,7 +323,11 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
 
 export interface EquipmentListSummary { listKey: string; equipmentIds: string[]; }
 export interface EquipmentCatalogEntry { equipmentId: string; name: string; }
-export interface BasicLabEquipmentRow { equipmentId: string; name: string; quantity: number; locked: boolean; }
+// sources holds every BASIC_EQUIPMENT_CATEGORIES key that contributed to
+// this row, in the order each was first added — sources[0] is treated as
+// the row's primary category for grouping in the Q5 UI, with any further
+// entries surfaced there as "also required by" cross-references.
+export interface BasicLabEquipmentRow { equipmentId: string; name: string; quantity: number; locked: boolean; sources: string[]; }
 
 // Basic Lab Equipment List computation (Prompt 2 spec): start with 1 of
 // every item on the General Lab Equipment List; add 1 of every item on the
@@ -331,27 +351,39 @@ export function computeBasicLabEquipment(
   const nameById = new Map(catalog.map((c) => [c.equipmentId, c.name]));
   const quantities = new Map<string, number>();
   const locked = new Set<string>();
+  const sources = new Map<string, string[]>();
 
-  function addList(listKey: string | undefined, isLockedSource: boolean) {
+  function addSource(equipmentId: string, categoryKey: string) {
+    const existing = sources.get(equipmentId);
+    if (existing) {
+      if (!existing.includes(categoryKey)) existing.push(categoryKey);
+    } else {
+      sources.set(equipmentId, [categoryKey]);
+    }
+  }
+
+  function addList(listKey: string | undefined, isLockedSource: boolean, categoryKey: string) {
     if (!listKey) return;
     const list = listByKey.get(listKey);
     if (!list) return;
     for (const equipmentId of list.equipmentIds) {
       quantities.set(equipmentId, (quantities.get(equipmentId) ?? 0) + 1);
       if (isLockedSource) locked.add(equipmentId);
+      addSource(equipmentId, categoryKey);
     }
   }
 
-  addList(GENERAL_LAB_LIST_KEY, false);
+  addList(GENERAL_LAB_LIST_KEY, false, 'general');
   const bslLevel = answers.biosafety_level as string | undefined;
-  addList(bslLevel ? BSL_REQUIRED_LIST_KEYS[bslLevel] : undefined, true);
+  addList(bslLevel ? BSL_REQUIRED_LIST_KEYS[bslLevel] : undefined, true, 'bsl');
   for (const biomaterial of (answers.biomaterials as string[]) || []) {
-    addList(BIOMATERIAL_LIST_KEYS[biomaterial], false);
+    addList(BIOMATERIAL_LIST_KEYS[biomaterial], false, biomaterial);
   }
 
   const analyticalQuantities = (answers.analytical_equipment_quantities as Record<string, number>) || {};
   for (const [equipmentId, qty] of Object.entries(analyticalQuantities)) {
     quantities.set(equipmentId, (quantities.get(equipmentId) ?? 0) + Math.max(1, Math.round(qty) || 1));
+    addSource(equipmentId, 'analytical');
   }
 
   return Array.from(quantities.entries())
@@ -363,6 +395,7 @@ export function computeBasicLabEquipment(
       name: nameById.get(equipmentId)!,
       quantity,
       locked: locked.has(equipmentId),
+      sources: sources.get(equipmentId) ?? [],
     }));
 }
 

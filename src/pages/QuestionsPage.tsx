@@ -7,7 +7,7 @@ import { SearchableSelect } from '../components/SearchableSelect';
 import { useIntakeSync } from '../hooks/useIntakeSync';
 import {
   QS, OPERATION_OPTS, DAMPLAB_MATCH_KEYWORDS, shouldSkip, stepIndex, buildFinalIntakeJson, FEASIBILITY_GATE_IDS,
-  ANALYTICAL_EQUIPMENT_LIST_KEY, computeBasicLabEquipment, applyBasicLabEquipmentOverrides,
+  ANALYTICAL_EQUIPMENT_LIST_KEY, computeBasicLabEquipment, applyBasicLabEquipmentOverrides, BASIC_EQUIPMENT_CATEGORIES,
   type Answers, type QuestionOption,
 } from '../lib/questions';
 import { FEASIBILITY_CHECK_QUERY, EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, PROTOCOLS_IO_SEARCH_QUERY } from '../graphql/operations';
@@ -808,29 +808,78 @@ function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setFie
     return <p className="q-inline-help">Nothing to finalize yet — the General Lab, biosafety, biomaterial, and analytical equipment lists you've drawn from are all empty or unselected.</p>;
   }
 
+  const categoryByKey = new Map(BASIC_EQUIPMENT_CATEGORIES.map((c) => [c.key, c]));
+  // Grouped by each row's PRIMARY source (sources[0], in the order
+  // computeBasicLabEquipment first added it) so every row appears in
+  // exactly one section — an item drawn from more than one list (its
+  // quantity already sums across all of them) gets small colored pills
+  // for the rest, rather than being rendered a second time with its own
+  // editable controls.
+  const rowsByCategory = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const key = row.sources[0] ?? 'general';
+    const bucket = rowsByCategory.get(key);
+    if (bucket) bucket.push(row);
+    else rowsByCategory.set(key, [row]);
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       <p className="q-inline-help" style={{ marginTop: 0 }}>
         Adjust quantities as needed. Items required for your biosafety level can’t be removed, only increased.
+        Each color-coded section below shows which list brought that equipment into this combined list.
       </p>
-      {rows.map((row) => (
-        <div key={row.equipmentId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)' }}>
-            {row.name}
-            {row.locked && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(required)</span>}
-          </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div className="stepper">
-              <button type="button" onClick={() => setQty(row.equipmentId, row.quantity - 1)}>−</button>
-              <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.quantity}</span>
-              <button type="button" onClick={() => setQty(row.equipmentId, row.quantity + 1)}>+</button>
+      {BASIC_EQUIPMENT_CATEGORIES.map((category) => {
+        const categoryRows = rowsByCategory.get(category.key);
+        if (!categoryRows || categoryRows.length === 0) return null;
+        return (
+          <div key={category.key}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span style={{ width: 10, height: 10, borderRadius: '50%', background: category.color, flexShrink: 0 }} />
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.03em', color: category.color, textTransform: 'uppercase' }}>
+                {category.label}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--mid)' }}>({categoryRows.length})</span>
             </div>
-            {!row.locked && (
-              <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => remove(row.equipmentId)}>Remove</button>
-            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, borderLeft: `3px solid ${category.color}`, paddingLeft: 12 }}>
+              {categoryRows.map((row) => {
+                const otherSources = row.sources.filter((s) => s !== category.key);
+                return (
+                  <div key={row.equipmentId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)' }}>
+                      {row.name}
+                      {row.locked && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(required)</span>}
+                      {otherSources.map((sourceKey) => {
+                        const meta = categoryByKey.get(sourceKey);
+                        if (!meta) return null;
+                        return (
+                          <span
+                            key={sourceKey}
+                            title={`Also required by ${meta.label}`}
+                            style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: meta.color, border: `1px solid ${meta.color}`, borderRadius: 10, padding: '1px 7px' }}
+                          >
+                            + {meta.label}
+                          </span>
+                        );
+                      })}
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div className="stepper">
+                        <button type="button" onClick={() => setQty(row.equipmentId, row.quantity - 1)}>−</button>
+                        <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.quantity}</span>
+                        <button type="button" onClick={() => setQty(row.equipmentId, row.quantity + 1)}>+</button>
+                      </div>
+                      {!row.locked && (
+                        <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => remove(row.equipmentId)}>Remove</button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
