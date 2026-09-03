@@ -10,7 +10,7 @@ import { LayoutFloorPlan } from '../components/LayoutFloorPlan';
 const NAV_ITEMS = [
   { label: 'Design history', path: '/history', icon: IconHistory },
   { label: 'Saved layouts', path: '/layout-candidates', icon: IconLayers },
-  { label: 'Protocols', path: '/services', icon: IconFlask },
+  { label: 'Protocols', path: '/protocols', icon: IconFlask },
   { label: 'Settings', path: '/settings', icon: IconGear },
 ];
 

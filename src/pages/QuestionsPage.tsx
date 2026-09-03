@@ -10,7 +10,10 @@ import {
   ANALYTICAL_EQUIPMENT_LIST_KEY, computeBasicLabEquipment, applyBasicLabEquipmentOverrides, BASIC_EQUIPMENT_CATEGORIES,
   type Answers, type QuestionOption,
 } from '../lib/questions';
-import { FEASIBILITY_CHECK_QUERY, EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, PROTOCOLS_IO_SEARCH_QUERY } from '../graphql/operations';
+import {
+  FEASIBILITY_CHECK_QUERY, EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, PROTOCOLS_IO_SEARCH_QUERY,
+  PROTOCOL_IDS_WITH_EQUIPMENT_MAPPINGS_QUERY,
+} from '../graphql/operations';
 
 type EquipmentRow = { equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null };
 type EquipmentListRow = { listKey: string; displayName: string; equipmentIds: string[] };
@@ -22,19 +25,11 @@ type FeasibilityCheckResponse = { feasibilityCheck: { ok: boolean; issues: Feasi
 
 function validateQuestion(id: string, answers: Answers) {
   if (id === 'biosafety_level' && !answers.biosafety_level) return 'Choose a biosafety level.';
-  if (id === 'operations' && ((answers.operations as string[]) || []).length === 0) return 'Select at least one protocol.';
-  if (id === 'protocol_demand') {
+  if (id === 'operations') {
     const ops = (answers.operations as string[]) || [];
+    if (ops.length === 0) return 'Select at least one protocol.';
     const runs = (answers.protocol_runs_per_week as Record<string, number>) || {};
     if (ops.some((opId) => runs[opId] === undefined)) return 'Enter expected weekly runs for every protocol (0 is fine).';
-  }
-  if (id === 'protocol_priorities') {
-    if (!answers.wants_protocol_priorities) return 'Choose whether to prioritize these protocols.';
-    if (answers.wants_protocol_priorities === 'yes') {
-      const ops = (answers.operations as string[]) || [];
-      const tiers = (answers.protocol_tiers as Record<string, string>) || {};
-      if (ops.some((opId) => !tiers[opId])) return 'Sort every protocol into a tier, or choose not to prioritize them.';
-    }
   }
   if (id === 'space') {
     if (!answers.space_method) return 'Choose how you want to define your space.';
@@ -200,7 +195,7 @@ function QuestionBody({
       <div className="q-title">{q.t}</div>
       <div className="q-hint">{questionHint(q, answers)}</div>
 
-      {q.type === 'multi' && <ProtocolSelectBody answers={answers} toggleMultiField={toggleMultiField} />}
+      {q.type === 'multi' && <ProtocolSelectBody answers={answers} toggleMultiField={toggleMultiField} setField={setField} />}
 
       {q.type === 'radio' && (
         <div className="opt-grid" style={{ gridTemplateColumns: '1fr' }}>
@@ -221,8 +216,6 @@ function QuestionBody({
       {q.type === 'inventory' && <InventoryBody answers={answers} setField={setField} />}
       {q.type === 'space' && <SpaceBody answers={answers} setField={setField} />}
       {q.type === 'budget' && <BudgetBody answers={answers} setField={setField} />}
-      {q.type === 'protocol_demand' && <ProtocolDemandBody answers={answers} setField={setField} />}
-      {q.type === 'priority_tiers' && <ProtocolPrioritiesBody answers={answers} setField={setField} />}
       {q.type === 'analytical_equipment' && <AnalyticalEquipmentBody answers={answers} setField={setField} />}
       {q.type === 'basic_equipment' && <BasicLabEquipmentBody answers={answers} setField={setField} />}
     </div>
@@ -279,80 +272,157 @@ function findCatalogMatch(title: string): QuestionOption | undefined {
   });
 }
 
-function ProtocolSelectBody({ answers, toggleMultiField }: { answers: Answers; toggleMultiField: (k: string, v: string) => void }) {
+// Select-then-quantify, same pattern as AnalyticalEquipmentBody: adding a
+// protocol here immediately surfaces a weekly-runs input for it (folded in
+// from the old, separate protocol_demand step) instead of asking again on a
+// second screen. Run duration is deliberately not asked here; it's pulled
+// from each operation's own estimatedTimeHours metadata on the backend
+// (capacity-planner.ts), which combines with this to size bench count (see
+// FinalIntakeJson.demand in questions.ts). 0 is a valid answer (no
+// throughput-driven extra benches, not "skip this protocol") — validateQuestion
+// only requires every selected protocol to have an explicit entry, not a
+// positive one.
+// Scoped to protocols that already have equipment mapped to their steps
+// (via the Canvas import on the /protocols admin page — see
+// protocolIdsWithEquipmentMappings) rather than the full unmapped Damp Lab
+// catalog: those are the only ones Cirrus can actually plan real equipment
+// for. Full scrollable checkbox list, same pattern as the Equipment
+// Membership Lists page's "Unassigned" panel — select-then-quantify per
+// row, same as AnalyticalEquipmentBody/the old protocol_demand step (see
+// FinalIntakeJson.demand in questions.ts).
+function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: Answers; toggleMultiField: (k: string, v: string) => void; setField: (k: string, v: unknown) => void }) {
   const { items: damplabItems, loading, error } = useAllDamplabProtocols();
+  const { data: mappedData, loading: mappedLoading, error: mappedError } = useQuery<{ protocolIdsWithEquipmentMappings: string[] }>(PROTOCOL_IDS_WITH_EQUIPMENT_MAPPINGS_QUERY);
+  const mappedIds = new Set(mappedData?.protocolIdsWithEquipmentMappings ?? []);
 
-  const allOptions = damplabItems.map((item) => {
-    const catalogMatch = findCatalogMatch(item.title);
-    return {
-      value: catalogMatch ? catalogMatch.v : item.id,
-      title: item.title,
-      sourceUrl: item.sourceUrl,
-      sized: !!catalogMatch,
-    };
-  });
-  const optionByValue = new Map(allOptions.map((o) => [o.value, o]));
+  const mappedProtocols = damplabItems
+    .filter((item) => mappedIds.has(item.id))
+    .map((item) => {
+      const catalogMatch = findCatalogMatch(item.title);
+      // item.id (the real protocols.io id) is kept even for a catalog-matched
+      // protocol, whose `value` becomes the catalog's own operation id — see
+      // toggleProtocol below, which persists this real id separately so the
+      // backend's Protocols Equipment List (bom/protocol-equipment-list.ts)
+      // can still look up equipment usage by it.
+      return { value: catalogMatch ? catalogMatch.v : item.id, id: item.id, title: item.title, sourceUrl: item.sourceUrl, sized: !!catalogMatch };
+    })
+    .sort((a, b) => a.title.localeCompare(b.title));
 
   const selected = (answers.operations as string[]) || [];
-  const addable = allOptions.filter((o) => !selected.includes(o.value));
+  const runs = (answers.protocol_runs_per_week as Record<string, number>) || {};
+  const protocolIds = (answers.protocol_ids_by_operation as Record<string, string>) || {};
+  const [search, setSearch] = useState('');
+  const visible = search.trim()
+    ? mappedProtocols.filter((p) => p.title.toLowerCase().includes(search.trim().toLowerCase()))
+    : mappedProtocols;
+  const allVisibleChecked = visible.length > 0 && visible.every((p) => selected.includes(p.value));
 
-  if (loading) return <p className="q-inline-help">Loading the Damp Lab protocol catalog…</p>;
+  function toggleProtocol(p: { value: string; id: string }) {
+    const wasSelected = selected.includes(p.value);
+    toggleMultiField('operations', p.value);
+    if (wasSelected) {
+      const { [p.value]: _removed, ...rest } = runs;
+      setField('protocol_runs_per_week', rest);
+      const { [p.value]: _removedId, ...restIds } = protocolIds;
+      setField('protocol_ids_by_operation', restIds);
+    } else {
+      setField('protocol_ids_by_operation', { ...protocolIds, [p.value]: p.id });
+    }
+  }
+
+  function toggleAllVisible() {
+    for (const p of visible) {
+      if (allVisibleChecked) { if (selected.includes(p.value)) toggleProtocol(p); }
+      else if (!selected.includes(p.value)) toggleProtocol(p);
+    }
+  }
+
+  function setRuns(opId: string, value: number) {
+    setField('protocol_runs_per_week', { ...runs, [opId]: Math.max(0, Math.round(value)) });
+  }
+
+  if (loading || mappedLoading) return <p className="q-inline-help">Loading protocols with equipment mapped…</p>;
   if (error) return <p className="q-validation-error">Couldn’t load Damp Lab protocols: {error.message}</p>;
+  if (mappedError) return <p className="q-validation-error">Couldn’t load equipment mappings: {mappedError.message}</p>;
+
+  if (mappedProtocols.length === 0) {
+    return <p className="q-inline-help">No Damp Lab protocols have equipment mapped yet — import from Canvas on the Protocols page first.</p>;
+  }
 
   return (
     <>
-      <p className="q-inline-help">
-        {allOptions.length === 0
-          ? 'No protocols are published to the Damp Lab workspace yet.'
-          : 'The full Damp Lab protocols.io catalog — protocols without a size-planning match are still selectable, just flagged below.'}
+      <p className="q-inline-help" style={{ marginTop: 0 }}>
+        Only protocols with equipment already mapped to their steps are shown ({mappedProtocols.length} available). Check the ones this lab needs and set expected weekly runs for each.
       </p>
 
-      {selected.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
-          {selected.map((v) => {
-            const entry = optionByValue.get(v);
-            return (
-              <div key={v} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 13 }}>
-                  {entry?.title ?? v}
-                  {entry && !entry.sized && (
-                    <span title="No Operation definition to size a room against yet — still recorded, just not sized." style={{ marginLeft: 8, fontSize: 11, color: 'var(--mid)', border: '1px solid var(--br)', borderRadius: 4, padding: '1px 5px' }}>
-                      not sized yet
-                    </span>
-                  )}
-                  {entry && (
-                    <a href={entry.sourceUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 11, color: 'var(--teal)', marginLeft: 8 }}>
-                      View on Damp Lab →
-                    </a>
-                  )}
-                </span>
-                <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => toggleMultiField('operations', v)}>Remove</button>
-              </div>
-            );
-          })}
-        </div>
+      {mappedProtocols.length > 6 && (
+        <input
+          className="field-input"
+          style={{ width: '100%', fontSize: 12, marginBottom: 10 }}
+          placeholder="Search protocols…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
       )}
 
-      {addable.length > 0 && (
-        <AddProtocolPicker addable={addable} onAdd={(v) => toggleMultiField('operations', v)} />
-      )}
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--mid)', marginBottom: 8, cursor: 'pointer' }}>
+        <input type="checkbox" checked={allVisibleChecked} onChange={toggleAllVisible} />
+        Select all {search.trim() ? 'matching' : ''} ({visible.length})
+      </label>
+
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
+          maxHeight: 360,
+          overflowY: 'scroll',
+          border: '1px solid var(--br)',
+          borderRadius: 8,
+          padding: '10px 10px 2px',
+          background: '#fafafa',
+          boxShadow: 'inset 0 6px 6px -6px rgba(0,0,0,.12), inset 0 -6px 6px -6px rgba(0,0,0,.12)',
+        }}
+      >
+        {visible.map((p) => {
+          const isSelected = selected.includes(p.value);
+          return (
+            <div key={p.value} style={{ paddingBottom: 8, borderBottom: '1px solid var(--br)' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={isSelected} onChange={() => toggleProtocol(p)} />
+                <span style={{ fontWeight: 600, color: 'var(--dark)' }}>{p.title}</span>
+                {!p.sized && (
+                  <span title="No Operation definition to size a room against yet — still recorded, just not sized." style={{ fontSize: 11, color: 'var(--mid)', border: '1px solid var(--br)', borderRadius: 4, padding: '1px 5px' }}>
+                    not sized yet
+                  </span>
+                )}
+                <a href={p.sourceUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 11, color: 'var(--teal)' }}>
+                  View on Damp Lab →
+                </a>
+              </label>
+              {isSelected && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 26, marginTop: 6 }}>
+                  <input
+                    className="field-input"
+                    type="number"
+                    min={0}
+                    step={1}
+                    style={{ width: 80 }}
+                    placeholder="0"
+                    value={runs[p.value] ?? ''}
+                    onChange={(e) => setRuns(p.value, Number(e.target.value) || 0)}
+                  />
+                  <span style={{ fontSize: 12, color: 'var(--mid)' }}>runs/week</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {visible.length === 0 && (
+          <div style={{ fontSize: 13, color: 'var(--mid)', padding: '6px 0' }}>No protocols match "{search}".</div>
+        )}
+      </div>
     </>
-  );
-}
-
-function AddProtocolPicker({ addable, onAdd }: { addable: { value: string; title: string; sized: boolean }[]; onAdd: (v: string) => void }) {
-  const [draftValue, setDraftValue] = useState('');
-  return (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-      <SearchableSelect
-        style={{ width: 320 }}
-        value={draftValue}
-        onChange={setDraftValue}
-        placeholder="Select a protocol…"
-        options={addable.map((o) => ({ value: o.value, label: o.sized ? o.title : `${o.title} (not sized yet)` }))}
-      />
-      <button type="button" className="btn-teal" style={{ padding: '6px 14px' }} onClick={() => { if (draftValue) { onAdd(draftValue); setDraftValue(''); } }}>Add</button>
-    </div>
   );
 }
 
@@ -380,8 +450,17 @@ function SpaceBody({ answers, setField }: { answers: Answers; setField: (k: stri
     <>
       <div className="field-wrap">
         <label className="field-label">How do you want to define your space?</label>
-        <div className="chips">
-          <span className={`chip${method === 'upload' ? ' sel' : ''}`} onClick={() => chooseMethod('upload')}>Upload a floor plan</span>
+        <div className="chips" style={{ alignItems: 'flex-start' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+            <span
+              className={`chip${method === 'upload' ? ' sel' : ''}`}
+              style={{ opacity: 0.5, cursor: 'not-allowed' }}
+              title="Coming soon — not selectable yet"
+            >
+              Upload a floor plan
+            </span>
+            <span className="cs-badge" style={{ marginTop: 0 }}>Coming soon!</span>
+          </div>
           <span className={`chip${method === 'sandbox' ? ' sel' : ''}`} onClick={() => chooseMethod('sandbox')}>Build it in the sandbox</span>
         </div>
       </div>
@@ -446,168 +525,6 @@ function BudgetBody({ answers, setField }: { answers: Answers; setField: (k: str
         </div>
       </div>
     </>
-  );
-}
-
-// One number per selected protocol — expected runs/week. Run duration is
-// deliberately not asked here; it's pulled from each operation's own
-// estimatedTimeHours metadata on the backend (capacity-planner.ts), which
-// combines with this to size bench count (see FinalIntakeJson.demand in
-// questions.ts). 0 is a valid answer (no throughput-driven extra benches,
-// not "skip this protocol") — validateQuestion only requires every selected
-// protocol to have an explicit entry, not a positive one.
-function ProtocolDemandBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
-  const selected = (answers.operations as string[]) || [];
-  if (selected.length === 0) return null;
-  const runs = (answers.protocol_runs_per_week as Record<string, number>) || {};
-
-  function labelFor(opId: string) {
-    return OPERATION_OPTS.find((o) => o.v === opId)?.l ?? opId;
-  }
-
-  function setRuns(opId: string, value: number) {
-    setField('protocol_runs_per_week', { ...runs, [opId]: Math.max(0, Math.round(value)) });
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <p className="q-inline-help" style={{ marginTop: 0 }}>
-        Run duration comes from each protocol's own definition — you only need to say how often it runs.
-      </p>
-      {selected.map((opId) => (
-        <div key={opId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)' }}>{labelFor(opId)}</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input
-              className="field-input"
-              type="number"
-              min={0}
-              step={1}
-              style={{ width: 90 }}
-              placeholder="0"
-              value={runs[opId] ?? ''}
-              onChange={(e) => setRuns(opId, Number(e.target.value) || 0)}
-            />
-            <span style={{ fontSize: 12, color: 'var(--mid)' }}>runs/week</span>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// (id, label, description) — order here is the funding order: must-haves
-// are covered first out of the desired budget, important protocols are the
-// primary candidates for desired->max spillover when there's unmet need,
-// and nice-to-haves are cut first if there still isn't enough even at max.
-const PRIORITY_TIERS: [string, string, string][] = [
-  ['must_have', 'Must-have', 'Non-negotiable — funded first, always covered within the desired budget if at all possible.'],
-  ['important', 'Important', "Funded next — the primary candidates for the desired→max spillover budget when there's unmet need."],
-  ['nice_to_have', 'Nice-to-have', 'Funded last — only if budget genuinely allows.'],
-];
-
-// Sorting N protocols into 3 tiers is a fast, coarse tag exercise regardless
-// of list length; a full 1..N ranking is not. Ties within a tier (e.g. 8
-// "important" protocols but budget for 5) are broken by a lightweight
-// optional reorder scoped to just that tier's items, rather than asking for
-// a global rank — reordering 3-4 items is cheap, reordering 20 isn't.
-function ProtocolPrioritiesBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
-  const selected = (answers.operations as string[]) || [];
-  if (selected.length === 0) return null;
-  const wants = answers.wants_protocol_priorities as string | undefined;
-  const tiers = (answers.protocol_tiers as Record<string, string>) || {};
-  const tierOrder = (answers.protocol_tier_order as Record<string, number>) || {};
-  const unsorted = selected.filter((opId) => !tiers[opId]);
-
-  function labelFor(opId: string) {
-    return OPERATION_OPTS.find((o) => o.v === opId)?.l ?? opId;
-  }
-
-  function assignTier(opId: string, tierKey: string) {
-    const siblingMax = selected
-      .filter((id) => id !== opId && tiers[id] === tierKey)
-      .reduce((max, id) => Math.max(max, tierOrder[id] ?? 0), -1);
-    setField('protocol_tiers', { ...tiers, [opId]: tierKey });
-    setField('protocol_tier_order', { ...tierOrder, [opId]: siblingMax + 1 });
-  }
-
-  function move(tierKey: string, opId: string, dir: -1 | 1) {
-    const siblings = selected
-      .filter((id) => tiers[id] === tierKey)
-      .sort((a, b) => (tierOrder[a] ?? 0) - (tierOrder[b] ?? 0));
-    const idx = siblings.indexOf(opId);
-    const swapWith = siblings[idx + dir];
-    if (!swapWith) return;
-    setField('protocol_tier_order', {
-      ...tierOrder,
-      [opId]: tierOrder[swapWith] ?? idx + dir,
-      [swapWith]: tierOrder[opId] ?? idx,
-    });
-  }
-
-  return (
-    <div className="field-wrap" style={{ marginTop: 12 }}>
-      <label className="field-label">Do you want to prioritize these protocols?</label>
-      <div className="chips">
-        <span className={`chip${wants === 'yes' ? ' sel' : ''}`} onClick={() => setField('wants_protocol_priorities', 'yes')}>Yes, sort them</span>
-        <span className={`chip${wants === 'no' ? ' sel' : ''}`} onClick={() => setField('wants_protocol_priorities', 'no')}>No, treat them equally</span>
-      </div>
-
-      {wants === 'yes' && (
-        <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {unsorted.length > 0 && (
-            <div>
-              <p className="q-inline-help" style={{ marginTop: 0 }}>Sort each protocol into a tier:</p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {unsorted.map((opId) => (
-                  <div key={opId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)' }}>{labelFor(opId)}</span>
-                    <div className="chips">
-                      {PRIORITY_TIERS.map(([tierKey, tierLabel]) => (
-                        <span key={tierKey} className="chip" onClick={() => assignTier(opId, tierKey)}>{tierLabel}</span>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {PRIORITY_TIERS.map(([tierKey, tierLabel, tierDesc]) => {
-            const items = selected
-              .filter((opId) => tiers[opId] === tierKey)
-              .sort((a, b) => (tierOrder[a] ?? 0) - (tierOrder[b] ?? 0));
-            if (items.length === 0) return null;
-            return (
-              <div key={tierKey}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--dark)' }}>
-                  {tierLabel} <span style={{ fontWeight: 500, color: 'var(--mid)' }}>({items.length})</span>
-                </div>
-                <p className="q-inline-help" style={{ marginTop: 2 }}>{tierDesc}</p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {items.map((opId, i) => (
-                    <div key={opId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 13 }}>{labelFor(opId)}</span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div className="stepper">
-                          <button type="button" disabled={i === 0} onClick={() => move(tierKey, opId, -1)}>↑</button>
-                          <button type="button" disabled={i === items.length - 1} onClick={() => move(tierKey, opId, 1)}>↓</button>
-                        </div>
-                        <div className="chips">
-                          {PRIORITY_TIERS.filter(([k]) => k !== tierKey).map(([k, l]) => (
-                            <span key={k} className="chip" onClick={() => assignTier(opId, k)}>{l}</span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -827,11 +744,17 @@ function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setFie
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
-      <p className="q-inline-help" style={{ marginTop: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 0 }}>
         Adjust quantities as needed. Items required for your biosafety level can’t be removed, only increased.
         Each color-coded section below shows which list brought that equipment into this combined list.
       </p>
+      {/* Long lists (many categories, or a category with many rows) can
+          exceed the card's own height — this panel scrolls on its own within
+          a bounded max-height instead of relying on the outer question card
+          area, whose centered-flex scroll silently clips content that's
+          taller than the viewport (see .qm-stage in index.css). */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 22, maxHeight: '46vh', overflowY: 'auto', paddingRight: 6 }}>
       {BASIC_EQUIPMENT_CATEGORIES.map((category) => {
         const categoryRows = rowsByCategory.get(category.key);
         if (!categoryRows || categoryRows.length === 0) return null;
@@ -883,6 +806,7 @@ function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setFie
           </div>
         );
       })}
+      </div>
     </div>
   );
 }

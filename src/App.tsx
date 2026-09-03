@@ -9,8 +9,7 @@ import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DesignHistoryPage } from './pages/DesignHistoryPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
-import { ServicesPage } from './pages/ServicesPage';
-import { ProtocolsTestPage } from './pages/ProtocolsTestPage';
+import { ProtocolsPage } from './pages/ProtocolsPage';
 import { FloorPlanParserTestPage } from './pages/FloorPlanParserTestPage';
 import { ZoneGenerationTestPage } from './pages/ZoneGenerationTestPage';
 import { BenchPlacementTestPage } from './pages/BenchPlacementTestPage';
@@ -37,8 +36,7 @@ export default function App() {
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/generating" element={<GeneratingPage />} />
         <Route path="/report" element={<ReportPage />} />
-        <Route path="/services" element={<ServicesPage />} />
-        <Route path="/protocols-test" element={<ProtocolsTestPage />} />
+        <Route path="/protocols" element={<ProtocolsPage />} />
         <Route path="/floor-plan-parser-test" element={<FloorPlanParserTestPage />} />
         <Route path="/zone-generation-test" element={<ZoneGenerationTestPage />} />
         <Route path="/bench-placement-test" element={<BenchPlacementTestPage />} />

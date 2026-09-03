@@ -1,4 +1,4 @@
-export type QuestionType = 'radio' | 'multi' | 'space' | 'budget' | 'inventory' | 'priority_tiers' | 'protocol_demand' | 'checklist' | 'analytical_equipment' | 'basic_equipment';
+export type QuestionType = 'radio' | 'multi' | 'space' | 'budget' | 'inventory' | 'checklist' | 'analytical_equipment' | 'basic_equipment';
 
 export interface QuestionOption {
   v: string;
@@ -42,21 +42,25 @@ export type Answers = Record<string, unknown>;
 // biomaterials -> analytical_equipment -> basic_lab_equipment (the computed,
 // user-editable Basic Lab Equipment List — see computeBasicLabEquipment/
 // applyBasicLabEquipmentOverrides below) -> space -> operations (protocol
-// selection) -> protocol_demand (expected weekly runs per protocol) ->
-// protocol_priorities (tiered prioritization) -> budget. existing_equipment
-// is asked first, unconditionally (there used to be a gating "does your
-// space already have equipment?" question ahead of it; removed — whether any
-// equipment was actually entered here is now itself the signal, see
-// hasExistingEquipment in buildFinalIntakeJson and questionHint in
-// QuestionsPage.tsx). biosafety_level/biomaterials/analytical_equipment feed
-// directly into basic_lab_equipment, so they're grouped right after
-// existing_equipment, before space/protocols/budget.
+// selection, plus expected weekly runs per protocol asked inline — see
+// ProtocolSelectBody in QuestionsPage.tsx, same select-then-quantify pattern
+// as analytical_equipment) -> budget. existing_equipment is asked first,
+// unconditionally (there used to be a gating "does your space already have
+// equipment?" question ahead of it; removed — whether any equipment was
+// actually entered here is now itself the signal, see hasExistingEquipment
+// in buildFinalIntakeJson and questionHint in QuestionsPage.tsx).
+// biosafety_level/biomaterials/analytical_equipment feed directly into
+// basic_lab_equipment, so they're grouped right after existing_equipment,
+// before space/protocols/budget. Tiered protocol prioritization used to be
+// its own step after this one; removed outright (the backend never actually
+// consumed it — finalIntakeJson is passed through as an opaque JSON scalar,
+// see intake.resolver.ts).
 //
 // This is intentionally just the sizing-stage questions from the
 // generator's intake spec, plus the Prompt 1/2 equipment-planning questions
 // — no facilities/staff/schedule/constraints/growth/layout-weights/
 // business-model questions, and no "how long does each run take" question
-// (protocol_demand only asks frequency — duration comes from each
+// (the weekly-runs input only asks frequency — duration comes from each
 // protocol's own Operation.estimatedTimeHours metadata, see
 // capacity-planner.ts's estimatedTimeHoursFor). FinalIntakeJson.bsl (the
 // field the layout generator itself reads) is still fixed to 'BSL-1'
@@ -122,6 +126,12 @@ export const BIOMATERIAL_LIST_KEYS: Record<string, string> = {
 };
 export const ANALYTICAL_EQUIPMENT_LIST_KEY = 'analytical_equipment_catalog';
 
+// Kept in sync by hand with the backend's PROTOCOL_SPECIFIC_CATEGORY_KEY
+// (src/bom/protocol-equipment-list.ts) — same convention as the list keys
+// above. Never produced by anything in this file; see the category entry
+// below for why it's still declared here.
+export const PROTOCOL_SPECIFIC_CATEGORY_KEY = 'protocol_specific';
+
 // Q5's color-coded category legend — one entry per source that can
 // contribute equipment to the Basic Lab Equipment List (see
 // computeBasicLabEquipment below), in the same order they're added there.
@@ -136,6 +146,14 @@ export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; color: st
   { key: 'mammalian_suspension', label: 'Mammalian (Suspension) Basic', color: '#D64F9E' },
   { key: 'mice', label: 'Mice Basic', color: '#8A5A3B' },
   { key: 'analytical', label: 'Analytical Additions', color: '#3462C9' },
+  // Not part of Q5's Basic Lab Equipment List (nothing here is ever
+  // computed by computeBasicLabEquipment) — this key is only ever produced
+  // server-side by the backend's bom/protocol-equipment-list.ts when
+  // merging the Protocols Equipment List into the report's BOM, for
+  // equipment a selected Q7 protocol needs that isn't already on the Basic
+  // Lab list. Included here anyway so the report's BomSection (ReportView.tsx)
+  // renders it as its own category in the same format as every other one.
+  { key: PROTOCOL_SPECIFIC_CATEGORY_KEY, label: 'Protocol Specific Equipment', color: '#B5442E' },
 ];
 
 export const QS: Question[] = [
@@ -143,28 +161,26 @@ export const QS: Question[] = [
   { id: 'biosafety_level', n: 2, t: 'What biosafety level is your labspace compliant with?', h: 'Adds that level\'s required equipment to your Basic Lab Equipment List', type: 'radio', opts: BIOSAFETY_LEVEL_OPTS },
   { id: 'biomaterials', n: 3, t: 'What type of biomaterials would you like to work with?', h: 'Each one adds its own basic equipment set to your Basic Lab Equipment List', type: 'checklist', opts: BIOMATERIAL_OPTS },
   { id: 'analytical_equipment', n: 4, t: 'Would you like any additional analytical equipment?', h: 'Optional — check anything you need beyond the basics, and set how many', type: 'analytical_equipment' },
-  { id: 'basic_lab_equipment', n: 5, t: 'Finalize equipment quantity', h: 'Your computed Basic Lab Equipment List — adjust quantities or remove anything you don’t need', type: 'basic_equipment' },
+  { id: 'basic_lab_equipment', n: 5, t: 'Finalize Basic Lab Equipment', h: 'Your computed Basic Lab Equipment List — adjust quantities or remove anything you don’t need', type: 'basic_equipment' },
   { id: 'space', n: 6, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
-  { id: 'operations', n: 7, t: 'Which protocols does this lab need to run?', h: 'Select from the supported protocol library', type: 'multi', opts: OPERATION_OPTS },
-  { id: 'protocol_demand', n: 8, t: 'How often will you run each protocol?', h: 'Weekly run volume — used to size bench count, not just equipment. Run duration is pulled from the protocol itself.', type: 'protocol_demand' },
-  { id: 'protocol_priorities', n: 9, t: 'How should these protocols be prioritized?', h: 'Optional — sort them into funding tiers if some matter more than others', type: 'priority_tiers' },
-  { id: 'budget', n: 10, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
+  { id: 'operations', n: 7, t: 'Add additional protocols?', h: 'Check the ones this lab needs and set expected weekly runs for each — duration is pulled from the protocol itself.', type: 'multi', opts: OPERATION_OPTS },
+  { id: 'budget', n: 8, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
 ];
 
 // Steps where advancing past them triggers a feasibilityCheck GraphQL call
 // against everything answered so far (see QuestionsPage.tsx's nextQ) —
-// 'protocol_demand' re-checks room-vs-required-benches now that demand-driven
-// bench replication is known (see capacity-planner.ts); 'protocol_priorities'
-// is the last of the protocol-related steps, so it fires once operations are
-// final; 'budget' re-checks with desired/max now known.
-export const FEASIBILITY_GATE_IDS = ['protocol_demand', 'protocol_priorities', 'budget'];
+// 'operations' re-checks room-vs-required-benches now that demand-driven
+// bench replication is known (protocol selection and weekly-runs are both
+// answered on this one step — see capacity-planner.ts); 'budget' re-checks
+// with desired/max now known.
+export const FEASIBILITY_GATE_IDS = ['operations', 'budget'];
 
 export const INTAKE_FIELD_KEYS = [
   'existing_equipment_meta',
   'biosafety_level', 'biomaterials', 'analytical_equipment_quantities',
   'basic_lab_equipment_quantity_overrides', 'basic_lab_equipment_removed', 'basic_lab_equipment_final',
   'space_method', 'width_ft', 'height_ft', 'space_floorplan_filename',
-  'operations', 'protocol_runs_per_week', 'wants_protocol_priorities', 'protocol_tiers', 'protocol_tier_order',
+  'operations', 'protocol_runs_per_week', 'protocol_ids_by_operation',
   'budget_desired', 'budget_max', 'budget_scope',
 ];
 
@@ -235,19 +251,14 @@ export interface FinalIntakeJson {
   // id) — feeds capacity-planning/capacity-planner.ts's demand-driven bench
   // count sizing. Run duration is never asked here; it comes from each
   // operation's own estimatedTimeHours metadata on the backend.
-  demand: { runs_per_week_by_operation: Record<string, number> };
-  protocols: {
-    operation_ids: string[];
-    prioritization: {
-      enabled: boolean;
-      // Tier membership per raw catalog id (must_have / important / nice_to_have).
-      tiers: Record<string, string>;
-      // Full funding-priority order: all must_haves (in chosen order), then
-      // important (in chosen order), then nice_to_have (in chosen order).
-      // Empty when prioritization isn't enabled — no ordering is implied.
-      order: string[];
-    };
-  };
+  // protocol_ids_by_operation (same keying) is the real protocols.io
+  // protocol id each selected operation was matched against at Q7 select
+  // time (see ProtocolSelectBody's toggleProtocol in QuestionsPage.tsx) —
+  // needed because a catalog-matched operation's own id (e.g. 'nanodrop')
+  // isn't itself a protocols.io id, but the backend's Protocols Equipment
+  // List (bom/protocol-equipment-list.ts) can only look up equipment usage
+  // by the real one.
+  demand: { runs_per_week_by_operation: Record<string, number>; protocol_ids_by_operation: Record<string, string> };
 }
 
 export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
@@ -264,28 +275,16 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
   const budgetDesired = parseInt((a.budget_desired as string) || '0', 10) || 0;
   const budgetMax = parseInt((a.budget_max as string) || '0', 10) || 0;
 
-  // Must-have < important < nice-to-have — the funding order from the
-  // sizing spec (must-haves covered first from the desired budget,
-  // important protocols are the primary desired->max spillover candidates,
-  // nice-to-haves are cut first if there's still unmet need at max budget).
-  const TIER_RANK: Record<string, number> = { must_have: 0, important: 1, nice_to_have: 2 };
-  const prioritizationEnabled = a.wants_protocol_priorities === 'yes';
-  const protocolTiers = (a.protocol_tiers as Record<string, string>) || {};
-  const protocolTierOrder = (a.protocol_tier_order as Record<string, number>) || {};
   const rawSelectedOps = (a.operations as string[]) || [];
   const rawRunsPerWeek = (a.protocol_runs_per_week as Record<string, number>) || {};
+  const rawProtocolIds = (a.protocol_ids_by_operation as Record<string, string>) || {};
   const runsPerWeekByOperation: Record<string, number> = {};
+  const protocolIdsByOperation: Record<string, string> = {};
   for (const rawOpId of rawSelectedOps) {
-    runsPerWeekByOperation[resolveOperationId(rawOpId)] = rawRunsPerWeek[rawOpId] ?? 0;
+    const resolvedOpId = resolveOperationId(rawOpId);
+    runsPerWeekByOperation[resolvedOpId] = rawRunsPerWeek[rawOpId] ?? 0;
+    if (rawProtocolIds[rawOpId]) protocolIdsByOperation[resolvedOpId] = rawProtocolIds[rawOpId];
   }
-  const prioritizedOrder = prioritizationEnabled
-    ? [...rawSelectedOps].sort((x, y) => {
-        const rankX = TIER_RANK[protocolTiers[x] ?? 'important'] ?? 1;
-        const rankY = TIER_RANK[protocolTiers[y] ?? 'important'] ?? 1;
-        if (rankX !== rankY) return rankX - rankY;
-        return (protocolTierOrder[x] ?? 0) - (protocolTierOrder[y] ?? 0);
-      })
-    : [];
 
   return {
     scenario: 'lab_design',
@@ -311,15 +310,7 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
     },
     budget: { desired: budgetDesired, max: budgetMax || budgetDesired, scope: (a.budget_scope as string) || 'equipment_only' },
     allocation: { equipment: hasCon ? 0.5 : 0.7, construction: hasCon ? 0.25 : 0, staffing: 0.1, consumables: 0.1, contingency: 0.05 },
-    demand: { runs_per_week_by_operation: runsPerWeekByOperation },
-    protocols: {
-      operation_ids: resolveOperations(a),
-      prioritization: {
-        enabled: prioritizationEnabled,
-        tiers: prioritizationEnabled ? protocolTiers : {},
-        order: prioritizedOrder,
-      },
-    },
+    demand: { runs_per_week_by_operation: runsPerWeekByOperation, protocol_ids_by_operation: protocolIdsByOperation },
   };
 }
 

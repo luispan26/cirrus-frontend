@@ -215,6 +215,7 @@ export const MY_REPORTS_QUERY = gql`
   query MyReports {
     myReports {
       id
+      sessionId
       status
       createdAt
       data
@@ -563,6 +564,12 @@ export const DELETE_INVENTORY_ITEM_MUTATION = gql`
   }
 `;
 
+export const PROTOCOL_IDS_WITH_EQUIPMENT_MAPPINGS_QUERY = gql`
+  query ProtocolIdsWithEquipmentMappings {
+    protocolIdsWithEquipmentMappings
+  }
+`;
+
 export const STEP_EQUIPMENT_MAPPINGS_FOR_PROTOCOL_QUERY = gql`
   query StepEquipmentMappingsForProtocol($protocolId: ID!) {
     stepEquipmentMappingsForProtocol(protocolId: $protocolId) {
@@ -602,6 +609,15 @@ export const EQUIPMENT_USAGE_FOR_PROTOCOL_QUERY = gql`
         stepNumber
         durationSeconds
       }
+    }
+  }
+`;
+
+export const TRIGGER_CANVAS_SYNC_MUTATION = gql`
+  mutation TriggerCanvasSync {
+    triggerCanvasSync {
+      equipmentSynced
+      protocolsSynced
     }
   }
 `;
