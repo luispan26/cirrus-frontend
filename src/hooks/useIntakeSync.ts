@@ -64,13 +64,17 @@ export function useIntakeSync(onComplete: (finalIntakeJson: Record<string, unkno
     if (!initialQuery.data) return;
     setStatus('live');
     mergeFields(initialQuery.data.intakeSession.fields);
-    if (
-      initialQuery.data.intakeSession.complete &&
-      initialQuery.data.intakeSession.finalIntakeJson &&
-      !completionHandled.current
-    ) {
+    // A session that's ALREADY complete on this very first load means the
+    // caller opened this page to revisit/revise a finished questionnaire
+    // (see ReportPage.tsx's "Edit questionnaire" button) — that's not a
+    // completion event to react to, so mark it handled without calling
+    // onComplete, which would otherwise immediately bounce the user back to
+    // /generating before they ever see their answers. A genuine completion
+    // (this tab's own completeIntake call, or the chat flow finishing this
+    // session server-side) still reaches onComplete below via the
+    // subscription, which is unaffected by this branch.
+    if (initialQuery.data.intakeSession.complete && !completionHandled.current) {
       completionHandled.current = true;
-      onComplete(initialQuery.data.intakeSession.finalIntakeJson);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery.data, initialQuery.error]);

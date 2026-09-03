@@ -1,11 +1,26 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ReportView } from '../components/ReportView';
+import { setSessionId } from '../lib/session';
 
 export function ReportPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const routedData = (location.state as { reportData?: Record<string, any> } | null)?.reportData ?? null;
+  const routedState = location.state as { reportData?: Record<string, any>; sessionId?: string } | null;
+  const routedData = routedState?.reportData ?? null;
+  // Absent for the manual paste-JSON fallback path (no real session behind
+  // pasted data) — the "Edit questionnaire" button only renders when present.
+  const routedSessionId = routedState?.sessionId ?? null;
+
+  function handleEditQuestionnaire() {
+    if (!routedSessionId) return;
+    // The report being viewed may belong to a different session than
+    // whatever's currently active (e.g. opened from Design History) — point
+    // the single active-session pointer at it first so /questions loads the
+    // right answers.
+    setSessionId(routedSessionId);
+    navigate('/questions');
+  }
 
   const [pastedData, setPastedData] = useState<Record<string, any> | null>(null);
   const [wantsPasteBox, setWantsPasteBox] = useState(false);
@@ -49,7 +64,12 @@ export function ReportPage() {
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,.5)' }}>Powered by Cirrus + n8n</div>
           </div>
         </div>
-        <button className="back-white" onClick={() => navigate('/dashboard')}>← Dashboard</button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          {routedSessionId && (
+            <button className="back-white" onClick={handleEditQuestionnaire}>← Edit questionnaire</button>
+          )}
+          <button className="back-white" onClick={() => navigate('/dashboard')}>← Dashboard</button>
+        </div>
       </div>
       <div className="rep-body">
         {!data ? (
