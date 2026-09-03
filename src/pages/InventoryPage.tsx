@@ -156,17 +156,15 @@ export function InventoryPage() {
           Fields boxed in <span style={{ color: '#a67c00', fontWeight: 600 }}>amber</span> are still Canvas-synced placeholders — edit them to confirm the real value.
         </p>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 8 }}>
-          <input className="field-input" placeholder="ID" value={eqForm.equipmentId} onChange={(e) => setEqForm({ ...eqForm, equipmentId: e.target.value })} />
-          <input className="field-input" placeholder="Name" value={eqForm.name} onChange={(e) => setEqForm({ ...eqForm, name: e.target.value })} />
-          <input className="field-input" placeholder="Cost ($)" type="number" value={eqForm.costUsd} onChange={(e) => setEqForm({ ...eqForm, costUsd: e.target.value })} />
-          <input className="field-input" placeholder="Width (ft)" type="number" value={eqForm.widthFt} onChange={(e) => setEqForm({ ...eqForm, widthFt: e.target.value })} />
-          <input className="field-input" placeholder="Depth (ft)" type="number" value={eqForm.depthFt} onChange={(e) => setEqForm({ ...eqForm, depthFt: e.target.value })} />
-          <input className="field-input" placeholder="Height (ft)" type="number" value={eqForm.heightFt} onChange={(e) => setEqForm({ ...eqForm, heightFt: e.target.value })} />
-        </div>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16, alignItems: 'center' }}>
+          <input className="field-input" style={{ width: 110 }} placeholder="ID" value={eqForm.equipmentId} onChange={(e) => setEqForm({ ...eqForm, equipmentId: e.target.value })} />
+          <input className="field-input" style={{ width: 180, flex: '1 1 180px' }} placeholder="Name" value={eqForm.name} onChange={(e) => setEqForm({ ...eqForm, name: e.target.value })} />
+          <input className="field-input" style={{ width: 100 }} placeholder="Cost ($)" type="number" value={eqForm.costUsd} onChange={(e) => setEqForm({ ...eqForm, costUsd: e.target.value })} />
+          <input className="field-input" style={{ width: 100 }} placeholder="Width (ft)" type="number" value={eqForm.widthFt} onChange={(e) => setEqForm({ ...eqForm, widthFt: e.target.value })} />
+          <input className="field-input" style={{ width: 100 }} placeholder="Depth (ft)" type="number" value={eqForm.depthFt} onChange={(e) => setEqForm({ ...eqForm, depthFt: e.target.value })} />
+          <input className="field-input" style={{ width: 100 }} placeholder="Height (ft)" type="number" value={eqForm.heightFt} onChange={(e) => setEqForm({ ...eqForm, heightFt: e.target.value })} />
           <SearchableSelect
-            style={{ flex: 1 }}
+            style={{ width: 200 }}
             options={[{ value: '', label: 'No station (unassigned)' }, ...stationOptions]}
             value={eqForm.stationId}
             onChange={(v) => setEqForm({ ...eqForm, stationId: v })}
@@ -202,21 +200,34 @@ export function InventoryPage() {
                 return (
                   <tr key={eq.equipmentId} style={{ borderBottom: '1px solid var(--br)' }}>
                     <td style={{ padding: '6px 10px 6px 6px', fontFamily: 'var(--mono)' }}>{eq.equipmentId}</td>
-                    <td colSpan={5} style={{ padding: '6px 10px' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
-                        <input className="field-input" placeholder="Name" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
-                        <input className="field-input" placeholder="Cost ($)" type="number" value={editForm.costUsd} onChange={(e) => setEditForm({ ...editForm, costUsd: e.target.value })} />
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <input className="field-input" placeholder="W" type="number" value={editForm.widthFt} onChange={(e) => setEditForm({ ...editForm, widthFt: e.target.value })} />
-                          <input className="field-input" placeholder="D" type="number" value={editForm.depthFt} onChange={(e) => setEditForm({ ...editForm, depthFt: e.target.value })} />
-                          <input className="field-input" placeholder="H" type="number" value={editForm.heightFt} onChange={(e) => setEditForm({ ...editForm, heightFt: e.target.value })} />
+                    <td colSpan={5} style={{ padding: '10px' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', maxWidth: 900 }}>
+                        <div style={{ flex: '0 1 220px' }}>
+                          <label style={{ display: 'block', fontSize: 10, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Name</label>
+                          <input className="field-input" style={{ width: '100%' }} value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+                        </div>
+                        <div style={{ flex: '0 0 100px' }}>
+                          <label style={{ display: 'block', fontSize: 10, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Cost ($)</label>
+                          <input className="field-input" style={{ width: '100%' }} type="number" value={editForm.costUsd} onChange={(e) => setEditForm({ ...editForm, costUsd: e.target.value })} />
+                        </div>
+                        <div style={{ flex: '0 0 90px' }}>
+                          <label style={{ display: 'block', fontSize: 10, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Width (ft)</label>
+                          <input className="field-input" style={{ width: '100%' }} type="number" value={editForm.widthFt} onChange={(e) => setEditForm({ ...editForm, widthFt: e.target.value })} />
+                        </div>
+                        <div style={{ flex: '0 0 90px' }}>
+                          <label style={{ display: 'block', fontSize: 10, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Depth (ft)</label>
+                          <input className="field-input" style={{ width: '100%' }} type="number" value={editForm.depthFt} onChange={(e) => setEditForm({ ...editForm, depthFt: e.target.value })} />
+                        </div>
+                        <div style={{ flex: '0 0 90px' }}>
+                          <label style={{ display: 'block', fontSize: 10, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Height (ft)</label>
+                          <input className="field-input" style={{ width: '100%' }} type="number" value={editForm.heightFt} onChange={(e) => setEditForm({ ...editForm, heightFt: e.target.value })} />
                         </div>
                         <div style={{ display: 'flex', gap: 6 }}>
-                          <button className="btn-teal" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => handleSaveEquipment(eq.equipmentId)}>Save</button>
-                          <button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={cancelEditEquipment}>Cancel</button>
+                          <button className="btn-teal" style={{ padding: '9px 14px', fontSize: 12 }} onClick={() => handleSaveEquipment(eq.equipmentId)}>Save</button>
+                          <button className="btn-out" style={{ padding: '9px 14px', fontSize: 12 }} onClick={cancelEditEquipment}>Cancel</button>
                         </div>
                       </div>
-                      {editFormError && <div style={{ color: '#a33', fontSize: 12, marginTop: 6 }}>{editFormError}</div>}
+                      {editFormError && <div style={{ color: '#a33', fontSize: 12, marginTop: 8 }}>{editFormError}</div>}
                     </td>
                   </tr>
                 );
@@ -266,14 +277,12 @@ export function InventoryPage() {
 
         <div className="sec-head">Inventory<div className="sec-line" /></div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 8 }}>
-          <input className="field-input" placeholder="ID" value={invForm.inventoryId} onChange={(e) => setInvForm({ ...invForm, inventoryId: e.target.value })} />
-          <input className="field-input" placeholder="Name" value={invForm.name} onChange={(e) => setInvForm({ ...invForm, name: e.target.value })} />
-          <input className="field-input" placeholder="Stock number" type="number" value={invForm.stockNumber} onChange={(e) => setInvForm({ ...invForm, stockNumber: e.target.value })} />
-        </div>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16, alignItems: 'center' }}>
+          <input className="field-input" style={{ width: 130 }} placeholder="ID" value={invForm.inventoryId} onChange={(e) => setInvForm({ ...invForm, inventoryId: e.target.value })} />
+          <input className="field-input" style={{ width: 200, flex: '1 1 200px' }} placeholder="Name" value={invForm.name} onChange={(e) => setInvForm({ ...invForm, name: e.target.value })} />
+          <input className="field-input" style={{ width: 130 }} placeholder="Stock number" type="number" value={invForm.stockNumber} onChange={(e) => setInvForm({ ...invForm, stockNumber: e.target.value })} />
           <SearchableSelect
-            style={{ flex: 1 }}
+            style={{ width: 200 }}
             options={[{ value: '', label: 'No station (unassigned)' }, ...stationOptions]}
             value={invForm.stationId}
             onChange={(v) => setInvForm({ ...invForm, stationId: v })}
