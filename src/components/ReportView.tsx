@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { DonutChart } from './DonutChart';
 import { GeneratedLayoutPlan } from './GeneratedLayoutPlan';
 import { BASIC_EQUIPMENT_CATEGORIES } from '../lib/questions';
@@ -5,8 +6,12 @@ import { BASIC_EQUIPMENT_CATEGORIES } from '../lib/questions';
 function cap(s: string): string {
   return s ? s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '';
 }
+// typeof-checked, not just truthy — a genuinely-confirmed $0 cost (e.g.
+// donated equipment, see bom-generator.ts's EquipmentCostLookupEntry
+// comment) is real data and should render as "$0", not fall through to the
+// "no value" dash a falsy check would give it.
 function fmt(n: number | undefined): string {
-  return n ? '$' + Number(n).toLocaleString() : '—';
+  return typeof n === 'number' ? '$' + n.toLocaleString() : '—';
 }
 function asArray<T = any>(v: unknown): T[] {
   return Array.isArray(v) ? (v as T[]) : [];
@@ -21,17 +26,35 @@ const ROLE_LABELS: Record<string, string> = {
   student_intern: 'Student / intern',
 };
 
-function bomTable(rows: any[]) {
+// Each BOM category (see BomSection below) renders its OWN <table> — with
+// the browser's default auto table-layout, every table sizes its columns
+// independently from its own content, so a section whose equipment names
+// (or cross-reference pills) run longer or shorter than another section's
+// drifts out of column alignment with it. A shared colgroup + fixed layout
+// forces identical column widths across every section regardless of that
+// section's own content, so columns line up section to section.
+function bomTable(rows: any[], style?: CSSProperties, headerColor?: string) {
+  const headerStyle: CSSProperties | undefined = headerColor
+    ? { background: headerColor, color: '#fff', borderBottom: '1px solid rgba(255,255,255,.25)' }
+    : undefined;
   return (
-    <table className="rep-table">
-      <thead><tr><th>Equipment Specification</th><th>Quantity</th><th>Cost per Unit</th><th>Total Cost</th></tr></thead>
+    <table className="rep-table" style={{ tableLayout: 'fixed', ...style }}>
+      <colgroup>
+        <col style={{ width: '46%' }} />
+        <col style={{ width: '14%' }} />
+        <col style={{ width: '20%' }} />
+        <col style={{ width: '20%' }} />
+      </colgroup>
+      <thead><tr><th style={headerStyle}>Equipment Specification</th><th style={headerStyle}>Quantity</th><th style={headerStyle}>Cost per Unit</th><th style={headerStyle}>Total Cost</th></tr></thead>
       <tbody>
         {rows.map((row, i) => (
           <tr className={i % 2 === 1 ? 'odd' : ''} key={(row.equipmentId || row.equipmentSpecification) + i}>
-            <td style={{ fontWeight: 600 }}>{row.equipmentSpecification}</td>
+            <td style={{ fontWeight: 600, overflowWrap: 'break-word' }}>{row.equipmentSpecification}</td>
             <td>{row.quantity}</td>
-            <td style={{ color: '#69707F' }}>{row.costPerUnit === 'TBD' ? 'TBD' : fmt(row.costPerUnit)}</td>
-            <td style={{ fontWeight: 600, color: '#049295' }}>{row.totalCost === 'TBD' ? 'TBD' : fmt(row.totalCost)}</td>
+            <td style={{ color: '#69707F' }}>{row.costPerUnit === 'TBD' || row.costPerUnit === 'N/A' ? row.costPerUnit : fmt(row.costPerUnit)}</td>
+            <td style={{ fontWeight: 600, color: row.totalCost === 'N/A' ? '#69707F' : '#049295' }}>
+              {row.totalCost === 'TBD' || row.totalCost === 'N/A' ? row.totalCost : fmt(row.totalCost)}
+            </td>
           </tr>
         ))}
       </tbody>
@@ -92,17 +115,14 @@ function BomSection({ bom }: { bom: any[] }) {
           ),
         }));
         return (
-          <div key={category.key}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <span style={{ width: 10, height: 10, borderRadius: '50%', background: category.color, flexShrink: 0 }} />
+          <div key={category.key} style={{ borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 8, padding: '8px 12px', background: '#fff' }}>
               <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.03em', color: category.color, textTransform: 'uppercase' }}>
                 {category.label}
               </span>
-              <span style={{ fontSize: 11, color: 'var(--mid)' }}>({rows.length})</span>
+              <span style={{ fontSize: 11, color: category.color, opacity: 0.7 }}>({rows.length})</span>
             </div>
-            <div style={{ borderLeft: `3px solid ${category.color}`, borderRadius: 10, overflow: 'hidden' }}>
-              {bomTable(decoratedRows)}
-            </div>
+            {bomTable(decoratedRows, { borderTopLeftRadius: 0, borderTopRightRadius: 0, boxShadow: 'none', marginBottom: 0 }, category.color)}
           </div>
         );
       })}
@@ -110,39 +130,54 @@ function BomSection({ bom }: { bom: any[] }) {
   );
 }
 
+// Cost per BOM category (same grouping BomSection uses — see its own
+// comment) instead of the old budget_breakdown allocation (equipment/
+// construction/staffing/consumables/contingency). Only rows with a real
+// numeric totalCost contribute — TBD (unconfirmed cost) and N/A (already
+// owned) rows have nothing to attribute, same "exclude it" rule
+// bom-generator.ts's own totalCost sum already follows.
+function computeCostByCategory(bom: any[]): { name: string; value: number; color: string }[] {
+  const categoryByKey = new Map(BASIC_EQUIPMENT_CATEGORIES.map((c) => [c.key, c]));
+  const costByCategory = new Map<string, number>();
+  for (const row of bom) {
+    if (typeof row.totalCost !== 'number') continue;
+    const key = (Array.isArray(row.sources) && row.sources[0]) || 'general';
+    costByCategory.set(key, (costByCategory.get(key) ?? 0) + row.totalCost);
+  }
+  return Array.from(costByCategory.entries())
+    .filter(([, value]) => value > 0)
+    .map(([key, value]) => {
+      const meta = categoryByKey.get(key);
+      return { name: meta?.label ?? cap(key), value, color: meta?.color ?? '#00D5D5' };
+    });
+}
+
 export function ReportView({ data }: { data: Record<string, any> }) {
   const bom = asArray(data.bom);
   const staff = asArray(data.staff);
   const recommended = asArray(data.recommended_equipment);
-  const consumables = asArray(data.consumables_monthly);
-  const protocols = asArray(data.protocols_json);
-  const breakdown = asObject(data.budget_breakdown);
   const revenue = asObject(data.revenue_projections);
-  const tips = asArray<string>(data.cost_saving_tips);
 
-  const pieData = Object.entries(breakdown)
-    .filter(([, v]) => v && (v as any).amount > 0)
-    .map(([k, v]) => ({ name: cap(k), value: (v as any).amount as number }));
+  const pieData = computeCostByCategory(bom);
 
   return (
     <div className="rep-content">
-      <div className="stat-grid">
+      <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         <div className="stat"><div className="stat-val" style={{ color: '#049295' }}>{fmt(data.total_budget)}</div><div className="stat-lbl">Total budget</div></div>
         <div className="stat"><div className="stat-val" style={{ color: '#FF3FA4' }}>{fmt(data.total_equipment_cost)}</div><div className="stat-lbl">Equipment cost</div></div>
-        <div className="stat"><div className="stat-val" style={{ color: '#049295' }}>{data.total_monthly_consumables ? fmt(data.total_monthly_consumables) + '/mo' : '—'}</div><div className="stat-lbl">Monthly consumables</div></div>
-        <div className="stat"><div className="stat-val" style={{ color: '#FF3FA4' }}>{data.estimated_roi_months ? data.estimated_roi_months + ' months' : '—'}</div><div className="stat-lbl">Est. ROI</div></div>
+        <div className="stat"><div className="stat-val" style={{ color: '#049295' }}>—</div><div className="stat-lbl">Monthly consumables</div></div>
       </div>
 
       {pieData.length > 0 && (
         <>
-          <div className="sec-head">Budget breakdown<div className="sec-line" /></div>
+          <div className="sec-head">Equipment cost breakdown<div className="sec-line" /></div>
           <div style={{ background: '#fff', borderRadius: 16, padding: '18px 20px', border: '1px solid var(--br)', boxShadow: 'var(--shadow-sm)', marginBottom: 4 }}>
             <div className="pie-wrap">
               <div><DonutChart data={pieData} /></div>
               <div className="pie-legend">
-                {pieData.map((e, i) => (
+                {pieData.map((e) => (
                   <div className="legend-row" key={e.name}>
-                    <div className="legend-dot" style={{ background: ['#00D5D5', '#FF3FA4', '#8C7CFF', '#049295', '#FF8FCB', '#5EC9E8'][i % 6] }} />
+                    <div className="legend-dot" style={{ background: e.color }} />
                     <span className="legend-name">{e.name}</span>
                     <span className="legend-val">{fmt(e.value)}</span>
                   </div>
@@ -182,24 +217,6 @@ export function ReportView({ data }: { data: Record<string, any> }) {
         </>
       )}
 
-      {protocols.length > 0 && (
-        <>
-          <div className="sec-head">Protocol package<div className="sec-line" /></div>
-          {protocols.map((p, i) => (
-            <div className="proto-card" key={(p.id || p.name) + i}>
-              <div className="proto-name">{p.name || p.id}</div>
-              <div className="proto-meta">
-                <span className="proto-badge" style={{ background: '#E6FBFB', color: '#049295' }}>{p.bsl_requirements || '—'}</span>
-                <span className="proto-badge" style={{ background: '#FFEAF5', color: '#C41678' }}>{p.estimated_time_hours || '?'} hrs</span>
-              </div>
-              <div className="proto-tags">
-                {(p.required_equipment || []).map((e: any) => <span className="proto-tag" key={e.name}>{e.name}</span>)}
-              </div>
-            </div>
-          ))}
-        </>
-      )}
-
       <GeneratedLayoutPlan value={data.generated_layout} />
 
       {staff.length > 0 && (
@@ -229,25 +246,6 @@ export function ReportView({ data }: { data: Record<string, any> }) {
         </>
       )}
 
-      {consumables.length > 0 && (
-        <>
-          <div className="sec-head">Monthly consumables<div className="sec-line" /></div>
-          <div style={{ borderRadius: 10, overflow: 'hidden', marginBottom: 4 }}>
-            <table className="rep-table">
-              <thead><tr><th>Item</th><th>Monthly cost</th></tr></thead>
-              <tbody>
-                {consumables.map((c, i) => (
-                  <tr className={i % 2 === 1 ? 'odd' : ''} key={c.name + i}>
-                    <td>{c.name}</td>
-                    <td style={{ fontWeight: 600, color: '#049295' }}>{fmt(c.estimated_monthly_cost)}/mo</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-
       {(revenue.year_1 || revenue.year_2 || revenue.year_3) && (
         <>
           <div className="sec-head">Revenue projections<div className="sec-line" /></div>
@@ -259,22 +257,13 @@ export function ReportView({ data }: { data: Record<string, any> }) {
                   <tr className={i % 2 === 1 ? 'odd' : ''} key={yr}>
                     <td>{yr}</td>
                     <td style={{ fontWeight: 700, color: '#049295' }}>{fmt(v)}</td>
-                    <td style={{ color: v > data.total_budget ? '#16a34a' : '#69707F' }}>
+                    <td style={{ color: v > data.total_budget ? '#049295' : '#69707F' }}>
                       {v && data.total_budget ? ((v / data.total_budget) * 100).toFixed(0) + '% of budget' : '—'}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
-        </>
-      )}
-
-      {tips.length > 0 && (
-        <>
-          <div className="sec-head">Cost saving tips<div className="sec-line" /></div>
-          <div className="tip-box">
-            {tips.map((t, i) => <div className="tip" key={i}>{t}</div>)}
           </div>
         </>
       )}

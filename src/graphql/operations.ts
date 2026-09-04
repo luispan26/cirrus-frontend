@@ -230,6 +230,12 @@ export const DELETE_REPORT_MUTATION = gql`
   }
 `;
 
+export const REPORTS_COUNT_QUERY = gql`
+  query ReportsCount {
+    reportsCount
+  }
+`;
+
 export const PROTOCOLS_IO_SEARCH_QUERY = gql`
   query ProtocolsIoSearch($key: String, $page: Int, $pageSize: Int, $workspaceUri: String) {
     protocolsIoSearch(key: $key, page: $page, pageSize: $pageSize, workspaceUri: $workspaceUri) {
@@ -310,6 +316,16 @@ export const EQUIPMENT_LIST_QUERY = gql`
     equipmentList {
       equipmentId name costUsd widthFt depthFt heightFt stationId utilityRequirements mounting
       needsDimensions canvasDeleted
+    }
+  }
+`;
+
+// Lighter than EQUIPMENT_LIST_QUERY above — the Dashboard's "Registered
+// Equipment" stat only needs a count, not every field.
+export const EQUIPMENT_COUNT_QUERY = gql`
+  query EquipmentCount {
+    equipmentList {
+      equipmentId
     }
   }
 `;

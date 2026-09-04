@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { useQuery, useMutation } from '@apollo/client/react';
 import { useNavigate } from 'react-router-dom';
 import {
-  STATIONS_QUERY, EQUIPMENT_LIST_QUERY, INVENTORY_ITEMS_QUERY,
-  CREATE_EQUIPMENT_MUTATION, CREATE_INVENTORY_ITEM_MUTATION,
-  ASSIGN_EQUIPMENT_TO_STATION_MUTATION, ASSIGN_INVENTORY_ITEM_TO_STATION_MUTATION,
-  DELETE_EQUIPMENT_MUTATION, DELETE_INVENTORY_ITEM_MUTATION, UPDATE_EQUIPMENT_MUTATION,
+  STATIONS_QUERY, EQUIPMENT_LIST_QUERY,
+  CREATE_EQUIPMENT_MUTATION,
+  ASSIGN_EQUIPMENT_TO_STATION_MUTATION,
+  DELETE_EQUIPMENT_MUTATION, UPDATE_EQUIPMENT_MUTATION,
 } from '../graphql/operations';
 import { SearchableSelect } from '../components/SearchableSelect';
 
@@ -14,7 +14,6 @@ interface EquipmentRow {
   equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null;
   needsDimensions: boolean; canvasDeleted: boolean;
 }
-interface InventoryRow { inventoryId: string; name: string; stockNumber: number; stationId: string | null; }
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : 'Something went wrong.';
@@ -28,15 +27,10 @@ export function InventoryPage() {
 
   const { data: equipmentData, refetch: refetchEquipment, loading: eqLoading, error: eqError } =
     useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
-  const { data: inventoryData, refetch: refetchInventory, loading: invLoading, error: invError } =
-    useQuery<{ inventoryItems: InventoryRow[] }>(INVENTORY_ITEMS_QUERY);
 
   const [createEquipment] = useMutation(CREATE_EQUIPMENT_MUTATION);
-  const [createInventoryItem] = useMutation(CREATE_INVENTORY_ITEM_MUTATION);
   const [assignEquipment] = useMutation(ASSIGN_EQUIPMENT_TO_STATION_MUTATION);
-  const [assignInventory] = useMutation(ASSIGN_INVENTORY_ITEM_TO_STATION_MUTATION);
   const [deleteEquipment] = useMutation(DELETE_EQUIPMENT_MUTATION);
-  const [deleteInventoryItem] = useMutation(DELETE_INVENTORY_ITEM_MUTATION);
   const [updateEquipment] = useMutation(UPDATE_EQUIPMENT_MUTATION);
 
   const [eqForm, setEqForm] = useState({ equipmentId: '', name: '', costUsd: '', widthFt: '', depthFt: '', heightFt: '', stationId: '' });
@@ -45,9 +39,6 @@ export function InventoryPage() {
   const [editingEquipmentId, setEditingEquipmentId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: '', costUsd: '', widthFt: '', depthFt: '', heightFt: '' });
   const [editFormError, setEditFormError] = useState('');
-
-  const [invForm, setInvForm] = useState({ inventoryId: '', name: '', stockNumber: '', stationId: '' });
-  const [invFormError, setInvFormError] = useState('');
 
   async function handleCreateEquipment() {
     setEqFormError('');
@@ -73,31 +64,9 @@ export function InventoryPage() {
     }
   }
 
-  async function handleCreateInventoryItem() {
-    setInvFormError('');
-    const { inventoryId, name, stockNumber, stationId } = invForm;
-    if (!inventoryId.trim() || !name.trim() || !stockNumber) {
-      setInvFormError('ID, name, and stock number are required.');
-      return;
-    }
-    try {
-      await createInventoryItem({
-        variables: { input: { inventoryId: inventoryId.trim(), name: name.trim(), stockNumber: parseInt(stockNumber, 10), stationId: stationId || null } },
-      });
-      setInvForm({ inventoryId: '', name: '', stockNumber: '', stationId: '' });
-      refetchInventory();
-    } catch (e) {
-      setInvFormError(errMsg(e));
-    }
-  }
-
   async function handleDeleteEquipment(id: string) {
     await deleteEquipment({ variables: { equipmentId: id } });
     refetchEquipment();
-  }
-  async function handleDeleteInventoryItem(id: string) {
-    await deleteInventoryItem({ variables: { inventoryId: id } });
-    refetchInventory();
   }
   function startEditEquipment(eq: EquipmentRow) {
     setEditingEquipmentId(eq.equipmentId);
@@ -132,10 +101,6 @@ export function InventoryPage() {
     await assignEquipment({ variables: { equipmentId: id, stationId: stationId || null } });
     refetchEquipment();
   }
-  async function handleReassignInventory(id: string, stationId: string) {
-    await assignInventory({ variables: { inventoryId: id, stationId: stationId || null } });
-    refetchInventory();
-  }
 
   return (
     <div className="screen">
@@ -144,7 +109,7 @@ export function InventoryPage() {
           <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 15, letterSpacing: '.08em', color: 'var(--dark)' }}>
             EQUIPMENT & INVENTORY
           </div>
-          <div style={{ fontSize: 12, color: 'var(--mid)' }}>Publish equipment and inventory to the backend, and assign them to stations</div>
+          <div style={{ fontSize: 12, color: 'var(--mid)' }}>Publish equipment to the backend, and assign it to stations</div>
         </div>
         <button className="btn-out" onClick={() => navigate('/dashboard')}>← Dashboard</button>
       </div>
@@ -271,54 +236,6 @@ export function InventoryPage() {
             })}
             {!eqLoading && (equipmentData?.equipmentList ?? []).length === 0 && (
               <tr><td colSpan={6} style={{ padding: 12, color: 'var(--mid)' }}>No equipment yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-
-        <div className="sec-head">Inventory<div className="sec-line" /></div>
-
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16, alignItems: 'center' }}>
-          <input className="field-input" style={{ width: 130 }} placeholder="ID" value={invForm.inventoryId} onChange={(e) => setInvForm({ ...invForm, inventoryId: e.target.value })} />
-          <input className="field-input" style={{ width: 200, flex: '1 1 200px' }} placeholder="Name" value={invForm.name} onChange={(e) => setInvForm({ ...invForm, name: e.target.value })} />
-          <input className="field-input" style={{ width: 130 }} placeholder="Stock number" type="number" value={invForm.stockNumber} onChange={(e) => setInvForm({ ...invForm, stockNumber: e.target.value })} />
-          <SearchableSelect
-            style={{ width: 200 }}
-            options={[{ value: '', label: 'No station (unassigned)' }, ...stationOptions]}
-            value={invForm.stationId}
-            onChange={(v) => setInvForm({ ...invForm, stationId: v })}
-            placeholder="No station (unassigned)"
-          />
-          <button className="btn-teal" onClick={handleCreateInventoryItem}>+ Add inventory item</button>
-        </div>
-        {invFormError && <div style={{ color: '#a33', fontSize: 12, marginBottom: 12 }}>{invFormError}</div>}
-        {invError && <div style={{ color: '#a33', fontSize: 12, marginBottom: 12 }}>{invError.message}</div>}
-
-        <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--br)' }}>
-              <th style={{ padding: 6 }}>ID</th><th>Name</th><th>Stock</th><th>Station</th><th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {(inventoryData?.inventoryItems ?? []).map((inv) => (
-              <tr key={inv.inventoryId} style={{ borderBottom: '1px solid var(--br)' }}>
-                <td style={{ padding: 6, fontFamily: 'var(--mono)' }}>{inv.inventoryId}</td>
-                <td>{inv.name}</td>
-                <td>{inv.stockNumber}</td>
-                <td>
-                  <SearchableSelect
-                    style={{ width: 200 }}
-                    options={[{ value: '', label: 'Unassigned' }, ...stationOptions]}
-                    value={inv.stationId ?? ''}
-                    onChange={(v) => handleReassignInventory(inv.inventoryId, v)}
-                    placeholder="Unassigned"
-                  />
-                </td>
-                <td><button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => handleDeleteInventoryItem(inv.inventoryId)}>Delete</button></td>
-              </tr>
-            ))}
-            {!invLoading && (inventoryData?.inventoryItems ?? []).length === 0 && (
-              <tr><td colSpan={5} style={{ padding: 12, color: 'var(--mid)' }}>No inventory yet.</td></tr>
             )}
           </tbody>
         </table>

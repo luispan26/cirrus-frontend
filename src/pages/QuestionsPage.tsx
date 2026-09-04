@@ -26,8 +26,10 @@ type FeasibilityCheckResponse = { feasibilityCheck: { ok: boolean; issues: Feasi
 function validateQuestion(id: string, answers: Answers) {
   if (id === 'biosafety_level' && !answers.biosafety_level) return 'Choose a biosafety level.';
   if (id === 'operations') {
+    // Protocol selection is optional — a lab design can be generated with
+    // zero protocols selected. Any protocol that IS selected still needs
+    // its weekly runs entered, though.
     const ops = (answers.operations as string[]) || [];
-    if (ops.length === 0) return 'Select at least one protocol.';
     const runs = (answers.protocol_runs_per_week as Record<string, number>) || {};
     if (ops.some((opId) => runs[opId] === undefined)) return 'Enter expected weekly runs for every protocol (0 is fine).';
   }
@@ -153,7 +155,6 @@ export function QuestionsPage() {
         <div className="qm-prog-track"><div className="qm-prog-fill" style={{ width: `${pct}%` }} /></div>
         <SyncBadge status={status} />
         <button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>Dashboard</button>
-        <button className="qm-mode-toggle" onClick={() => navigate('/chat')}>Full-screen chat →</button>
       </div>
       <div className="qm-stage">
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -725,7 +726,7 @@ function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setFie
   if (eqError) return <p className="q-validation-error">Couldn’t load the equipment catalog: {eqError.message}</p>;
 
   if (rows.length === 0) {
-    return <p className="q-inline-help">Nothing to finalize yet — the General Lab, biosafety, biomaterial, and analytical equipment lists you've drawn from are all empty or unselected.</p>;
+    return <p className="q-inline-help">Nothing to finalize yet — you have no existing equipment on file, and the General Lab, biosafety, biomaterial, and analytical equipment lists you've drawn from are all empty or unselected.</p>;
   }
 
   const categoryByKey = new Map(BASIC_EQUIPMENT_CATEGORIES.map((c) => [c.key, c]));
@@ -747,7 +748,7 @@ function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setFie
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 0 }}>
         Adjust quantities as needed. Items required for your biosafety level can’t be removed, only increased.
-        Each color-coded section below shows which list brought that equipment into this combined list.
+        Equipment you already own is fixed at what you entered in Q1. Each color-coded section below shows which list brought that equipment into this combined list.
       </p>
       {/* Long lists (many categories, or a category with many rows) can
           exceed the card's own height — this panel scrolls on its own within
@@ -774,7 +775,11 @@ function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setFie
                   <div key={row.equipmentId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)' }}>
                       {row.name}
-                      {row.locked && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(required)</span>}
+                      {row.owned ? (
+                        <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(owned)</span>
+                      ) : row.locked && (
+                        <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(required)</span>
+                      )}
                       {otherSources.map((sourceKey) => {
                         const meta = categoryByKey.get(sourceKey);
                         if (!meta) return null;
@@ -790,13 +795,19 @@ function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setFie
                       })}
                     </span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div className="stepper">
-                        <button type="button" onClick={() => setQty(row.equipmentId, row.quantity - 1)}>−</button>
-                        <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.quantity}</span>
-                        <button type="button" onClick={() => setQty(row.equipmentId, row.quantity + 1)}>+</button>
-                      </div>
-                      {!row.locked && (
-                        <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => remove(row.equipmentId)}>Remove</button>
+                      {row.owned ? (
+                        <span style={{ fontSize: 14, color: 'var(--mid)', minWidth: 20, textAlign: 'center' }}>{row.quantity}</span>
+                      ) : (
+                        <>
+                          <div className="stepper">
+                            <button type="button" onClick={() => setQty(row.equipmentId, row.quantity - 1)}>−</button>
+                            <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.quantity}</span>
+                            <button type="button" onClick={() => setQty(row.equipmentId, row.quantity + 1)}>+</button>
+                          </div>
+                          {!row.locked && (
+                            <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => remove(row.equipmentId)}>Remove</button>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>

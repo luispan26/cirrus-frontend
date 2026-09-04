@@ -2,9 +2,11 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@apollo/client/react';
 import { useAuth } from '../context/AuthContext';
 import { IconHistory, IconLayers, IconFlask, IconGear, IconLogout } from '../components/Icons';
-import { MY_REPORTS_QUERY } from '../graphql/operations';
+import {
+  MY_REPORTS_QUERY, EQUIPMENT_COUNT_QUERY, PROTOCOL_IDS_WITH_EQUIPMENT_MAPPINGS_QUERY, REPORTS_COUNT_QUERY,
+} from '../graphql/operations';
 import { parseSandboxLayout } from '../lib/layout-sandbox';
-import { LAB_ASSETS, LabAssetBench } from '../components/LabAssets';
+import { LabAssetBench } from '../components/LabAssets';
 import { LayoutFloorPlan } from '../components/LayoutFloorPlan';
 
 const NAV_ITEMS = [
@@ -41,6 +43,20 @@ export function DashboardPage() {
   const { data: reportsData, loading: reportsLoading } = useQuery<{ myReports: ReportSummary[] }>(MY_REPORTS_QUERY, {
     fetchPolicy: 'cache-and-network',
   });
+  // Dashboard stat row — system-wide totals, not scoped to this design or
+  // this user (see each stat's own tile below). cache-and-network, same as
+  // myReports above, so "Labs designed" actually ticks up when you land
+  // back here after generating a new report rather than serving a stale
+  // cached count.
+  const { data: equipmentCountData } = useQuery<{ equipmentList: { equipmentId: string }[] }>(EQUIPMENT_COUNT_QUERY, {
+    fetchPolicy: 'cache-and-network',
+  });
+  const { data: protocolsData } = useQuery<{ protocolIdsWithEquipmentMappings: string[] }>(PROTOCOL_IDS_WITH_EQUIPMENT_MAPPINGS_QUERY, {
+    fetchPolicy: 'cache-and-network',
+  });
+  const { data: reportsCountData } = useQuery<{ reportsCount: number }>(REPORTS_COUNT_QUERY, {
+    fetchPolicy: 'cache-and-network',
+  });
 
   async function handleLogout() {
     await logout();
@@ -53,18 +69,10 @@ export function DashboardPage() {
   const readyReports = reports.filter((r) => r.status === 'ready' && r.data);
   const latestReport = readyReports[0] ?? null;
   const reportData = latestReport?.data ?? null;
-  const recentReports = readyReports.slice(1, 5);
 
-  const protocols: any[] = Array.isArray(reportData?.protocols_json) ? reportData.protocols_json : [];
-  // bom (Prompt 3) replaced essential_equipment as the report's equipment
-  // source — its rows use equipmentSpecification, not name, hence the map.
-  const equipment: string[] = Array.from(
-    new Set(
-      ([] as any[])
-        .concat((reportData?.bom || []).map((r: any) => r?.equipmentSpecification), reportData?.recommended_equipment?.map((e: any) => e?.name) || [])
-        .filter(Boolean),
-    ),
-  );
+  const registeredEquipmentCount = equipmentCountData?.equipmentList.length ?? 0;
+  const protocolsCount = protocolsData?.protocolIdsWithEquipmentMappings.length ?? 0;
+  const labsDesignedCount = reportsCountData?.reportsCount ?? 0;
 
   return (
     <div className="screen dash-screen">
@@ -130,100 +138,46 @@ export function DashboardPage() {
             </div>
           </div>
 
-          <div className="dash-widgets-row">
-            <div className="dash-widget dash-widget-preview">
-              <div className="dash-widget-head">
-                <span>Last lab design</span>
-                {latestReport && (
-                  <button className="dash-widget-link" onClick={() => navigate('/report', { state: { reportData } })}>
-                    View report →
-                  </button>
-                )}
-              </div>
-              {reportsLoading && reports.length === 0 ? (
-                <div className="dash-widget-empty">Loading…</div>
-              ) : !latestReport ? (
-                <div className="dash-widget-empty">
-                  <div className="dash-asset-icon"><LabAssetBench /></div>
-                  No completed lab designs yet.
-                  <button className="dash-widget-link" onClick={() => navigate('/scenario')} style={{ display: 'block', margin: '6px auto 0' }}>
-                    Start one →
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <div className="dash-widget-sub">
-                    {cap(reportData?.business_model) || 'Lab design'} · {new Date(latestReport.createdAt).toLocaleDateString()}
-                  </div>
-                  <LayoutThumbnail reportData={reportData} label="Last lab design floor plan" />
-                  {!reportData?.generated_layout?.data && (
-                    <div className="dash-widget-empty">
-                      <div className="dash-asset-icon"><LabAssetBench /></div>
-                      No floor plan was generated for this design.
-                    </div>
-                  )}
-                </>
+          <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            <div className="stat"><div className="stat-val" style={{ color: '#049295' }}>{registeredEquipmentCount}</div><div className="stat-lbl">Registered equipment</div></div>
+            <div className="stat"><div className="stat-val" style={{ color: '#FF3FA4' }}>{protocolsCount}</div><div className="stat-lbl">Protocols</div></div>
+            <div className="stat"><div className="stat-val" style={{ color: '#049295' }}>{labsDesignedCount}</div><div className="stat-lbl">Labs designed</div></div>
+          </div>
+
+          <div className="dash-widget dash-widget-preview">
+            <div className="dash-widget-head">
+              <span>Last lab design</span>
+              {latestReport && (
+                <button className="dash-widget-link" onClick={() => navigate('/report', { state: { reportData } })}>
+                  View report →
+                </button>
               )}
             </div>
-
-            <div className="dash-widget-stack">
-              <div className="dash-widget">
-                <div className="dash-widget-head"><span>Protocols selected</span></div>
-                {protocols.length === 0 ? (
-                  <div className="dash-widget-empty">No protocols in this design.</div>
-                ) : (
-                  <div className="dash-widget-tags">
-                    {protocols.map((p, i) => (
-                      <span className="proto-tag" key={p.id || p.name || i}>{p.name || p.id}</span>
-                    ))}
+            {reportsLoading && reports.length === 0 ? (
+              <div className="dash-widget-empty">Loading…</div>
+            ) : !latestReport ? (
+              <div className="dash-widget-empty">
+                <div className="dash-asset-icon"><LabAssetBench /></div>
+                No completed lab designs yet.
+                <button className="dash-widget-link" onClick={() => navigate('/scenario')} style={{ display: 'block', margin: '6px auto 0' }}>
+                  Start one →
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="dash-widget-sub">
+                  {cap(reportData?.business_model) || 'Lab design'} · {new Date(latestReport.createdAt).toLocaleDateString()}
+                </div>
+                <LayoutThumbnail reportData={reportData} label="Last lab design floor plan" />
+                {!reportData?.generated_layout?.data && (
+                  <div className="dash-widget-empty">
+                    <div className="dash-asset-icon"><LabAssetBench /></div>
+                    No floor plan was generated for this design.
                   </div>
                 )}
-              </div>
-              <div className="dash-widget">
-                <div className="dash-widget-head"><span>Equipment selected</span></div>
-                {equipment.length === 0 ? (
-                  <div className="dash-widget-empty">No equipment in this design.</div>
-                ) : (
-                  <div className="dash-widget-tags">
-                    {equipment.map((name) => (
-                      <span className="proto-tag" key={name}>{name}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+              </>
+            )}
           </div>
-
-          <div className="dash-widget-head" style={{ marginTop: 26 }}>
-            <span>Recent lab layouts</span>
-            <button className="dash-widget-link" onClick={() => navigate('/history')}>View all →</button>
-          </div>
-          {recentReports.length === 0 ? (
-            <div className="dash-widget dash-recent-empty">
-              {readyReports.length <= 1 ? 'No earlier lab layouts yet — this is your first one.' : 'No earlier lab layouts to show.'}
-            </div>
-          ) : (
-            <div className="dash-recent-row">
-              {recentReports.map((r, i) => {
-                const Asset = LAB_ASSETS[i % LAB_ASSETS.length];
-                return (
-                  <div key={r.id} className="dash-recent-card" onClick={() => navigate('/report', { state: { reportData: r.data } })}>
-                    <LayoutThumbnail reportData={r.data} label="Lab layout floor plan" />
-                    {!r.data?.generated_layout?.data && (
-                      <div className="dash-recent-thumb-empty">
-                        <div className="dash-asset-icon dash-asset-icon-sm"><Asset /></div>
-                        No floor plan
-                      </div>
-                    )}
-                    <div className="dash-recent-card-label">
-                      <b>{cap(r.data?.business_model) || 'Lab design'}</b>
-                      <small>{new Date(r.createdAt).toLocaleDateString()}</small>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </div>
       </div>
     </div>

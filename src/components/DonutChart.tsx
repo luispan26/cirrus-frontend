@@ -3,6 +3,13 @@ import type { ReactElement } from 'react';
 export interface DonutDatum {
   name: string;
   value: number;
+  // Falls back to PALETTE-by-index when omitted (the original behavior) —
+  // set this when the caller already has a meaningful per-category color
+  // (e.g. the report's BOM-category cost breakdown reusing the same colors
+  // BomSection/Q5 use for those categories elsewhere in the app) so the
+  // wedge and its legend swatch (rendered by the caller, not this
+  // component) actually match.
+  color?: string;
 }
 
 const PALETTE = ['#00D5D5', '#FF3FA4', '#8C7CFF', '#049295', '#FF8FCB', '#5EC9E8'];
@@ -26,7 +33,7 @@ export function DonutChart({ data, size = 200 }: { data: DonutDatum[]; size?: nu
     const x3 = cx + ir * Math.cos(angle + a), y3 = cy + ir * Math.sin(angle + a);
     const x4 = cx + ir * Math.cos(angle), y4 = cy + ir * Math.sin(angle);
     const lg = a > Math.PI ? 1 : 0;
-    const color = PALETTE[i % PALETTE.length];
+    const color = d.color ?? PALETTE[i % PALETTE.length];
     paths.push(
       <path
         key={d.name}

@@ -138,6 +138,12 @@ export const PROTOCOL_SPECIFIC_CATEGORY_KEY = 'protocol_specific';
 // Colors are chosen to stay visually distinct from each other and from the
 // existing amber "still a Canvas placeholder" convention used elsewhere.
 export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; color: string }[] = [
+  // Equipment pulled in from Q1's existing-equipment inventory (see
+  // computeBasicLabEquipment's ownedMeta loop) — listed first since it needs
+  // no action from the user, just an FYI of what's already covered. Greyed
+  // out on purpose (a muted color, unlike every other category's saturated
+  // one) to visually read as "already handled, nothing to configure here".
+  { key: 'owned', label: 'Already Owned', color: '#6B7280' },
   { key: 'general', label: 'General Lab Equipment', color: '#00A3A3' },
   { key: 'bsl', label: 'Biosafety-Required', color: '#a67c00' },
   { key: 'bacteria', label: 'Bacterial Basic', color: '#3D8B3D' },
@@ -169,11 +175,13 @@ export const QS: Question[] = [
 
 // Steps where advancing past them triggers a feasibilityCheck GraphQL call
 // against everything answered so far (see QuestionsPage.tsx's nextQ) —
-// 'operations' re-checks room-vs-required-benches now that demand-driven
-// bench replication is known (protocol selection and weekly-runs are both
-// answered on this one step — see capacity-planner.ts); 'budget' re-checks
-// with desired/max now known.
-export const FEASIBILITY_GATE_IDS = ['operations', 'budget'];
+// 'budget' re-checks room-vs-required-benches and budget-vs-equipment-cost
+// with desired/max now known. 'operations' (protocol selection and
+// weekly-runs, both answered on that one step) deliberately does NOT gate
+// here for now — throughput is temporarily unlimited, no room-vs-bench
+// error blocks leaving that step. Revisit once real throughput limits are
+// wanted again.
+export const FEASIBILITY_GATE_IDS = ['budget'];
 
 export const INTAKE_FIELD_KEYS = [
   'existing_equipment_meta',
@@ -320,7 +328,11 @@ export interface EquipmentCatalogEntry { equipmentId: string; name: string; }
 // this row, in the order each was first added — sources[0] is treated as
 // the row's primary category for grouping in the Q5 UI, with any further
 // entries surfaced there as "also required by" cross-references.
-export interface BasicLabEquipmentRow { equipmentId: string; name: string; quantity: number; locked: boolean; sources: string[]; }
+// owned = true means this row's quantity comes (at least partly) from Q1's
+// existing-equipment inventory ('owned' is in sources) — the lab already has
+// it, so unlike a `locked` (BSL-required) row, its quantity can't be
+// adjusted at all in Q5, not even increased.
+export interface BasicLabEquipmentRow { equipmentId: string; name: string; quantity: number; locked: boolean; owned: boolean; sources: string[]; }
 
 // Basic Lab Equipment List computation (Prompt 2 spec): start with 1 of
 // every item on the General Lab Equipment List; add 1 of every item on the
@@ -344,6 +356,7 @@ export function computeBasicLabEquipment(
   const nameById = new Map(catalog.map((c) => [c.equipmentId, c.name]));
   const quantities = new Map<string, number>();
   const locked = new Set<string>();
+  const owned = new Set<string>();
   const sources = new Map<string, string[]>();
 
   function addSource(equipmentId: string, categoryKey: string) {
@@ -379,6 +392,25 @@ export function computeBasicLabEquipment(
     addSource(equipmentId, 'analytical');
   }
 
+  // Q1's existing-equipment inventory — merged in LAST, after every
+  // category above, so ownership never displaces where an item already
+  // landed: something already required by General/BSL/etc. stays under
+  // that category (with 'owned' added as an additional source, surfaced as
+  // a small "+ Already Owned" cross-reference pill same as any other
+  // secondary source) — only an item owned but not required by ANY selected
+  // category gets its own primary "Already Owned" bucket. Either way the
+  // displayed quantity is raised to at least what's owned (never summed —
+  // owning 3 of something a list only asks for 1 of shows 3, not 4), and
+  // the row is marked owned so the BOM shows no cost for it.
+  const ownedMeta = (answers.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
+  for (const [equipmentId, meta] of Object.entries(ownedMeta)) {
+    const ownedQty = Math.max(1, Math.round(meta.count) || 1);
+    const requiredQty = quantities.get(equipmentId);
+    quantities.set(equipmentId, requiredQty === undefined ? ownedQty : Math.max(requiredQty, ownedQty));
+    owned.add(equipmentId);
+    addSource(equipmentId, 'owned');
+  }
+
   return Array.from(quantities.entries())
     // Guards against a listed equipmentId whose Equipment Specification
     // List entry was since deleted — never render a row with no real name.
@@ -388,6 +420,7 @@ export function computeBasicLabEquipment(
       name: nameById.get(equipmentId)!,
       quantity,
       locked: locked.has(equipmentId),
+      owned: owned.has(equipmentId),
       sources: sources.get(equipmentId) ?? [],
     }));
 }
@@ -396,14 +429,15 @@ export function computeBasicLabEquipment(
 // (floored at 1, per the "cannot go below 1 without removing the item
 // entirely" rule) and explicit removals. Locked (BSL-required) rows ignore
 // removal entirely — they can only have their quantity increased, matching
-// the Q5 editing rules exactly.
+// the Q5 editing rules exactly. Owned rows ignore both — the quantity is
+// whatever's actually owned, not user-editable at all.
 export function applyBasicLabEquipmentOverrides(computed: BasicLabEquipmentRow[], answers: Answers): BasicLabEquipmentRow[] {
   const removed = new Set((answers.basic_lab_equipment_removed as string[]) || []);
   const overrides = (answers.basic_lab_equipment_quantity_overrides as Record<string, number>) || {};
   return computed
-    .filter((row) => row.locked || !removed.has(row.equipmentId))
+    .filter((row) => row.locked || row.owned || !removed.has(row.equipmentId))
     .map((row) => ({
       ...row,
-      quantity: Math.max(1, overrides[row.equipmentId] ?? row.quantity),
+      quantity: row.owned ? row.quantity : Math.max(1, overrides[row.equipmentId] ?? row.quantity),
     }));
 }

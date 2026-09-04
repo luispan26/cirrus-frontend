@@ -23,7 +23,6 @@ export function ReportPage() {
   }
 
   const [pastedData, setPastedData] = useState<Record<string, any> | null>(null);
-  const [wantsPasteBox, setWantsPasteBox] = useState(false);
   const [pasteValue, setPasteValue] = useState('');
   const [pasteError, setPasteError] = useState('');
 
@@ -34,10 +33,9 @@ export function ReportPage() {
   // initial value once on mount.
   useEffect(() => {
     setPastedData(null);
-    setWantsPasteBox(false);
   }, [location.key]);
 
-  const data = wantsPasteBox ? pastedData : (pastedData ?? routedData);
+  const data = pastedData ?? routedData;
 
   function handleParse() {
     const raw = pasteValue.trim();
@@ -48,7 +46,6 @@ export function ReportPage() {
     }
     try {
       setPastedData(JSON.parse(raw));
-      setWantsPasteBox(false);
     } catch {
       setPasteError('Invalid JSON — check for missing brackets or quotes.');
     }
@@ -58,17 +55,17 @@ export function ReportPage() {
     <div className="screen report-screen">
       <div className="rep-top">
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 15, color: 'white', letterSpacing: '.08em' }}>CIRRUS</div>
+          <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 15, color: '#fff', letterSpacing: '.08em' }}>CIRRUS</div>
           <div>
-            <div style={{ fontFamily: 'var(--head)', fontSize: 14, fontWeight: 500, color: 'white' }}>Lab Design Report</div>
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,.5)' }}>Powered by Cirrus + n8n</div>
+            <div style={{ fontFamily: 'var(--head)', fontSize: 14, fontWeight: 500, color: '#fff' }}>Lab Design Report</div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,.65)' }}>Powered by Cirrus + n8n</div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           {routedSessionId && (
-            <button className="back-white" onClick={handleEditQuestionnaire}>← Edit questionnaire</button>
+            <button className="qm-mode-toggle" onClick={handleEditQuestionnaire}>← Edit questionnaire</button>
           )}
-          <button className="back-white" onClick={() => navigate('/dashboard')}>← Dashboard</button>
+          <button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>← Dashboard</button>
         </div>
       </div>
       <div className="rep-body">
@@ -90,12 +87,7 @@ export function ReportPage() {
             </button>
           </div>
         ) : (
-          <>
-            <ReportView data={data} />
-            <div style={{ textAlign: 'center' }}>
-              <button className="btn-out" onClick={() => { setWantsPasteBox(true); setPastedData(null); setPasteValue(''); }}>Paste a different report</button>
-            </div>
-          </>
+          <ReportView data={data} />
         )}
       </div>
     </div>

@@ -51,7 +51,11 @@ export function DesignHistoryPage() {
     refetch();
   }
 
-  const reports = data?.myReports ?? [];
+  // Only the last 7 days, not a full log — everything stays in the database
+  // (the Dashboard's "Labs designed" stat and "Last lab design" preview both
+  // still need the full history), this page just no longer lists older rows.
+  const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const reports = (data?.myReports ?? []).filter((r) => new Date(r.createdAt).getTime() >= oneWeekAgo);
 
   return (
     <div className="screen" style={{ background: 'var(--light)' }}>
@@ -66,7 +70,7 @@ export function DesignHistoryPage() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
             <div>
               <h2 style={{ fontFamily: 'var(--head)', fontSize: 26, fontWeight: 500, color: 'var(--dark)', letterSpacing: '-0.01em' }}>Design history</h2>
-              <p style={{ fontSize: 13, color: 'var(--mid)', marginTop: 4 }}>Every lab design report you've generated, newest first.</p>
+              <p style={{ fontSize: 13, color: 'var(--mid)', marginTop: 4 }}>Lab design reports from the last 7 days, newest first.</p>
             </div>
             <button className="btn-teal" onClick={() => navigate('/scenario')}>+ New lab design</button>
           </div>
@@ -76,7 +80,7 @@ export function DesignHistoryPage() {
 
           {!loading && !error && reports.length === 0 && (
             <div className="q-card" style={{ textAlign: 'center', maxWidth: 480, margin: '40px auto' }}>
-              <div className="q-title" style={{ fontSize: 18 }}>No lab designs yet</div>
+              <div className="q-title" style={{ fontSize: 18 }}>{(data?.myReports?.length ?? 0) > 0 ? 'No lab designs in the last 7 days' : 'No lab designs yet'}</div>
               <div className="q-hint">Start your first one — it only takes a few minutes.</div>
               <button className="btn-teal" style={{ width: '100%' }} onClick={() => navigate('/scenario')}>Start a lab design</button>
             </div>
