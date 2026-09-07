@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { ChatWidget } from '../components/ChatWidget';
 import { SyncBadge } from '../components/SyncBadge';
+import { Logo } from '../components/Logo';
 import { useIntakeSync } from '../hooks/useIntakeSync';
 
 export function ChatPage() {
@@ -19,7 +20,7 @@ export function ChatPage() {
   return (
     <div className="screen customchat-screen">
       <div className="qm-topbar">
-        <div className="logo-mark" style={{ cursor: 'pointer' }} onClick={() => navigate('/dashboard')}>CIRRUS</div>
+        <div className="logo-mark" style={{ cursor: 'pointer' }} onClick={() => navigate('/dashboard')}><Logo height={40} /></div>
         <div style={{ flex: 1 }} />
         <SyncBadge status={status} />
         <button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>Dashboard</button>

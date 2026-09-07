@@ -188,7 +188,7 @@ export const INTAKE_FIELD_KEYS = [
   'biosafety_level', 'biomaterials', 'analytical_equipment_quantities',
   'basic_lab_equipment_quantity_overrides', 'basic_lab_equipment_removed', 'basic_lab_equipment_final',
   'space_method', 'width_ft', 'height_ft', 'space_floorplan_filename',
-  'operations', 'protocol_runs_per_week', 'protocol_ids_by_operation',
+  'operations', 'protocol_runs_per_week', 'protocol_operation_by_id',
   'budget_desired', 'budget_max', 'budget_scope',
 ];
 
@@ -210,16 +210,28 @@ export function stepIndex(from: number, dir: 1 | -1, answers: Answers): number {
 // its manual/automated variants are) — it maps to the manual variant since
 // there's no automation question anymore to choose otherwise. 'miniprep'
 // is already a supported ID as-is and needs no mapping. Exported (not just
-// used inline by resolveOperations) because protocol_runs_per_week is also
-// keyed by the raw catalog id and needs the same mapping when it's folded
-// into FinalIntakeJson.demand.
+// used inline by resolveOperations) because it's also applied per-protocol
+// when folding protocol_runs_per_week into FinalIntakeJson.demand (see
+// buildFinalIntakeJson).
 export function resolveOperationId(op: string): string {
   return op === 'bca_assay' ? 'bca_assay_manual' : op;
 }
 
+// answers.operations holds each selected protocol's own real protocols.io
+// id (always unique — see ProtocolSelectBody's toggleProtocol in
+// QuestionsPage.tsx), not an operation id: two different validated
+// protocols that both happen to title-match the same catalog Operation
+// (e.g. two distinct BCA assay kits) stay independently selectable rather
+// than collapsing onto one shared checkbox. protocol_operation_by_id maps
+// a matched protocol's id to the Operation id it sizes against; unmatched
+// protocols have no entry and pass their own id through unchanged (same
+// fallback as before this was protocol-scoped). Deduped since more than
+// one selected protocol can resolve to the same operation.
 export function resolveOperations(a: Answers): string[] {
-  const rawOps = (a.operations as string[]) || [];
-  return rawOps.map(resolveOperationId);
+  const rawProtocolIds = (a.operations as string[]) || [];
+  const operationByProtocolId = (a.protocol_operation_by_id as Record<string, string>) || {};
+  const resolved = rawProtocolIds.map((protocolId) => resolveOperationId(operationByProtocolId[protocolId] ?? protocolId));
+  return [...new Set(resolved)];
 }
 
 export interface FinalIntakeJson {
@@ -255,17 +267,20 @@ export interface FinalIntakeJson {
   };
   budget: { desired: number; max: number; scope: string };
   allocation: { equipment: number; construction: number; staffing: number; consumables: number; contingency: number };
-  // Expected weekly run volume per protocol (keyed by resolved operation
-  // id) — feeds capacity-planning/capacity-planner.ts's demand-driven bench
-  // count sizing. Run duration is never asked here; it comes from each
-  // operation's own estimatedTimeHours metadata on the backend.
-  // protocol_ids_by_operation (same keying) is the real protocols.io
-  // protocol id each selected operation was matched against at Q7 select
-  // time (see ProtocolSelectBody's toggleProtocol in QuestionsPage.tsx) —
-  // needed because a catalog-matched operation's own id (e.g. 'nanodrop')
-  // isn't itself a protocols.io id, but the backend's Protocols Equipment
-  // List (bom/protocol-equipment-list.ts) can only look up equipment usage
-  // by the real one.
+  // Expected weekly run volume per resolved operation id — feeds
+  // capacity-planning/capacity-planner.ts's demand-driven bench count
+  // sizing. Run duration is never asked here; it comes from each
+  // operation's own estimatedTimeHours metadata on the backend. Summed
+  // across every selected protocol that resolves to the same operation
+  // (two different validated protocols can both match one catalog
+  // Operation — see resolveOperations's comment), not just the last one
+  // selected. protocol_ids_by_operation (same keying) is one representative
+  // real protocols.io protocol id per operation — needed because a
+  // catalog-matched operation's own id (e.g. 'nanodrop') isn't itself a
+  // protocols.io id, but the backend's Protocols Equipment List
+  // (bom/protocol-equipment-list.ts) can only look up equipment usage by
+  // the real one. When more than one selected protocol shares an
+  // operation, only the first is used for this lookup.
   demand: { runs_per_week_by_operation: Record<string, number>; protocol_ids_by_operation: Record<string, string> };
 }
 
@@ -283,15 +298,19 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
   const budgetDesired = parseInt((a.budget_desired as string) || '0', 10) || 0;
   const budgetMax = parseInt((a.budget_max as string) || '0', 10) || 0;
 
-  const rawSelectedOps = (a.operations as string[]) || [];
+  // a.operations holds each selected protocol's own real id (see
+  // resolveOperations's comment) — runs are summed onto whichever operation
+  // it resolves to rather than overwritten, so two different validated
+  // protocols matching the same catalog Operation both count.
+  const rawSelectedProtocolIds = (a.operations as string[]) || [];
   const rawRunsPerWeek = (a.protocol_runs_per_week as Record<string, number>) || {};
-  const rawProtocolIds = (a.protocol_ids_by_operation as Record<string, string>) || {};
+  const operationByProtocolId = (a.protocol_operation_by_id as Record<string, string>) || {};
   const runsPerWeekByOperation: Record<string, number> = {};
   const protocolIdsByOperation: Record<string, string> = {};
-  for (const rawOpId of rawSelectedOps) {
-    const resolvedOpId = resolveOperationId(rawOpId);
-    runsPerWeekByOperation[resolvedOpId] = rawRunsPerWeek[rawOpId] ?? 0;
-    if (rawProtocolIds[rawOpId]) protocolIdsByOperation[resolvedOpId] = rawProtocolIds[rawOpId];
+  for (const protocolId of rawSelectedProtocolIds) {
+    const resolvedOpId = resolveOperationId(operationByProtocolId[protocolId] ?? protocolId);
+    runsPerWeekByOperation[resolvedOpId] = (runsPerWeekByOperation[resolvedOpId] ?? 0) + (rawRunsPerWeek[protocolId] ?? 0);
+    if (!protocolIdsByOperation[resolvedOpId]) protocolIdsByOperation[resolvedOpId] = protocolId;
   }
 
   return {

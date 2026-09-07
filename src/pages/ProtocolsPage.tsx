@@ -5,13 +5,11 @@ import {
   PROTOCOLS_IO_PROTOCOL_QUERY, PROTOCOLS_IO_SEARCH_QUERY, EQUIPMENT_LIST_QUERY,
   STEP_EQUIPMENT_MAPPINGS_FOR_PROTOCOL_QUERY, EQUIPMENT_USAGE_FOR_PROTOCOL_QUERY,
   ASSIGN_EQUIPMENT_TO_STEP_MUTATION, REMOVE_STEP_EQUIPMENT_MAPPING_MUTATION,
-  PROTOCOL_BSL_QUERY, SET_PROTOCOL_BSL_MUTATION, TRIGGER_CANVAS_SYNC_MUTATION,
+  TRIGGER_CANVAS_SYNC_MUTATION, IS_PROTOCOL_VALIDATED_QUERY, VALIDATE_PROTOCOL_MUTATION,
 } from '../graphql/operations';
 import { SearchableSelect } from '../components/SearchableSelect';
 
 const SEARCH_PAGE_SIZE = 10;
-
-const BSL_LEVELS = ['BSL-1', 'BSL-2'] as const;
 
 interface ProtocolStepFile { name: string; url: string; }
 interface ProtocolStepImage { url: string; legend?: string; width?: number; height?: number; }
@@ -31,7 +29,6 @@ interface ProtocolsIoProtocol {
 }
 interface EquipmentRow { equipmentId: string; name: string; }
 interface StepEquipmentMapping { id: string; protocolId: string; stepId: string; stepNumber?: string; equipmentId: string; }
-interface ProtocolBsl { id: string; protocolId: string; bslLevel: string; }
 interface EquipmentUsageStep { stepId: string; stepNumber?: string; durationSeconds?: number | null; }
 interface EquipmentUsage { equipmentId: string; totalDurationSeconds: number; missingDurationStepCount: number; steps: EquipmentUsageStep[]; }
 interface ProtocolSummary { id: string; title: string; sourceUrl: string; doi?: string; publishedOn?: string; authorNames: string[]; }
@@ -104,9 +101,31 @@ export function ProtocolsPage() {
   );
   const searchResult = searchData?.protocolsIoSearch;
 
+  // Counts for both scope chips at once — a single pageSize:1 request per
+  // scope (we only need totalResults, not another results page) so the
+  // inactive chip's count stays visible without switching scope to see it.
+  const { data: workspaceCountData } = useQuery<{ protocolsIoSearch: ProtocolSearchResult }>(
+    PROTOCOLS_IO_SEARCH_QUERY,
+    { variables: { key: searchKey, page: 1, pageSize: 1, workspaceUri: undefined } },
+  );
+  const { data: publicCountData } = useQuery<{ protocolsIoSearch: ProtocolSearchResult }>(
+    PROTOCOLS_IO_SEARCH_QUERY,
+    { variables: { key: searchKey, page: 1, pageSize: 1, workspaceUri: null } },
+  );
+  const workspaceResultCount = workspaceCountData?.protocolsIoSearch.totalResults;
+  const publicResultCount = publicCountData?.protocolsIoSearch.totalResults;
+
   function handleSearch() {
     setSearchPage(1);
     setSearchKey(searchDraft.trim());
+  }
+
+  function handleGo() {
+    if (protocolId.trim()) {
+      handleFetch();
+    } else {
+      handleSearch();
+    }
   }
 
   function handleScopeChange(next: 'workspace' | 'public') {
@@ -163,14 +182,6 @@ export function ProtocolsPage() {
   const [assignEquipmentToStep] = useMutation(ASSIGN_EQUIPMENT_TO_STEP_MUTATION);
   const [removeStepEquipmentMapping] = useMutation(REMOVE_STEP_EQUIPMENT_MAPPING_MUTATION);
 
-  const { data: bslData, refetch: refetchBsl } = useQuery<{ protocolBsl: ProtocolBsl | null }>(
-    PROTOCOL_BSL_QUERY,
-    { variables: { protocolId: protocol?.id ?? '' }, skip: !protocol?.id },
-  );
-  const currentBsl = bslData?.protocolBsl?.bslLevel ?? null;
-  const [setProtocolBsl, { loading: settingBsl }] = useMutation(SET_PROTOCOL_BSL_MUTATION);
-  const [bslError, setBslError] = useState('');
-
   const [pickerSelection, setPickerSelection] = useState<Record<string, string>>({});
   const [assignError, setAssignError] = useState<Record<string, string>>({});
 
@@ -204,14 +215,36 @@ export function ProtocolsPage() {
     refetchStepEquipmentData();
   }
 
-  async function handleSetBsl(bslLevel: string) {
+  // Validated Protocols: a protocol only becomes selectable in the intake
+  // questionnaire's protocol-select step once a technician explicitly
+  // confirms it here — being in the Damp Lab workspace (or having equipment
+  // mapped) is no longer sufficient by itself. Requires at least one live
+  // step-equipment mapping; the backend re-checks this too (see
+  // ValidatedProtocolsService.validate) so this button being enabled is a
+  // UX nicety, not the only guard.
+  const { data: validatedData, refetch: refetchValidated } = useQuery<{ isProtocolValidated: boolean }>(
+    IS_PROTOCOL_VALIDATED_QUERY,
+    { variables: { protocolId: protocol?.id ?? '' }, skip: !protocol?.id },
+  );
+  const isValidated = validatedData?.isProtocolValidated ?? false;
+  const [validateProtocolMutation, { loading: validating }] = useMutation(VALIDATE_PROTOCOL_MUTATION);
+  const [showValidateConfirm, setShowValidateConfirm] = useState(false);
+  const [validateError, setValidateError] = useState('');
+
+  useEffect(() => {
+    setShowValidateConfirm(false);
+    setValidateError('');
+  }, [protocol?.id]);
+
+  async function handleConfirmValidate() {
     if (!protocol) return;
-    setBslError('');
+    setValidateError('');
     try {
-      await setProtocolBsl({ variables: { input: { protocolId: protocol.id, bslLevel } } });
-      refetchBsl();
+      await validateProtocolMutation({ variables: { input: { protocolId: protocol.id, title: protocol.title, sourceUrl: protocol.sourceUrl } } });
+      setShowValidateConfirm(false);
+      refetchValidated();
     } catch (e) {
-      setBslError(errMsg(e));
+      setValidateError(errMsg(e));
     }
   }
 
@@ -222,7 +255,7 @@ export function ProtocolsPage() {
           <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 15, letterSpacing: '.08em', color: 'var(--dark)' }}>
             PROTOCOLS
           </div>
-          <div style={{ fontSize: 12, color: 'var(--mid)' }}>Browse Damp Lab protocols, tag biosafety level, and manage step-equipment assignments</div>
+          <div style={{ fontSize: 12, color: 'var(--mid)' }}>Browse protocols, manage step-equipment assignments, and validate protocols for the questionnaire</div>
         </div>
         <button className="btn-out" onClick={() => navigate('/dashboard')}>← Dashboard</button>
       </div>
@@ -232,36 +265,33 @@ export function ProtocolsPage() {
             through many Damp Lab protocols never requires scrolling the whole page. */}
         <nav style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0, borderRight: '1px solid var(--br)' }}>
           <div style={{ padding: '16px 16px 0', flexShrink: 0 }}>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-              <input
-                className="field-input"
-                style={{ flex: 1, fontSize: 12 }}
-                placeholder="Protocol ID"
-                value={protocolId}
-                onChange={(e) => setProtocolId(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleFetch(); }}
-              />
-              <button className="btn-teal" style={{ padding: '4px 10px', fontSize: 12 }} onClick={handleFetch} disabled={loading || !protocolId.trim()}>
-                Go
-              </button>
-            </div>
+            <input
+              className="field-input"
+              style={{ width: '100%', fontSize: 12, marginBottom: 6 }}
+              placeholder="Search by ID"
+              value={protocolId}
+              onChange={(e) => setProtocolId(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleGo(); }}
+            />
+            <input
+              className="field-input"
+              style={{ width: '100%', fontSize: 12, marginBottom: 6 }}
+              placeholder="Search by name"
+              value={searchDraft}
+              onChange={(e) => setSearchDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleGo(); }}
+            />
+            <button className="btn-teal" style={{ width: '100%', padding: '4px 10px', fontSize: 12, marginBottom: 10 }} onClick={handleGo} disabled={protocolId.trim() ? loading : searching}>
+              Go
+            </button>
 
             <div className="chips" style={{ marginBottom: 10 }}>
-              <span className={`chip${scope === 'workspace' ? ' sel' : ''}`} onClick={() => handleScopeChange('workspace')}>Damp Lab workspace</span>
-              <span className={`chip${scope === 'public' ? ' sel' : ''}`} onClick={() => handleScopeChange('public')}>All public protocols</span>
-            </div>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-              <input
-                className="field-input"
-                style={{ flex: 1, fontSize: 12 }}
-                placeholder="Search published protocols"
-                value={searchDraft}
-                onChange={(e) => setSearchDraft(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
-              />
-              <button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={handleSearch} disabled={searching}>
-                {searching ? '…' : 'Search'}
-              </button>
+              <span className={`chip${scope === 'workspace' ? ' sel' : ''}`} onClick={() => handleScopeChange('workspace')}>
+                Damp Lab workspace{workspaceResultCount !== undefined && ` (${workspaceResultCount})`}
+              </span>
+              <span className={`chip${scope === 'public' ? ' sel' : ''}`} onClick={() => handleScopeChange('public')}>
+                All public protocols{publicResultCount !== undefined && ` (${publicResultCount})`}
+              </span>
             </div>
           </div>
 
@@ -351,22 +381,29 @@ export function ProtocolsPage() {
                   {protocol.sourceUrl}
                 </a>
 
-                <div className="field-wrap" style={{ marginTop: 16, marginBottom: 0 }}>
-                  <label className="field-label">Biosafety level</label>
-                  <div className="chips">
-                    {BSL_LEVELS.map((level) => (
-                      <span
-                        key={level}
-                        className={`chip${currentBsl === level ? ' sel' : ''}`}
-                        onClick={() => !settingBsl && handleSetBsl(level)}
+                <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {isValidated ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: '#1a8f5f', background: '#eafaf1', border: '1px solid #b8e6cf', borderRadius: 999, padding: '4px 12px' }}>
+                      ✓ Validated for the questionnaire
+                    </span>
+                  ) : (
+                    <>
+                      <button
+                        className="btn-teal"
+                        style={{ padding: '6px 16px', fontSize: 12 }}
+                        onClick={() => setShowValidateConfirm(true)}
+                        disabled={mappings.length === 0}
+                        title={mappings.length === 0 ? 'Assign equipment to at least one step first.' : undefined}
                       >
-                        {level}
-                      </span>
-                    ))}
-                    {!currentBsl && <span style={{ fontSize: 11, color: 'var(--mid)', alignSelf: 'center' }}>Not tagged yet</span>}
-                  </div>
-                  {bslError && <div style={{ color: '#a33', fontSize: 11, marginTop: 4 }}>{bslError}</div>}
+                        Validate
+                      </button>
+                      {mappings.length === 0 && (
+                        <span style={{ fontSize: 11, color: 'var(--mid)' }}>Assign equipment to at least one step first.</span>
+                      )}
+                    </>
+                  )}
                 </div>
+                {validateError && <div style={{ color: '#a33', fontSize: 11, marginTop: 4 }}>{validateError}</div>}
 
                 {protocol.abstract && (
                   <div style={{ marginTop: 16 }}>
@@ -477,6 +514,21 @@ export function ProtocolsPage() {
           </div>
         </div>
       </div>
+
+      {showValidateConfirm && protocol && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div className="q-card" style={{ maxWidth: 420 }}>
+            <div className="q-title" style={{ fontSize: 17, marginBottom: 10 }}>Validate this protocol?</div>
+            <p style={{ fontSize: 13, color: 'var(--mid)', marginBottom: 20 }}>
+              Are you sure you would like to globally validate this protocol? Once validated, "{protocol.title}" becomes selectable in the intake questionnaire's Validated Protocols list for every user.
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn-out" onClick={() => setShowValidateConfirm(false)} disabled={validating}>Cancel</button>
+              <button className="btn-teal" onClick={handleConfirmValidate} disabled={validating}>{validating ? 'Validating…' : 'Yes'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

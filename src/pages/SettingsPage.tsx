@@ -1,9 +1,11 @@
 import { useNavigate } from 'react-router-dom';
-import { IconFlask, IconLayers } from '../components/Icons';
+import { IconFlask, IconLayers, IconBadgeCheck } from '../components/Icons';
+import { Logo } from '../components/Logo';
 
 const ADMIN_LINKS = [
   { label: 'Equipment & Inventory', hint: 'Equipment Specification List — cost, dimensions, station assignment.', path: '/inventory', icon: IconFlask },
   { label: 'Equipment Membership Lists', hint: 'Assign equipment into the nine configurable lists (BSL requirements, workflow catalogs, etc).', path: '/equipment-lists', icon: IconLayers },
+  { label: 'Validated Protocols', hint: 'Every protocol currently selectable in the intake questionnaire — remove one to pull it from that list.', path: '/validated-protocols', icon: IconBadgeCheck },
 ];
 
 export function SettingsPage() {
@@ -11,7 +13,7 @@ export function SettingsPage() {
   return (
     <div className="screen" style={{ background: 'var(--light)' }}>
       <div className="qm-topbar">
-        <div className="logo-mark" style={{ cursor: 'pointer' }} onClick={() => navigate('/dashboard')}>CIRRUS</div>
+        <div className="logo-mark" style={{ cursor: 'pointer' }} onClick={() => navigate('/dashboard')}><Logo height={40} /></div>
         <div style={{ flex: 1 }} />
         <button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>← Dashboard</button>
       </div>

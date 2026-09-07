@@ -31,6 +31,15 @@ export function IconFlask({ size = 18 }: IconProps) {
   );
 }
 
+export function IconBadgeCheck({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...base}>
+      <path d="M12 2.5l2.4 1.4 2.8-.1 1.4 2.4 2.4 1.4-.1 2.8 1.4 2.4-1.4 2.4.1 2.8-2.4 1.4-1.4 2.4-2.8-.1-2.4 1.4-2.4-1.4-2.8.1-1.4-2.4-2.4-1.4.1-2.8-1.4-2.4 1.4-2.4-.1-2.8 2.4-1.4 1.4-2.4 2.8.1z" />
+      <path d="M8.5 12.3l2.3 2.3 4.7-4.7" />
+    </svg>
+  );
+}
+
 export function IconGear({ size = 18 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" {...base}>

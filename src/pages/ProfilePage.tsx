@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { IconUser, IconLogout } from '../components/Icons';
+import { Logo } from '../components/Logo';
 
 export function ProfilePage() {
   const navigate = useNavigate();
@@ -16,7 +17,7 @@ export function ProfilePage() {
   return (
     <div className="screen" style={{ background: 'var(--light)' }}>
       <div className="qm-topbar">
-        <div className="logo-mark" style={{ cursor: 'pointer' }} onClick={() => navigate('/dashboard')}>CIRRUS</div>
+        <div className="logo-mark" style={{ cursor: 'pointer' }} onClick={() => navigate('/dashboard')}><Logo height={40} /></div>
         <div style={{ flex: 1 }} />
         <button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>← Dashboard</button>
       </div>

@@ -1,12 +1,13 @@
 import { useNavigate } from 'react-router-dom';
 import { resetSessionId } from '../lib/session';
+import { Logo } from '../components/Logo';
 
 export function ScenarioPage() {
   const navigate = useNavigate();
   return (
     <div className="screen scenario">
       <div className="qm-topbar">
-        <div className="logo-mark" style={{ cursor: 'pointer' }} onClick={() => navigate('/dashboard')}>CIRRUS</div>
+        <div className="logo-mark" style={{ cursor: 'pointer' }} onClick={() => navigate('/dashboard')}><Logo height={40} /></div>
         <div style={{ flex: 1 }} />
          <button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>← Dashboard</button>
       </div>

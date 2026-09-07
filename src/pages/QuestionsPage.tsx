@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useApolloClient, useLazyQuery, useQuery } from '@apollo/client/react';
+import { useLazyQuery, useQuery } from '@apollo/client/react';
 import { OptionCard } from '../components/OptionCard';
 import { SyncBadge } from '../components/SyncBadge';
 import { SearchableSelect } from '../components/SearchableSelect';
+import { Logo } from '../components/Logo';
 import { useIntakeSync } from '../hooks/useIntakeSync';
 import {
   QS, OPERATION_OPTS, DAMPLAB_MATCH_KEYWORDS, shouldSkip, stepIndex, buildFinalIntakeJson, FEASIBILITY_GATE_IDS,
@@ -11,14 +12,11 @@ import {
   type Answers, type QuestionOption,
 } from '../lib/questions';
 import {
-  FEASIBILITY_CHECK_QUERY, EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, PROTOCOLS_IO_SEARCH_QUERY,
-  PROTOCOL_IDS_WITH_EQUIPMENT_MAPPINGS_QUERY,
+  FEASIBILITY_CHECK_QUERY, EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, VALIDATED_PROTOCOLS_QUERY,
 } from '../graphql/operations';
 
 type EquipmentRow = { equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null };
 type EquipmentListRow = { listKey: string; displayName: string; equipmentIds: string[] };
-type ProtocolSummary = { id: string; title: string; sourceUrl: string };
-type ProtocolSearchResult = { items: ProtocolSummary[] };
 
 type FeasibilityIssue = { field: string; message: string };
 type FeasibilityCheckResponse = { feasibilityCheck: { ok: boolean; issues: FeasibilityIssue[] } };
@@ -151,7 +149,7 @@ export function QuestionsPage() {
   return (
     <div className="screen questions-screen">
       <div className="qm-topbar">
-        <div className="logo-mark" style={{ cursor: 'pointer' }} onClick={() => navigate('/dashboard')}>CIRRUS</div>
+        <div className="logo-mark" style={{ cursor: 'pointer' }} onClick={() => navigate('/dashboard')}><Logo height={40} /></div>
         <div className="qm-prog-track"><div className="qm-prog-fill" style={{ width: `${pct}%` }} /></div>
         <SyncBadge status={status} />
         <button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>Dashboard</button>
@@ -223,48 +221,18 @@ function QuestionBody({
   );
 }
 
-// Fetches every protocol published to the Damp Lab protocols.io workspace
-// (not just the ~9 with a curated Operation mapping) — page 1 at the
-// server's max page size, then any remaining pages in parallel, so this
-// stays the full catalog even if the workspace grows past 100 entries.
-function useAllDamplabProtocols(): { items: ProtocolSummary[]; loading: boolean; error: Error | undefined } {
-  const client = useApolloClient();
-  const { data, loading, error } = useQuery<{ protocolsIoSearch: ProtocolSearchResult & { totalPages: number } }>(
-    PROTOCOLS_IO_SEARCH_QUERY,
-    { variables: { pageSize: 100 } },
-  );
-  const totalPages = data?.protocolsIoSearch.totalPages ?? 1;
-  const [restItems, setRestItems] = useState<ProtocolSummary[]>([]);
-  const [fetchingRest, setFetchingRest] = useState(false);
-
-  useEffect(() => {
-    if (totalPages <= 1) return;
-    setFetchingRest(true);
-    Promise.all(
-      Array.from({ length: totalPages - 1 }, (_, i) => i + 2).map((page) =>
-        client.query<{ protocolsIoSearch: ProtocolSearchResult }>({ query: PROTOCOLS_IO_SEARCH_QUERY, variables: { pageSize: 100, page } }),
-      ),
-    )
-      .then((pages) => setRestItems(pages.flatMap((p) => p.data?.protocolsIoSearch.items ?? [])))
-      .finally(() => setFetchingRest(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totalPages]);
-
-  return {
-    items: [...(data?.protocolsIoSearch.items ?? []), ...restItems],
-    loading: loading || fetchingRest,
-    error,
-  };
-}
-
-// The full Damp Lab catalog is selectable, not just the curated subset with
+// The full Validated Protocols list is selectable, not just the curated subset with
 // a matching Operation definition — an unmatched protocol still gets
 // recorded in the final intake payload (see resolveOperationId in
 // questions.ts, which passes an unrecognized id through unchanged), it just
 // doesn't contribute equipment/space sizing since the backend has no
-// Operation to look it up against. Matched protocols use the catalog's own
-// value (a real operationId) so sizing still works exactly as before;
-// unmatched ones use the protocol's own protocols.io id.
+// Operation to look it up against. Matched protocols additionally record
+// which catalog Operation they matched (see ProtocolSelectBody's
+// protocol_operation_by_id) so sizing still works, but each protocol keeps
+// its own checkbox/id regardless of match — two different validated
+// protocols that both title-match the same Operation (e.g. two distinct
+// BCA assay kits) must stay independently selectable, not collapse onto one
+// shared checkbox.
 function findCatalogMatch(title: string): QuestionOption | undefined {
   const lower = title.toLowerCase();
   return OPERATION_OPTS.find((opt) => {
@@ -283,51 +251,54 @@ function findCatalogMatch(title: string): QuestionOption | undefined {
 // throughput-driven extra benches, not "skip this protocol") — validateQuestion
 // only requires every selected protocol to have an explicit entry, not a
 // positive one.
-// Scoped to protocols that already have equipment mapped to their steps
-// (via the Canvas import on the /protocols admin page — see
-// protocolIdsWithEquipmentMappings) rather than the full unmapped Damp Lab
-// catalog: those are the only ones Cirrus can actually plan real equipment
-// for. Full scrollable checkbox list, same pattern as the Equipment
-// Membership Lists page's "Unassigned" panel — select-then-quantify per
-// row, same as AnalyticalEquipmentBody/the old protocol_demand step (see
-// FinalIntakeJson.demand in questions.ts).
+// Scoped to protocols a technician has explicitly validated on the
+// /protocols admin page (see validatedProtocols — validation itself
+// requires the protocol to already have equipment mapped to at least one
+// step) rather than the full protocols.io catalog: those are the only ones
+// Cirrus can actually plan real equipment for, and the only ones a
+// technician has signed off as ready. Full scrollable checkbox list, same
+// pattern as the Equipment Membership Lists page's "Unassigned" panel —
+// select-then-quantify per row, same as AnalyticalEquipmentBody/the old
+// protocol_demand step (see FinalIntakeJson.demand in questions.ts).
 function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: Answers; toggleMultiField: (k: string, v: string) => void; setField: (k: string, v: unknown) => void }) {
-  const { items: damplabItems, loading, error } = useAllDamplabProtocols();
-  const { data: mappedData, loading: mappedLoading, error: mappedError } = useQuery<{ protocolIdsWithEquipmentMappings: string[] }>(PROTOCOL_IDS_WITH_EQUIPMENT_MAPPINGS_QUERY);
-  const mappedIds = new Set(mappedData?.protocolIdsWithEquipmentMappings ?? []);
+  const { data: validatedData, loading, error } = useQuery<{ validatedProtocols: { protocolId: string; title: string; sourceUrl: string }[] }>(VALIDATED_PROTOCOLS_QUERY);
+  const validatedItems = validatedData?.validatedProtocols ?? [];
 
-  const mappedProtocols = damplabItems
-    .filter((item) => mappedIds.has(item.id))
+  const mappedProtocols = validatedItems
     .map((item) => {
       const catalogMatch = findCatalogMatch(item.title);
-      // item.id (the real protocols.io id) is kept even for a catalog-matched
-      // protocol, whose `value` becomes the catalog's own operation id — see
-      // toggleProtocol below, which persists this real id separately so the
-      // backend's Protocols Equipment List (bom/protocol-equipment-list.ts)
-      // can still look up equipment usage by it.
-      return { value: catalogMatch ? catalogMatch.v : item.id, id: item.id, title: item.title, sourceUrl: item.sourceUrl, sized: !!catalogMatch };
+      // value is always the protocol's own real protocols.io id — never
+      // the shared catalog operation id — so two different validated
+      // protocols matching the same Operation (e.g. two distinct BCA assay
+      // kits) get independent checkboxes instead of one toggling both.
+      // operationId (set only when matched) is recorded separately via
+      // protocol_operation_by_id in toggleProtocol below, purely for
+      // equipment/space sizing.
+      return { value: item.protocolId, title: item.title, sourceUrl: item.sourceUrl, sized: !!catalogMatch, operationId: catalogMatch?.v };
     })
     .sort((a, b) => a.title.localeCompare(b.title));
 
   const selected = (answers.operations as string[]) || [];
   const runs = (answers.protocol_runs_per_week as Record<string, number>) || {};
-  const protocolIds = (answers.protocol_ids_by_operation as Record<string, string>) || {};
+  const operationByProtocolId = (answers.protocol_operation_by_id as Record<string, string>) || {};
   const [search, setSearch] = useState('');
   const visible = search.trim()
     ? mappedProtocols.filter((p) => p.title.toLowerCase().includes(search.trim().toLowerCase()))
     : mappedProtocols;
   const allVisibleChecked = visible.length > 0 && visible.every((p) => selected.includes(p.value));
 
-  function toggleProtocol(p: { value: string; id: string }) {
+  function toggleProtocol(p: { value: string; operationId?: string }) {
     const wasSelected = selected.includes(p.value);
     toggleMultiField('operations', p.value);
     if (wasSelected) {
       const { [p.value]: _removed, ...rest } = runs;
       setField('protocol_runs_per_week', rest);
-      const { [p.value]: _removedId, ...restIds } = protocolIds;
-      setField('protocol_ids_by_operation', restIds);
-    } else {
-      setField('protocol_ids_by_operation', { ...protocolIds, [p.value]: p.id });
+      if (p.operationId) {
+        const { [p.value]: _removedOp, ...restOps } = operationByProtocolId;
+        setField('protocol_operation_by_id', restOps);
+      }
+    } else if (p.operationId) {
+      setField('protocol_operation_by_id', { ...operationByProtocolId, [p.value]: p.operationId });
     }
   }
 
@@ -342,18 +313,17 @@ function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: 
     setField('protocol_runs_per_week', { ...runs, [opId]: Math.max(0, Math.round(value)) });
   }
 
-  if (loading || mappedLoading) return <p className="q-inline-help">Loading protocols with equipment mapped…</p>;
-  if (error) return <p className="q-validation-error">Couldn’t load Damp Lab protocols: {error.message}</p>;
-  if (mappedError) return <p className="q-validation-error">Couldn’t load equipment mappings: {mappedError.message}</p>;
+  if (loading) return <p className="q-inline-help">Loading validated protocols…</p>;
+  if (error) return <p className="q-validation-error">Couldn’t load validated protocols: {error.message}</p>;
 
   if (mappedProtocols.length === 0) {
-    return <p className="q-inline-help">No Damp Lab protocols have equipment mapped yet — import from Canvas on the Protocols page first.</p>;
+    return <p className="q-inline-help">No protocols have been validated yet — assign equipment to at least one step and validate a protocol on the Protocols page first.</p>;
   }
 
   return (
     <>
       <p className="q-inline-help" style={{ marginTop: 0 }}>
-        Only protocols with equipment already mapped to their steps are shown ({mappedProtocols.length} available). Check the ones this lab needs and set expected weekly runs for each.
+        Only Validated Protocols are shown ({mappedProtocols.length} available). Check the ones this lab needs and set expected weekly runs for each.
       </p>
 
       {mappedProtocols.length > 6 && (
@@ -398,7 +368,7 @@ function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: 
                   </span>
                 )}
                 <a href={p.sourceUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 11, color: 'var(--teal)' }}>
-                  View on Damp Lab →
+                  View on protocols.io →
                 </a>
               </label>
               {isSelected && (

@@ -20,6 +20,7 @@ import { LayoutSandboxPage } from './pages/LayoutSandboxPage';
 import { LayoutCandidatesPage } from './pages/LayoutCandidatesPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ProfilePage } from './pages/ProfilePage';
+import { ValidatedProtocolsPage } from './pages/ValidatedProtocolsPage';
 
 export default function App() {
   return (
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="/layout-sandbox" element={<LayoutSandboxPage />} />
         <Route path="/layout-candidates" element={<LayoutCandidatesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/validated-protocols" element={<ValidatedProtocolsPage />} />
         <Route path="/profile" element={<ProfilePage />} />
       </Route>
 

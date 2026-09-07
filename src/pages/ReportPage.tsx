@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ReportView } from '../components/ReportView';
 import { setSessionId } from '../lib/session';
+import { Logo } from '../components/Logo';
 
 export function ReportPage() {
   const location = useLocation();
@@ -55,7 +56,9 @@ export function ReportPage() {
     <div className="screen report-screen">
       <div className="rep-top">
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 15, color: '#fff', letterSpacing: '.08em' }}>CIRRUS</div>
+          <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Logo height={22} />
+          </div>
           <div>
             <div style={{ fontFamily: 'var(--head)', fontSize: 14, fontWeight: 500, color: '#fff' }}>Lab Design Report</div>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,.65)' }}>Powered by Cirrus + n8n</div>

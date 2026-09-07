@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@apollo/client/react';
 import { DELETE_REPORT_MUTATION, MY_REPORTS_QUERY } from '../graphql/operations';
+import { Logo } from '../components/Logo';
 
 interface ReportSummary {
   id: string;
@@ -60,7 +61,7 @@ export function DesignHistoryPage() {
   return (
     <div className="screen" style={{ background: 'var(--light)' }}>
       <div className="qm-topbar">
-        <div className="logo-mark" style={{ cursor: 'pointer' }} onClick={() => navigate('/dashboard')}>CIRRUS</div>
+        <div className="logo-mark" style={{ cursor: 'pointer' }} onClick={() => navigate('/dashboard')}><Logo height={40} /></div>
         <div style={{ flex: 1 }} />
         <button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>← Dashboard</button>
       </div>

@@ -3,11 +3,12 @@ import { useQuery } from '@apollo/client/react';
 import { useAuth } from '../context/AuthContext';
 import { IconHistory, IconLayers, IconFlask, IconGear, IconLogout } from '../components/Icons';
 import {
-  MY_REPORTS_QUERY, EQUIPMENT_COUNT_QUERY, PROTOCOL_IDS_WITH_EQUIPMENT_MAPPINGS_QUERY, REPORTS_COUNT_QUERY,
+  MY_REPORTS_QUERY, EQUIPMENT_COUNT_QUERY, VALIDATED_PROTOCOLS_QUERY, REPORTS_COUNT_QUERY,
 } from '../graphql/operations';
 import { parseSandboxLayout } from '../lib/layout-sandbox';
 import { LabAssetBench } from '../components/LabAssets';
 import { LayoutFloorPlan } from '../components/LayoutFloorPlan';
+import { Logo } from '../components/Logo';
 
 const NAV_ITEMS = [
   { label: 'Design history', path: '/history', icon: IconHistory },
@@ -51,7 +52,7 @@ export function DashboardPage() {
   const { data: equipmentCountData } = useQuery<{ equipmentList: { equipmentId: string }[] }>(EQUIPMENT_COUNT_QUERY, {
     fetchPolicy: 'cache-and-network',
   });
-  const { data: protocolsData } = useQuery<{ protocolIdsWithEquipmentMappings: string[] }>(PROTOCOL_IDS_WITH_EQUIPMENT_MAPPINGS_QUERY, {
+  const { data: protocolsData } = useQuery<{ validatedProtocols: { id: string }[] }>(VALIDATED_PROTOCOLS_QUERY, {
     fetchPolicy: 'cache-and-network',
   });
   const { data: reportsCountData } = useQuery<{ reportsCount: number }>(REPORTS_COUNT_QUERY, {
@@ -71,14 +72,14 @@ export function DashboardPage() {
   const reportData = latestReport?.data ?? null;
 
   const registeredEquipmentCount = equipmentCountData?.equipmentList.length ?? 0;
-  const protocolsCount = protocolsData?.protocolIdsWithEquipmentMappings.length ?? 0;
+  const protocolsCount = protocolsData?.validatedProtocols.length ?? 0;
   const labsDesignedCount = reportsCountData?.reportsCount ?? 0;
 
   return (
     <div className="screen dash-screen">
       <div className="dash-shell">
         <aside className="dash-sidebar">
-          <div className="dash-sidebar-logo">CIRRUS</div>
+          <div className="dash-sidebar-logo"><Logo height={44} /></div>
           <nav className="dash-nav">
             {NAV_ITEMS.map(({ label, path, icon: Icon }) => (
               <button key={path} className="dash-nav-item" onClick={() => navigate(path)}>
@@ -111,6 +112,12 @@ export function DashboardPage() {
             <button className="btn-teal" onClick={() => navigate('/scenario')}>+ New lab design</button>
           </div>
 
+          <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            <div className="stat" style={{ padding: '20px 22px' }}><div className="stat-val" style={{ color: '#049295', fontSize: 26 }}>{registeredEquipmentCount}</div><div className="stat-lbl">Registered equipment</div></div>
+            <div className="stat" style={{ padding: '20px 22px' }}><div className="stat-val" style={{ color: '#049295', fontSize: 26 }}>{labsDesignedCount}</div><div className="stat-lbl">Labs designed</div></div>
+            <div className="stat" style={{ padding: '20px 22px' }}><div className="stat-val" style={{ color: '#FF3FA4', fontSize: 26 }}>{protocolsCount}</div><div className="stat-lbl">Validated protocols</div></div>
+          </div>
+
           <div className="sc-grid" style={{ maxWidth: 'none', gridTemplateColumns: 'repeat(4, 1fr)' }}>
             <div className="sc-card active" onClick={() => navigate('/layout-candidates')}>
               <div className="sc-tag">SEED LAB</div>
@@ -138,13 +145,7 @@ export function DashboardPage() {
             </div>
           </div>
 
-          <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-            <div className="stat"><div className="stat-val" style={{ color: '#049295' }}>{registeredEquipmentCount}</div><div className="stat-lbl">Registered equipment</div></div>
-            <div className="stat"><div className="stat-val" style={{ color: '#FF3FA4' }}>{protocolsCount}</div><div className="stat-lbl">Protocols</div></div>
-            <div className="stat"><div className="stat-val" style={{ color: '#049295' }}>{labsDesignedCount}</div><div className="stat-lbl">Labs designed</div></div>
-          </div>
-
-          <div className="dash-widget dash-widget-preview">
+          <div className="dash-widget dash-widget-preview" style={{ marginTop: 24 }}>
             <div className="dash-widget-head">
               <span>Last lab design</span>
               {latestReport && (

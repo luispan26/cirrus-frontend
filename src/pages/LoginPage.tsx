@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { Logo } from '../components/Logo';
 
 export function LoginPage({ mode }: { mode: 'login' | 'register' }) {
   const navigate = useNavigate();
@@ -44,7 +45,7 @@ export function LoginPage({ mode }: { mode: 'login' | 'register' }) {
         </div>
       </div>
       <div className="q-card" style={{ maxWidth: 400, width: '100%', position: 'relative', zIndex: 2 }}>
-        <div className="q-num">CIRRUS</div>
+        <div className="q-num"><Logo height={38} /></div>
         <div className="q-title" style={{ fontSize: 22 }}>{mode === 'login' ? 'Welcome back' : 'Create your account'}</div>
         <div className="q-hint">{mode === 'login' ? 'Log in to see your saved lab designs.' : 'Set up an account to save and revisit your lab designs.'}</div>
 

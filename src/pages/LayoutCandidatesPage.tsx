@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@apollo/client/react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { APPROVED_LAYOUT_SEEDS_QUERY, DELETE_LAYOUT_SEED_MUTATION, REVIEW_LAYOUT_CANDIDATE_MUTATION, START_LAYOUT_OPTIMIZATION_MUTATION } from '../graphql/operations';
 import { fixtureFootprint, parseSandboxLayout, type SandboxLayout } from '../lib/layout-sandbox';
+import { Logo } from '../components/Logo';
 
 type Metrics = { hardViolations: number; stationDistanceProxyFt: number; zoneCohesionFt?: number; valid?: boolean; score: number };
 type Candidate = { index: number; strategy: string; layout: SandboxLayout; metrics: Metrics };
@@ -101,7 +102,7 @@ export function LayoutCandidatesPage() {
   }
 
   return <div className="screen lc-screen">
-    <header className="qm-topbar"><button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>← Dashboard</button><div><div className="logo-mark">CIRRUS</div><div className="ls-subtitle">Layout candidate review</div></div></header>
+    <header className="qm-topbar"><button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>← Dashboard</button><div><div className="logo-mark"><Logo height={40} /></div><div className="ls-subtitle">Layout candidate review</div></div></header>
     <main className="lc-body">
       <section className="lc-controls">
         <div><h1>Seed lab</h1><p>Generate diverse solutions from the current sandbox layout and inspect every optimizer starting point.</p></div>

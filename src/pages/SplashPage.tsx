@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { Logo } from '../components/Logo';
 
 export function SplashPage() {
   const navigate = useNavigate();
@@ -16,8 +17,8 @@ export function SplashPage() {
         </div>
       </div>
       <div className="splash-center">
-        <div className="splash-wordmark">CIRRUS</div>
-        <p className="tagline">Sky is the limit</p>
+        <div className="splash-wordmark"><Logo height={110} style={{ margin: '0 auto' }} /></div>
+        <p className="tagline">The sky is the limit</p>
         <button className="btn-pill" style={{ marginTop: 40 }} onClick={() => navigate('/scenario')}>
           Get started →
         </button>

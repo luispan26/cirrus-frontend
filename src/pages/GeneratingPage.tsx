@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@apollo/client/react';
 import { GENERATE_REPORT_MUTATION, REPORT_QUERY } from '../graphql/operations';
 import { getSessionId } from '../lib/session';
+import { Logo } from '../components/Logo';
 
 export function GeneratingPage() {
   const navigate = useNavigate();
@@ -51,7 +52,7 @@ export function GeneratingPage() {
   return (
     <div className="screen">
       <div className="qm-topbar">
-        <div className="logo-mark">CIRRUS</div>
+        <div className="logo-mark"><Logo height={40} /></div>
         <div style={{ flex: 1 }} />
         <button className="qm-mode-toggle" onClick={() => navigate('/scenario')}>← Back</button>
       </div>

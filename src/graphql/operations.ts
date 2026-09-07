@@ -586,6 +586,41 @@ export const PROTOCOL_IDS_WITH_EQUIPMENT_MAPPINGS_QUERY = gql`
   }
 `;
 
+export const VALIDATED_PROTOCOLS_QUERY = gql`
+  query ValidatedProtocols {
+    validatedProtocols {
+      id
+      protocolId
+      title
+      sourceUrl
+      createdAt
+    }
+  }
+`;
+
+export const REMOVE_VALIDATED_PROTOCOL_MUTATION = gql`
+  mutation RemoveValidatedProtocol($protocolId: ID!) {
+    removeValidatedProtocol(protocolId: $protocolId)
+  }
+`;
+
+export const IS_PROTOCOL_VALIDATED_QUERY = gql`
+  query IsProtocolValidated($protocolId: ID!) {
+    isProtocolValidated(protocolId: $protocolId)
+  }
+`;
+
+export const VALIDATE_PROTOCOL_MUTATION = gql`
+  mutation ValidateProtocol($input: ValidateProtocolInput!) {
+    validateProtocol(input: $input) {
+      id
+      protocolId
+      title
+      sourceUrl
+    }
+  }
+`;
+
 export const STEP_EQUIPMENT_MAPPINGS_FOR_PROTOCOL_QUERY = gql`
   query StepEquipmentMappingsForProtocol($protocolId: ID!) {
     stepEquipmentMappingsForProtocol(protocolId: $protocolId) {
@@ -634,26 +669,6 @@ export const TRIGGER_CANVAS_SYNC_MUTATION = gql`
     triggerCanvasSync {
       equipmentSynced
       protocolsSynced
-    }
-  }
-`;
-
-export const PROTOCOL_BSL_QUERY = gql`
-  query ProtocolBsl($protocolId: ID!) {
-    protocolBsl(protocolId: $protocolId) {
-      id
-      protocolId
-      bslLevel
-    }
-  }
-`;
-
-export const SET_PROTOCOL_BSL_MUTATION = gql`
-  mutation SetProtocolBsl($input: SetProtocolBslInput!) {
-    setProtocolBsl(input: $input) {
-      id
-      protocolId
-      bslLevel
     }
   }
 `;
