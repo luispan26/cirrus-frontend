@@ -645,15 +645,17 @@ function EquipmentPlanBody({ answers, setField }: { answers: Answers; setField: 
 // H1 plate reader, an Opentrons FLEX), not protocol proxies. Deliberately
 // doesn't render the equipment already added: once added, an item becomes a
 // row in ComputedEquipmentList below (in the "Already Owned"/"Needed"
-// category if nothing else requires it, or as a cross-referenced pill under
-// whatever category does), with its own editable stepper and Remove/un-own
+// category, or as a cross-referenced pill under whatever other category
+// also requires it), with its own editable stepper and Remove/un-own
 // control there — so there's exactly one place per added item to view or
 // edit it, not two. An item CAN be in both buckets at once now (e.g. own 2,
 // still need 3 more) — addable only excludes an item from the bucket
 // currently selected by the Owned/Needed toggle, not from the other one, so
 // switching the toggle surfaces an already-owned item again to also mark it
-// needed (or vice versa). See computeBasicLabEquipment in questions.ts for
-// how the two quantities combine (additively, not one replacing the other).
+// needed (or vice versa). When it's in both, computeBasicLabEquipment
+// (questions.ts) emits two separate rows — one under Owned, one under
+// Needed — rather than merging them, so each shows up in its own
+// color-coded section instead of one bucket swallowing the other.
 function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; setField: (k: string, v: unknown) => void; catalog: EquipmentRow[] }) {
   const ownedMeta = (answers.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
   const neededMeta = (answers.needed_equipment_meta as Record<string, { name: string; count: number }>) || {};
@@ -923,9 +925,7 @@ function ComputedEquipmentList({
                   <div key={row.equipmentId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)' }}>
                       {row.name}
-                      {row.owned && row.needed ? (
-                        <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(owned + needed)</span>
-                      ) : row.owned ? (
+                      {row.owned ? (
                         <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(owned)</span>
                       ) : row.needed ? (
                         <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(needed)</span>
@@ -947,15 +947,13 @@ function ComputedEquipmentList({
                       })}
                     </span>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-                      {/* Owned and needed are independent controls now — both
-                          render (each with its own stepper/Remove) when a row
-                          is both, instead of only one winning an if/else-if.
-                          A small "Owned"/"Needed" label only shows once both
-                          rows are present, since a single row is already
-                          unambiguous from the (owned)/(needed) suffix above. */}
-                      {row.owned && (
+                      {/* A row is never both owned and needed at once —
+                          computeBasicLabEquipment splits that case into two
+                          separate rows (one here, one in the other
+                          category's section) — so exactly one of these
+                          three branches ever renders per row. */}
+                      {row.owned ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          {row.needed && <span style={{ fontSize: 10, color: 'var(--mid)', minWidth: 46 }}>Owned</span>}
                           <div className="stepper">
                             <button type="button" onClick={() => setOwnedQty(row.equipmentId, row.ownedQuantity - 1)}>−</button>
                             <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.ownedQuantity}</span>
@@ -963,10 +961,8 @@ function ComputedEquipmentList({
                           </div>
                           <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => unown(row.equipmentId)}>Remove</button>
                         </div>
-                      )}
-                      {row.needed && (
+                      ) : row.needed ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          {row.owned && <span style={{ fontSize: 10, color: 'var(--mid)', minWidth: 46 }}>Needed</span>}
                           <div className="stepper">
                             <button type="button" onClick={() => setNeededQty(row.equipmentId, row.neededQuantity - 1)}>−</button>
                             <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.neededQuantity}</span>
@@ -974,8 +970,7 @@ function ComputedEquipmentList({
                           </div>
                           <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => removeNeeded(row.equipmentId)}>Remove</button>
                         </div>
-                      )}
-                      {!row.owned && !row.needed && (row.locked ? (
+                      ) : (row.locked ? (
                         <div className="stepper">
                           <button type="button" onClick={() => setQty(row.equipmentId, row.quantity - 1)}>−</button>
                           <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.quantity}</span>

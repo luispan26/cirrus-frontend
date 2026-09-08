@@ -290,7 +290,7 @@ h1,h2,h3,h4,h5,h6{font-family:var(--head);font-weight:500;letter-spacing:-.01em}
 .ls-palette-item span{min-width:0;display:flex;flex-direction:column;gap:2px}
 .ls-palette-item b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ls-palette-item small,.ls-inspector small{font-size:10px;color:var(--mid)}
-.ls-main{padding:18px;display:flex;flex-direction:column;min-width:0;min-height:0}
+.ls-main{padding:18px;display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
 .ls-metrics{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 .ls-metrics span{font-family:var(--mono);font-size:10px;color:var(--mid);background:var(--white);border:1px solid var(--br);padding:6px 9px;border-radius:8px}
 .ls-canvas-wrap{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:auto;padding:10px}
@@ -392,3 +392,54 @@ h1,h2,h3,h4,h5,h6{font-family:var(--head);font-weight:500;letter-spacing:-.01em}
    A solid near-white fill plus a dark dashed border reads clearly against
    both the teal-tinted valid cells and the pink-tinted invalid cells. */
 .ls-fixture.ls-fixture-ghost{z-index:2;pointer-events:none;background:rgba(255,255,255,.7);border:2px dashed var(--dark);outline:none;border-radius:5px;color:var(--dark);cursor:default}
+
+/* WS-8b guided placement flow — category selector chips (first child of
+   .ls-control-deck; the old nine-layer-tab toggle is gone, replaced by
+   these four questions) and the per-category question card. The card is a
+   full-viewport centered modal (its own .ls-placement-backdrop wrapper,
+   position:fixed) rather than something pinned to the canvas, so it reads
+   as a real step in the flow and stays centered regardless of where the
+   canvas or sidebar scroll to. */
+.ls-category-selector{display:flex;gap:4px;padding:3px;background:var(--light);border-radius:10px;border:1px solid var(--br)}
+.ls-category-chip{display:flex;align-items:center;gap:5px;border:0;border-radius:7px;padding:5px 9px;background:transparent;color:var(--mid);font-size:9px;font-weight:600;cursor:pointer;transition:all .18s cubic-bezier(.4,0,.2,1)}
+.ls-category-chip:hover{background:var(--white)}
+.ls-category-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#c7cbd4}
+.ls-category-chip.manual .ls-category-dot{background:var(--teal)}
+.ls-category-chip.derived .ls-category-dot{background:#e2b65e}
+.layout-sandbox .ls-control-deck .ls-category-selector{order:0}
+
+/* Bigger, arrow-suffixed topbar CTA — "Place <next category> →" (or "Set
+   <category> →" for zoning) until every category is answered, then reverts
+   to the ordinary "Use this room in my intake →" copy/size. */
+.ls-guided-cta{position:relative;isolation:isolate;display:inline-flex;align-items:center;gap:8px;padding:14px 26px;border:0;border-radius:14px;background-image:linear-gradient(135deg,var(--teal),var(--pk));color:white;font-size:15px;font-weight:700;cursor:pointer;box-shadow:var(--glow-teal);transition:transform .18s cubic-bezier(.4,0,.2,1)}
+.ls-guided-cta:hover{transform:translateY(-1px)}
+.ls-guided-cta:active{transform:scale(.97)}
+.ls-guided-cta span{font-size:17px;line-height:1}
+
+.ls-placement-backdrop{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(20,22,31,.45);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);padding:24px;box-sizing:border-box}
+.ls-placement-question{width:min(620px,94vw);max-height:88vh;overflow-y:auto;background:var(--white);border:1px solid var(--br);border-radius:22px;box-shadow:var(--shadow-lg);padding:32px}
+.ls-placement-intro{width:min(560px,94vw)}
+.ls-placement-question-header{font-family:var(--mono);font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--dark);margin-bottom:10px}
+.ls-placement-question-text{font-size:14px;line-height:1.6;color:var(--mid);margin:0 0 8px}
+.ls-placement-subgroups-toolbar{display:flex;justify-content:flex-end;margin-top:10px}
+.ls-placement-select-all{border:0;background:none;color:var(--td);font-size:11px;font-weight:700;cursor:pointer;padding:4px 2px}
+.ls-placement-select-all:hover:not(:disabled){text-decoration:underline}
+.ls-placement-select-all:disabled{opacity:.4;cursor:not-allowed}
+.ls-placement-subgroups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:6px 0 16px}
+.ls-placement-subgroup{position:relative;text-align:left;border-radius:12px;padding:14px;font-size:12px;cursor:pointer;background:var(--light);border:2px solid rgba(255,63,164,.4);transition:all .18s cubic-bezier(.4,0,.2,1)}
+.ls-placement-subgroup b{display:block;font-size:13px}
+.ls-placement-subgroup small{display:block;margin-top:5px;color:var(--mid);font-size:10px;line-height:1.4}
+.ls-placement-subgroup.manual{border-color:var(--teal);background:var(--tl);box-shadow:var(--glow-teal)}
+.ls-placement-subgroup.derived{border-color:rgba(255,63,164,.4)}
+.ls-placement-verb-hint{font-size:10px;color:var(--mid);margin-top:10px}
+.ls-placement-question-actions{display:flex;gap:10px;margin-top:14px}
+/* Manually place = teal, matching the "manual"/green subgroup styling above;
+   Derive from unassigned space = pink outline, matching the "derived"/red
+   subgroup default — the two buttons echo the same color language as the
+   grid they commit. */
+.ls-qb-manual{flex:1;padding:13px 18px;border-radius:12px;border:2px solid var(--br);background:var(--white);color:var(--mid);font-size:13px;font-weight:700;cursor:pointer;transition:all .18s cubic-bezier(.4,0,.2,1)}
+.ls-qb-manual.active{border-color:var(--teal);background:var(--white);color:var(--td)}
+.ls-qb-manual:disabled{opacity:.5;cursor:not-allowed}
+.ls-qb-derive{flex:1;padding:13px 18px;border-radius:12px;border:2px solid rgba(255,63,164,.4);background:var(--white);color:var(--pkd);font-size:13px;font-weight:700;cursor:pointer;transition:all .18s cubic-bezier(.4,0,.2,1)}
+.ls-qb-derive:hover:not(:disabled){background:var(--pkl)}
+.ls-qb-derive:disabled{opacity:.5;cursor:not-allowed}

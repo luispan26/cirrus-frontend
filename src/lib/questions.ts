@@ -491,22 +491,52 @@ export function computeBasicLabEquipment(
     }
   }
 
-  return Array.from(quantities.entries())
+  const rows: BasicLabEquipmentRow[] = [];
+  for (const [equipmentId, quantity] of quantities.entries()) {
     // Guards against a listed equipmentId whose Equipment Specification
     // List entry was since deleted — never render a row with no real name.
-    .filter(([equipmentId]) => nameById.has(equipmentId))
-    .map(([equipmentId, quantity]) => ({
+    if (!nameById.has(equipmentId)) continue;
+    const name = nameById.get(equipmentId)!;
+    const requiredQuantity = requiredQuantities.get(equipmentId) ?? 0;
+    const ownedQuantity = ownedQuantities.get(equipmentId) ?? 0;
+    const neededQuantity = neededQuantities.get(equipmentId) ?? 0;
+    const rowSources = sources.get(equipmentId) ?? [];
+    // An item that's both owned and needed becomes TWO rows, not one —
+    // each needs to appear under its own color-coded category section
+    // (BASIC_EQUIPMENT_CATEGORIES groups by sources[0] in
+    // ComputedEquipmentList), and a single merged row can only ever sit in
+    // one section. The needed row absorbs any gap still owed to a list
+    // requirement beyond what's owned (own 1 of something a list asks 3
+    // of, need 0 more explicitly -> the needed row still shows 2), mirroring
+    // the backend BOM's owned/protocol-specific split in bom-generator.ts.
+    if (owned.has(equipmentId) && needed.has(equipmentId)) {
+      const neededGap = Math.max(neededQuantity, requiredQuantity - ownedQuantity);
+      rows.push({
+        equipmentId, name, quantity: ownedQuantity, requiredQuantity, ownedQuantity, neededQuantity: 0,
+        locked: false, owned: true, needed: false,
+        sources: [...new Set([...rowSources.filter((s) => s !== 'needed'), 'owned'])],
+      });
+      rows.push({
+        equipmentId, name, quantity: neededGap, requiredQuantity, ownedQuantity: 0, neededQuantity,
+        locked: false, owned: false, needed: true,
+        sources: [...new Set([...rowSources.filter((s) => s !== 'owned'), 'needed'])],
+      });
+      continue;
+    }
+    rows.push({
       equipmentId,
-      name: nameById.get(equipmentId)!,
+      name,
       quantity,
-      requiredQuantity: requiredQuantities.get(equipmentId) ?? 0,
-      ownedQuantity: ownedQuantities.get(equipmentId) ?? 0,
-      neededQuantity: neededQuantities.get(equipmentId) ?? 0,
+      requiredQuantity,
+      ownedQuantity,
+      neededQuantity,
       locked: locked.has(equipmentId),
       owned: owned.has(equipmentId),
       needed: needed.has(equipmentId),
-      sources: sources.get(equipmentId) ?? [],
-    }));
+      sources: rowSources,
+    });
+  }
+  return rows;
 }
 
 // Applies a user's edits on top of the computed list: quantity overrides
