@@ -6,6 +6,7 @@ import {
   MY_REPORTS_QUERY, EQUIPMENT_COUNT_QUERY, VALIDATED_PROTOCOLS_QUERY, REPORTS_COUNT_QUERY,
 } from '../graphql/operations';
 import { parseSandboxLayout } from '../lib/layout-sandbox';
+import { clearPersistedSandboxLayout } from '../lib/session';
 import { LabAssetBench } from '../components/LabAssets';
 import { LayoutFloorPlan } from '../components/LayoutFloorPlan';
 import { Logo } from '../components/Logo';
@@ -126,7 +127,11 @@ export function DashboardPage() {
               <div className="sc-desc">Generate a batch from a saved layout, compare scores, and choose promising seeds.</div>
               <div className="sc-cta">Open →</div>
             </div>
-            <div className="sc-card active" onClick={() => navigate('/layout-sandbox')}>
+            {/* A standalone sandbox entry, not a continuation of whatever the
+                user was last building — always starts blank. The "resume
+                where I left off" persistence is scoped to the sandbox <->
+                intake round-trip (see LayoutSandboxPage), not this link. */}
+            <div className="sc-card active" onClick={() => { clearPersistedSandboxLayout(); navigate('/layout-sandbox'); }}>
               <div className="sc-tag">SANDBOX</div>
               <div className="sc-title">Build a layout</div>
               <div className="sc-desc">Place bench stations manually, then assign equipment to each station.</div>

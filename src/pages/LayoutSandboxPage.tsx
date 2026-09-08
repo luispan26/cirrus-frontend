@@ -20,6 +20,7 @@ import type { EquipmentCatalogItem, OperationCatalogueItem, StationCatalogItem, 
 import { PlacementQuestionBox, type PlacementSubgroup } from '../components/sandbox/PlacementQuestionBox';
 import { GuidedFlowIntro } from '../components/sandbox/GuidedFlowIntro';
 import { CATEGORY_CTA_VERB, CATEGORY_LABELS, CATEGORY_ORDER, FIXTURE_SUBGROUP_KINDS, emptyCategoryModeState, emptySubSelectionState, firstUnanswered, paletteVisible, seedCategoryModesFrom, subgroupVisible, type CategoryModeState, type PlacementCategory, type SubSelectionState } from '../components/sandbox/guidedFlow';
+import { SANDBOX_LAYOUT_STORAGE_KEY } from '../lib/session';
 
 interface DampOperationsResponse { operations: OperationCatalogueItem[]; }
 
@@ -52,7 +53,6 @@ interface SolveZoneRequirementsResponse {
 // layout via router state) still take priority over this on mount; this is
 // only the fallback for "I didn't pass anything specific, resume whatever I
 // was last working on."
-const SANDBOX_STORAGE_KEY = 'cirrus:sandbox:last-layout';
 interface PersistedSandboxState {
   layout: SandboxLayout;
   categoryMode: CategoryModeState;
@@ -61,7 +61,7 @@ interface PersistedSandboxState {
 }
 function readPersistedState(): PersistedSandboxState | null {
   try {
-    const raw = localStorage.getItem(SANDBOX_STORAGE_KEY);
+    const raw = localStorage.getItem(SANDBOX_LAYOUT_STORAGE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw) as { layout?: unknown; categoryMode?: CategoryModeState; subSelection?: SubSelectionState; activeCategory?: PlacementCategory | null } | null;
     // Falls back to treating the whole payload as a bare layout — the
@@ -209,7 +209,7 @@ export function LayoutSandboxPage() {
   // change here, including ones made after an explicit router-state load,
   // becomes the new "last layout".
   useEffect(() => {
-    try { localStorage.setItem(SANDBOX_STORAGE_KEY, JSON.stringify({ layout, categoryMode, subSelection, activeCategory })); } catch { /* private browsing, quota, etc — resuming is a convenience, not a guarantee */ }
+    try { localStorage.setItem(SANDBOX_LAYOUT_STORAGE_KEY, JSON.stringify({ layout, categoryMode, subSelection, activeCategory })); } catch { /* private browsing, quota, etc — resuming is a convenience, not a guarantee */ }
   }, [layout, categoryMode, subSelection, activeCategory]);
   useEffect(() => {
     const state = location.state as { loadLayout?: unknown } | null;
