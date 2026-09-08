@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useLazyQuery, useQuery } from '@apollo/client/react';
 import { OptionCard } from '../components/OptionCard';
@@ -8,14 +8,15 @@ import { Logo } from '../components/Logo';
 import { useIntakeSync } from '../hooks/useIntakeSync';
 import {
   QS, OPERATION_OPTS, DAMPLAB_MATCH_KEYWORDS, shouldSkip, stepIndex, buildFinalIntakeJson, FEASIBILITY_GATE_IDS,
-  ANALYTICAL_EQUIPMENT_LIST_KEY, computeBasicLabEquipment, applyBasicLabEquipmentOverrides, BASIC_EQUIPMENT_CATEGORIES,
+  computeBasicLabEquipment, applyBasicLabEquipmentOverrides, BASIC_EQUIPMENT_CATEGORIES,
   type Answers, type QuestionOption,
 } from '../lib/questions';
 import {
-  FEASIBILITY_CHECK_QUERY, EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, VALIDATED_PROTOCOLS_QUERY,
+  FEASIBILITY_CHECK_QUERY, EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, VALIDATED_PROTOCOLS_QUERY, MY_REPORTS_QUERY,
 } from '../graphql/operations';
+import { getSessionId } from '../lib/session';
 
-type EquipmentRow = { equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null };
+type EquipmentRow = { equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null; allTags: string[] };
 type EquipmentListRow = { listKey: string; displayName: string; equipmentIds: string[] };
 
 type FeasibilityIssue = { field: string; message: string };
@@ -47,9 +48,10 @@ function validateQuestion(id: string, answers: Answers) {
 }
 
 // space/budget mean different things depending on whether the client already
-// has equipment — inferred from whether existing_equipment (Q1) actually has
-// entries, since there's no separate gating question for it anymore — the
-// hint under the question title reflects that instead of a single static string.
+// has equipment — inferred from whether existing_equipment_meta (set on the
+// equipment-plan step) actually has entries, since there's no separate
+// gating question for it — the hint under the question title reflects that
+// instead of a single static string.
 function questionHint(q: (typeof QS)[number], answers: Answers): string {
   const hasEquipment = Object.keys((answers.existing_equipment_meta as Record<string, unknown>) || {}).length > 0;
   if (q.id === 'space') {
@@ -74,25 +76,69 @@ export function QuestionsPage() {
     navigate('/generating');
   });
   const [runFeasibilityCheck, { loading: checkingFeasibility }] = useLazyQuery<FeasibilityCheckResponse>(FEASIBILITY_CHECK_QUERY, { fetchPolicy: 'network-only' });
+  // Cirrus's own generated floor plan, threaded through so the space step's
+  // sandbox buttons can open on it instead of a blank room. Populated three
+  // ways: the round trip below (router state, from the report's "Open in
+  // sandbox" or "Edit questionnaire"), or the refresh-safe MY_REPORTS_QUERY
+  // fallback further down if router state was lost (e.g. a hard refresh on
+  // this page). Not an intake answer — the sandbox hands back only room
+  // width/height (see useInIntake in LayoutSandboxPage.tsx), so this never
+  // needs to round-trip through `answers`.
+  const [generatedLayout, setGeneratedLayout] = useState<unknown>(null);
+  const [fetchMyReports] = useLazyQuery<{ myReports: { sessionId: string; status: string; createdAt: string; data: { generated_layout?: { data?: unknown } } | null }[] }>(MY_REPORTS_QUERY);
 
-  // Round trip from the layout sandbox's "Use this room in my intake"
-  // button (LayoutSandboxPage.tsx) — it navigates back here with the room
-  // it built in router state rather than a persistent channel like
-  // localStorage, since this is a one-shot hand-off, not standing data.
+  // Router-state round trips into this page, handled together (not as
+  // separate early-returning effects) since a future navigation could carry
+  // more than one at once: spaceFromSandbox (from the sandbox's "Use this
+  // room in my intake"), startAtQuestionId + generatedLayout (from the
+  // report's "Edit questionnaire", see ReportPage.tsx).
   useEffect(() => {
-    const state = location.state as { spaceFromSandbox?: { width_ft: number; height_ft: number } } | null;
-    if (!state?.spaceFromSandbox) return;
-    const { width_ft, height_ft } = state.spaceFromSandbox;
-    setField('width_ft', String(width_ft));
-    setField('height_ft', String(height_ft));
-    setField('space_method', 'sandbox');
-    const spaceIndex = QS.findIndex((sq) => sq.id === 'space');
-    if (spaceIndex >= 0) setQi(spaceIndex);
+    const state = location.state as {
+      spaceFromSandbox?: { width_ft: number; height_ft: number };
+      startAtQuestionId?: string;
+      generatedLayout?: unknown;
+    } | null;
+    if (!state) return;
+    if (state.spaceFromSandbox) {
+      const { width_ft, height_ft } = state.spaceFromSandbox;
+      setField('width_ft', String(width_ft));
+      setField('height_ft', String(height_ft));
+      setField('space_method', 'sandbox');
+      const spaceIndex = QS.findIndex((sq) => sq.id === 'space');
+      if (spaceIndex >= 0) setQi(spaceIndex);
+    }
+    if (state.startAtQuestionId) {
+      const targetIndex = QS.findIndex((sq) => sq.id === state.startAtQuestionId);
+      if (targetIndex >= 0) setQi(targetIndex);
+    }
+    if (state.generatedLayout) {
+      setGeneratedLayout(state.generatedLayout);
+    }
     navigate(location.pathname, { replace: true, state: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const q = QS[qi];
+
+  // Refresh-safe fallback for the above: a hard refresh on this page loses
+  // router state entirely, so if the user reaches the space step with no
+  // layout already in memory, look up the newest ready report for this
+  // session and use its generated layout instead. Fired lazily — only once
+  // the user actually reaches the space step, not on every page load — and
+  // MY_REPORTS_QUERY is the same query DashboardPage already runs, so the
+  // result is often warm in the Apollo cache.
+  useEffect(() => {
+    if (q.id !== 'space' || generatedLayout) return;
+    const currentSessionId = getSessionId();
+    fetchMyReports().then(({ data }) => {
+      const reports = data?.myReports ?? [];
+      const layoutData = reports
+        .filter((r) => r.sessionId === currentSessionId && r.status === 'ready' && r.data?.generated_layout?.data)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]?.data?.generated_layout?.data;
+      if (layoutData) setGeneratedLayout(layoutData);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.id]);
   const applicable = QS.filter((sq) => !shouldSkip(sq, answers));
   const posInApplicable = applicable.indexOf(q) + 1;
   const pct = Math.round(((posInApplicable - 1) / applicable.length) * 100);
@@ -158,7 +204,7 @@ export function QuestionsPage() {
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <div className="qm-counter">Question {posInApplicable} of {applicable.length}</div>
           <div className="q-body">
-            <QuestionBody q={q} displayNumber={posInApplicable} answers={answers} setField={setField} toggleMultiField={toggleMultiField} onEnterNav={nextQ} />
+            <QuestionBody q={q} displayNumber={posInApplicable} answers={answers} setField={setField} toggleMultiField={toggleMultiField} onEnterNav={nextQ} generatedLayout={generatedLayout} />
             {validationError && <p className="q-validation-error">{validationError}</p>}
           </div>
         </div>
@@ -180,6 +226,7 @@ function QuestionBody({
   answers,
   setField,
   toggleMultiField,
+  generatedLayout,
 }: {
   q: (typeof QS)[number];
   displayNumber: number;
@@ -187,6 +234,7 @@ function QuestionBody({
   setField: (k: string, v: unknown) => void;
   toggleMultiField: (k: string, v: string) => void;
   onEnterNav: () => void;
+  generatedLayout: unknown;
 }) {
   return (
     <div className="q-card">
@@ -212,11 +260,9 @@ function QuestionBody({
         </div>
       )}
 
-      {q.type === 'inventory' && <InventoryBody answers={answers} setField={setField} />}
-      {q.type === 'space' && <SpaceBody answers={answers} setField={setField} />}
+      {q.type === 'space' && <SpaceBody answers={answers} setField={setField} generatedLayout={generatedLayout} />}
       {q.type === 'budget' && <BudgetBody answers={answers} setField={setField} />}
-      {q.type === 'analytical_equipment' && <AnalyticalEquipmentBody answers={answers} setField={setField} />}
-      {q.type === 'basic_equipment' && <BasicLabEquipmentBody answers={answers} setField={setField} />}
+      {q.type === 'equipment_plan' && <EquipmentPlanBody answers={answers} setField={setField} />}
     </div>
   );
 }
@@ -297,8 +343,16 @@ function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: 
         const { [p.value]: _removedOp, ...restOps } = operationByProtocolId;
         setField('protocol_operation_by_id', restOps);
       }
-    } else if (p.operationId) {
-      setField('protocol_operation_by_id', { ...operationByProtocolId, [p.value]: p.operationId });
+    } else {
+      // Default to 0 on selection rather than leaving it undefined — the
+      // runs input's placeholder already reads "0", which otherwise looks
+      // identical to an actually-entered 0 and traps users behind
+      // validateQuestion's "enter a value" error with no visible way to see
+      // what's missing.
+      setField('protocol_runs_per_week', { ...runs, [p.value]: runs[p.value] ?? 0 });
+      if (p.operationId) {
+        setField('protocol_operation_by_id', { ...operationByProtocolId, [p.value]: p.operationId });
+      }
     }
   }
 
@@ -397,7 +451,7 @@ function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: 
   );
 }
 
-function SpaceBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+function SpaceBody({ answers, setField, generatedLayout }: { answers: Answers; setField: (k: string, v: unknown) => void; generatedLayout: unknown }) {
   const navigate = useNavigate();
   const method = answers.space_method as 'upload' | 'sandbox' | undefined;
   const w = parseFloat((answers.width_ft as string) || '0') || 0;
@@ -407,6 +461,13 @@ function SpaceBody({ answers, setField }: { answers: Answers; setField: (k: stri
 
   function chooseMethod(next: 'upload' | 'sandbox') {
     setField('space_method', next);
+  }
+
+  // Opens on Cirrus's own generated layout, not a blank room, whenever one
+  // is available (see the generatedLayout plumbing in QuestionsPage) — the
+  // sandbox already handles state.loadLayout on mount.
+  function openSandbox() {
+    navigate('/layout-sandbox', generatedLayout ? { state: { loadLayout: generatedLayout } } : undefined);
   }
 
   function handleFile(file: File | undefined) {
@@ -455,7 +516,9 @@ function SpaceBody({ answers, setField }: { answers: Answers; setField: (k: stri
               <p className="q-inline-help" style={{ marginTop: 0 }}>
                 Current room from the sandbox: {w} × {h} ft ({(w * h).toLocaleString()} sq ft)
               </p>
-              <button type="button" className="btn-out" onClick={() => navigate('/layout-sandbox')}>Rebuild in the sandbox →</button>
+              <button type="button" className="btn-out" onClick={openSandbox}>
+                {generatedLayout ? 'Edit the generated layout →' : 'Rebuild in the sandbox →'}
+              </button>
             </>
           ) : (
             <>
@@ -463,7 +526,9 @@ function SpaceBody({ answers, setField }: { answers: Answers; setField: (k: stri
                 Opens the layout sandbox in this tab. Once you've sized the room, use its "Use this room in my
                 intake" button to come back here with the dimensions filled in.
               </p>
-              <button type="button" className="btn-teal" onClick={() => navigate('/layout-sandbox')}>Open the sandbox →</button>
+              <button type="button" className="btn-teal" onClick={openSandbox}>
+                {generatedLayout ? 'Edit the generated layout →' : 'Open the sandbox →'}
+              </button>
             </>
           )}
         </div>
@@ -473,14 +538,42 @@ function SpaceBody({ answers, setField }: { answers: Answers; setField: (k: stri
 }
 
 function BudgetBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
-  const desired = answers.budget_desired as string | undefined;
-  const max = answers.budget_max as string | undefined;
+  const desired = (answers.budget_desired as string | undefined) || '';
+  const max = (answers.budget_max as string | undefined) || '';
+  // Controlled, not defaultValue — an uncontrolled input only reads its
+  // initial value once, so it never reflects a preset-chip click (which
+  // sets `answers` directly, not the input) or intake hydration finishing
+  // after this component already mounted (landing straight on budget via
+  // "Edit questionnaire" hits this every time, since hydration loses the
+  // race that walking here from question 1 always won by accident).
+  const [desiredInput, setDesiredInput] = useState(desired);
+  const [maxInput, setMaxInput] = useState(max);
+  useEffect(() => setDesiredInput(desired), [desired]);
+  useEffect(() => setMaxInput(max), [max]);
+  // Absolute max can never be less than desired spend — it's the ceiling
+  // sizing reaches into only when desired isn't enough, so a lower value
+  // would be nonsensical. Whenever desired moves past the current max
+  // (including the very first time desired gets a value and max is still
+  // blank), pull max up to match rather than leaving an invalid combination
+  // for the user to notice on their own.
+  useEffect(() => {
+    if (!desired) return;
+    if (max && Number(max) >= Number(desired)) return;
+    setField('budget_max', desired);
+  }, [desired, max, setField]);
   return (
     <>
       <div className="grid-2">
         <div className="field-wrap">
           <label className="field-label">Desired spend (USD)</label>
-          <input className="field-input" type="number" placeholder="e.g. 250000" defaultValue={desired || ''} onBlur={(e) => setField('budget_desired', e.target.value)} />
+          <input
+            className="field-input"
+            type="number"
+            placeholder="e.g. 250000"
+            value={desiredInput}
+            onChange={(e) => setDesiredInput(e.target.value)}
+            onBlur={() => setField('budget_desired', desiredInput)}
+          />
           <div className="preset-row">
             {[50000, 100000, 250000, 500000, 1000000].map((v) => (
               <span key={v} className={`chip${Number(desired) === v ? ' sel' : ''}`} onClick={() => setField('budget_desired', String(v))}>
@@ -491,7 +584,19 @@ function BudgetBody({ answers, setField }: { answers: Answers; setField: (k: str
         </div>
         <div className="field-wrap">
           <label className="field-label">Absolute max spend (USD)</label>
-          <input className="field-input" type="number" placeholder="e.g. 300000" defaultValue={max || ''} onBlur={(e) => setField('budget_max', e.target.value)} />
+          <input
+            className="field-input"
+            type="number"
+            placeholder="e.g. 300000"
+            min={desired || undefined}
+            value={maxInput}
+            onChange={(e) => setMaxInput(e.target.value)}
+            onBlur={() => {
+              const clamped = desired && maxInput && Number(maxInput) < Number(desired) ? desired : maxInput;
+              setMaxInput(clamped);
+              setField('budget_max', clamped);
+            }}
+          />
           <p className="q-inline-help">The hard ceiling you could go to if it's genuinely needed — sizing targets your desired spend first and only reaches into this range for unmet high-priority needs.</p>
         </div>
       </div>
@@ -499,156 +604,209 @@ function BudgetBody({ answers, setField }: { answers: Answers; setField: (k: str
   );
 }
 
+// The merged equipment-planning step: add anything already owned or still
+// needed, then review the resulting Basic Lab Equipment List, in one place.
+// Used to be two separate questions — a plain "do you have equipment?"
+// inventory step asked first (before biosafety_level/biomaterials were even
+// answered, so the app had nothing to size against yet) and a "finalize"
+// step computed from those answers — plus a third, standalone "additional
+// analytical equipment" question, since folded in here too: the tag filter
+// below already lets a user find analytical equipment in the same picker,
+// and the Owned/Needed toggle covers what a dedicated question couldn't (a
+// costed 'needed' row, not just an uncosted 'owned' one). Hoists both
+// GraphQL queries (EQUIPMENT_LISTS_QUERY, EQUIPMENT_LIST_QUERY) here rather
+// than letting each child run its own, so there's a single loading/error
+// state instead of two skeletons flashing in sequence as the two queries
+// resolve independently.
+function EquipmentPlanBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+  const { data: listsData, loading: listsLoading, error: listsError } = useQuery<{ equipmentLists: EquipmentListRow[] }>(EQUIPMENT_LISTS_QUERY);
+  const { data: equipmentData, loading: eqLoading, error: eqError } = useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
+  const lists = listsData?.equipmentLists ?? [];
+  const catalog = equipmentData?.equipmentList ?? [];
+  const loading = listsLoading || eqLoading;
+
+  if (loading) return <p className="q-inline-help">Loading your equipment lists…</p>;
+  if (listsError) return <p className="q-validation-error">Couldn’t load equipment lists: {listsError.message}</p>;
+  if (eqError) return <p className="q-validation-error">Couldn’t load the equipment catalog: {eqError.message}</p>;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <EquipmentPicker answers={answers} setField={setField} catalog={catalog} />
+      <ComputedEquipmentList answers={answers} setField={setField} lists={lists} catalog={catalog} />
+    </div>
+  );
+}
+
+// Search-and-add control for marking equipment as already owned OR still
+// needed — an Owned/Needed toggle picks which bucket the next Add writes to.
 // Sources its options from the same equipment catalog the Inventory page
 // manages (EQUIPMENT_LIST_QUERY) rather than a client-facing abstraction —
-// "what do you already have" means real, named equipment (a Synergy H1
-// plate reader, an Opentrons FLEX), not protocol proxies. Dropdown + Add
-// rather than a big grid of cards — more appropriate once the catalog is
-// dozens of items long.
-function InventoryBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
-  const { data, loading, error } = useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
-  const catalog = data?.equipmentList ?? [];
-  const meta = (answers.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
-  const selectedIds = Object.keys(meta);
-  const addable = catalog.filter((eq) => !meta[eq.equipmentId]);
+// "what does this lab have or want" means real, named equipment (a Synergy
+// H1 plate reader, an Opentrons FLEX), not protocol proxies. Deliberately
+// doesn't render the equipment already added: once added, an item becomes a
+// row in ComputedEquipmentList below (in the "Already Owned"/"Needed"
+// category if nothing else requires it, or as a cross-referenced pill under
+// whatever category does), with its own editable stepper and Remove/un-own
+// control there — so there's exactly one place per added item to view or
+// edit it, not two. An item CAN be in both buckets at once now (e.g. own 2,
+// still need 3 more) — addable only excludes an item from the bucket
+// currently selected by the Owned/Needed toggle, not from the other one, so
+// switching the toggle surfaces an already-owned item again to also mark it
+// needed (or vice versa). See computeBasicLabEquipment in questions.ts for
+// how the two quantities combine (additively, not one replacing the other).
+function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; setField: (k: string, v: unknown) => void; catalog: EquipmentRow[] }) {
+  const ownedMeta = (answers.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
+  const neededMeta = (answers.needed_equipment_meta as Record<string, { name: string; count: number }>) || {};
   const [draftId, setDraftId] = useState('');
+  const [bucket, setBucket] = useState<'owned' | 'needed'>('owned');
+  const activeMeta = bucket === 'owned' ? ownedMeta : neededMeta;
+  const addable = catalog.filter((eq) => !activeMeta[eq.equipmentId]);
+  // View filter only — narrows which addable equipment the search below can
+  // find. Deliberately component-local, not routed through setField/answers:
+  // it's not an intake answer, just how this picker's own list is browsed.
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
+  const tagFilteredAddable = selectedTags.size === 0 ? addable : addable.filter((eq) => matchesTagFilter(eq, selectedTags));
 
   // Clears the draft selection once it's no longer a real, still-addable
   // option — needed because the catalog loads asynchronously and each
-  // Add/Remove changes which items are still addable out from under a
-  // stale selection. Clears to blank rather than defaulting to the first
-  // addable item, since the picker is search-first now.
+  // Add changes which items are still addable out from under a stale
+  // selection. Clears to blank rather than defaulting to the first addable
+  // item, since the picker is search-first now.
   useEffect(() => {
-    if (draftId && !addable.some((eq) => eq.equipmentId === draftId)) {
+    if (draftId && !tagFilteredAddable.some((eq) => eq.equipmentId === draftId)) {
       setDraftId('');
     }
-  }, [addable, draftId]);
+  }, [tagFilteredAddable, draftId]);
 
   function addSelected() {
     const eq = catalog.find((c) => c.equipmentId === draftId);
     if (!eq) return;
-    setField('existing_equipment_meta', { ...meta, [eq.equipmentId]: { name: eq.name, count: 1 } });
+    if (bucket === 'owned') {
+      setField('existing_equipment_meta', { ...ownedMeta, [eq.equipmentId]: { name: eq.name, count: 1 } });
+    } else {
+      setField('needed_equipment_meta', { ...neededMeta, [eq.equipmentId]: { name: eq.name, count: 1 } });
+    }
+    setDraftId('');
   }
-
-  function removeSelected(equipmentId: string) {
-    const { [equipmentId]: _removed, ...rest } = meta;
-    setField('existing_equipment_meta', rest);
-  }
-
-  function setCount(equipmentId: string, next: number) {
-    const current = meta[equipmentId];
-    if (!current) return;
-    setField('existing_equipment_meta', { ...meta, [equipmentId]: { ...current, count: Math.max(1, next) } });
-  }
-
-  if (loading) return <p className="q-inline-help">Loading your equipment inventory…</p>;
-  if (error) return <p className="q-validation-error">Couldn’t load the equipment inventory: {error.message}</p>;
 
   return (
-    <>
-      <p className="q-inline-help">
+    <div className="field-wrap" style={{ marginBottom: 0 }}>
+      <label className="field-label">Already have equipment, or still need some?</label>
+      <p className="q-inline-help" style={{ marginTop: 0 }}>
         {catalog.length === 0
           ? 'No equipment in your inventory yet — add it on the Equipment & Inventory page, or skip this and it\'ll all be sized as new.'
-          : 'Only what you already have — sizing subtracts this from what your protocols still need.'}
+          : 'Add anything you already have (no cost in the estimate) or still want to buy (kept as a costed line item). Adjust the amount or remove it in the list below.'}
       </p>
-
-      {selectedIds.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
-          {selectedIds.map((equipmentId) => {
-            const item = meta[equipmentId];
-            return (
-              <div key={equipmentId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 13 }}>{item.name}</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div className="stepper">
-                    <button type="button" onClick={() => setCount(equipmentId, item.count - 1)}>−</button>
-                    <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{item.count}</span>
-                    <button type="button" onClick={() => setCount(equipmentId, item.count + 1)}>+</button>
-                  </div>
-                  <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => removeSelected(equipmentId)}>Remove</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
       {addable.length > 0 && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <TagFilterPopover catalog={catalog} selected={selectedTags} onChange={setSelectedTags} />
           <SearchableSelect
             style={{ width: 260 }}
             value={draftId}
             onChange={setDraftId}
             placeholder="Search for equipment…"
-            options={addable.map((eq) => ({ value: eq.equipmentId, label: eq.name }))}
+            // A leading blank option is required, not stylistic — once the
+            // tag filter narrows the list to 10 or fewer items,
+            // SearchableSelect falls back to a native <select> (see its own
+            // comment), and a native select with no option matching the
+            // current value (draftId starts as '') just visually highlights
+            // the first real option instead of showing nothing selected.
+            // Without this, that looked exactly like an item was chosen —
+            // "Add" would then silently no-op against the still-empty
+            // draftId.
+            options={[{ value: '', label: 'Select equipment…', disabled: true }, ...tagFilteredAddable.map((eq) => ({ value: eq.equipmentId, label: eq.name }))]}
           />
+          <div className="chips" style={{ gap: 4 }}>
+            <span className={`chip${bucket === 'owned' ? ' sel' : ''}`} onClick={() => setBucket('owned')}>Owned</span>
+            <span className={`chip${bucket === 'needed' ? ' sel' : ''}`} onClick={() => setBucket('needed')}>Needed</span>
+          </div>
           <button type="button" className="btn-teal" style={{ padding: '6px 14px' }} onClick={addSelected}>Add</button>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
-// Sources its checkbox list from Prompt 1's "Analytical Equipment Catalog"
-// membership list (EQUIPMENT_LISTS_QUERY), cross-referenced against the
-// Equipment Specification List (EQUIPMENT_LIST_QUERY) for display names —
-// same live-data pattern as InventoryBody above, so once that list is
-// populated via the admin UI this reflects it on the next load with no code
-// change. Empty-state per the Prompt 2 spec: an empty catalog renders a
-// plain message, never a broken/placeholder grid.
-function AnalyticalEquipmentBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
-  const { data: listsData, loading: listsLoading, error: listsError } = useQuery<{ equipmentLists: EquipmentListRow[] }>(EQUIPMENT_LISTS_QUERY);
-  const { data: equipmentData, loading: eqLoading, error: eqError } = useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
+const UNTAGGED = 'Untagged';
 
-  const analyticalList = listsData?.equipmentLists.find((l) => l.listKey === ANALYTICAL_EQUIPMENT_LIST_KEY);
-  const catalogById = new Map((equipmentData?.equipmentList ?? []).map((eq) => [eq.equipmentId, eq]));
-  const items = (analyticalList?.equipmentIds ?? [])
-    .map((id) => catalogById.get(id))
-    .filter((eq): eq is EquipmentRow => !!eq);
+function matchesTagFilter(eq: EquipmentRow, selected: Set<string>): boolean {
+  if (eq.allTags.length === 0) return selected.has(UNTAGGED);
+  return eq.allTags.some((tag) => selected.has(tag));
+}
 
-  const quantities = (answers.analytical_equipment_quantities as Record<string, number>) || {};
+// Filter popover for the equipment picker above. Vocabulary is derived from
+// the live Canvas-sourced/human tags on the catalog (EquipmentType.allTags,
+// see cirrus-backend's inventory module) rather than hardcoded, so it never
+// drifts out of sync with whatever tags actually exist. OR semantics within
+// the selected set — most equipment carries at most one tag, so AND would
+// return empty the moment two tags are checked. Matches SearchableSelect's
+// outside-click-to-close pattern above.
+function TagFilterPopover({ catalog, selected, onChange }: { catalog: EquipmentRow[]; selected: Set<string>; onChange: (next: Set<string>) => void }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  function toggle(equipmentId: string) {
-    if (quantities[equipmentId] !== undefined) {
-      const { [equipmentId]: _removed, ...rest } = quantities;
-      setField('analytical_equipment_quantities', rest);
-    } else {
-      setField('analytical_equipment_quantities', { ...quantities, [equipmentId]: 1 });
+  useEffect(() => {
+    function onOutsideClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
     }
-  }
-  function setQty(equipmentId: string, next: number) {
-    if (quantities[equipmentId] === undefined) return;
-    setField('analytical_equipment_quantities', { ...quantities, [equipmentId]: Math.max(1, Math.round(next)) });
-  }
+    document.addEventListener('mousedown', onOutsideClick);
+    return () => document.removeEventListener('mousedown', onOutsideClick);
+  }, []);
 
-  if (listsLoading || eqLoading) return <p className="q-inline-help">Loading the analytical equipment catalog…</p>;
-  if (listsError) return <p className="q-validation-error">Couldn’t load equipment lists: {listsError.message}</p>;
-  if (eqError) return <p className="q-validation-error">Couldn’t load the equipment catalog: {eqError.message}</p>;
+  const tagCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    let untagged = 0;
+    for (const eq of catalog) {
+      if (eq.allTags.length === 0) { untagged += 1; continue; }
+      for (const tag of eq.allTags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+    const entries = Array.from(counts.entries()).sort(([a], [b]) => a.localeCompare(b));
+    if (untagged > 0) entries.push([UNTAGGED, untagged]);
+    return entries;
+  }, [catalog]);
 
-  if (items.length === 0) {
-    return <p className="q-inline-help">No analytical equipment has been catalogued yet — skip this question, or check back once it's added via Settings → Equipment Membership Lists.</p>;
+  function toggleTag(tag: string) {
+    const next = new Set(selected);
+    if (next.has(tag)) next.delete(tag); else next.add(tag);
+    onChange(next);
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {items.map((eq) => {
-        const checked = quantities[eq.equipmentId] !== undefined;
-        return (
-          <div key={eq.equipmentId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: 'var(--dark)', cursor: 'pointer' }}>
-              <input type="checkbox" checked={checked} onChange={() => toggle(eq.equipmentId)} />
-              {eq.name}
-            </label>
-            {checked && (
-              <div className="stepper">
-                <button type="button" onClick={() => setQty(eq.equipmentId, quantities[eq.equipmentId] - 1)}>−</button>
-                <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{quantities[eq.equipmentId]}</span>
-                <button type="button" onClick={() => setQty(eq.equipmentId, quantities[eq.equipmentId] + 1)}>+</button>
-              </div>
-            )}
-          </div>
-        );
-      })}
+    <div ref={containerRef} style={{ position: 'relative' }}>
+      <button type="button" className="btn-out" style={{ padding: '6px 12px' }} onClick={() => setOpen((o) => !o)}>
+        {selected.size > 0 ? `Filter (${selected.size})` : 'Filter'}
+      </button>
+      {open && (
+        <div
+          // The intake flow's document-level keydown listener advances/
+          // rewinds the question on Enter/Escape (see QuestionsPage's
+          // onKeyDown effect) — without stopping propagation here, checking
+          // a tag or dismissing the popover with Escape would also fire
+          // that navigation, same reasoning as SearchableSelect's onKeyDown.
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.stopPropagation(); }
+            else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); }
+          }}
+          style={{ position: 'absolute', top: '100%', left: 0, zIndex: 20, marginTop: 4, minWidth: 200, maxHeight: 260, overflowY: 'auto', background: 'var(--white)', border: '1px solid var(--br)', borderRadius: 8, boxShadow: 'var(--shadow-sm)', padding: 8 }}
+        >
+          {tagCounts.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--mid)', padding: '4px 6px' }}>No tags yet.</div>
+          ) : (
+            <>
+              {tagCounts.map(([tag, count]) => (
+                <label key={tag} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 6px', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={selected.has(tag)} onChange={() => toggleTag(tag)} />
+                  <span style={{ flex: 1 }}>{tag}</span>
+                  <span style={{ color: 'var(--mid)' }}>{count}</span>
+                </label>
+              ))}
+              {selected.size > 0 && (
+                <button type="button" className="btn-out" style={{ marginTop: 6, width: '100%', padding: '4px 0', fontSize: 11 }} onClick={() => onChange(new Set())}>Clear all</button>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -661,25 +819,22 @@ function AnalyticalEquipmentBody({ answers, setField }: { answers: Answers; setF
 // array reference, so it only writes when the actual content changes —
 // otherwise every render (each of which produces new row objects) would
 // re-fire the debounced session write.
-function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
-  const { data: listsData, loading: listsLoading, error: listsError } = useQuery<{ equipmentLists: EquipmentListRow[] }>(EQUIPMENT_LISTS_QUERY);
-  const { data: equipmentData, loading: eqLoading, error: eqError } = useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
-  const lists = listsData?.equipmentLists ?? [];
-  const catalog = equipmentData?.equipmentList ?? [];
-  const loading = listsLoading || eqLoading;
-
+function ComputedEquipmentList({
+  answers, setField, lists, catalog,
+}: {
+  answers: Answers; setField: (k: string, v: unknown) => void; lists: EquipmentListRow[]; catalog: EquipmentRow[];
+}) {
   const computed = computeBasicLabEquipment(answers, lists, catalog);
   const rows = applyBasicLabEquipmentOverrides(computed, answers);
   const serialized = JSON.stringify(rows.map((r) => [r.equipmentId, r.quantity, r.sources.join(',')]));
 
   useEffect(() => {
-    if (loading) return;
     // sources travels through to the report's BOM (see reports.service.ts's
     // extractBasicLabEquipment) so the Lab Design Report can apply the same
     // color-coded-by-source grouping used here.
     setField('basic_lab_equipment_final', rows.map(({ equipmentId, name, quantity, sources }) => ({ equipment_id: equipmentId, name, quantity, sources })));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serialized, loading]);
+  }, [serialized]);
 
   function setQty(equipmentId: string, next: number) {
     const overrides = (answers.basic_lab_equipment_quantity_overrides as Record<string, number>) || {};
@@ -690,13 +845,36 @@ function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setFie
     if (removedIds.includes(equipmentId)) return;
     setField('basic_lab_equipment_removed', [...removedIds, equipmentId]);
   }
-
-  if (loading) return <p className="q-inline-help">Loading your equipment lists…</p>;
-  if (listsError) return <p className="q-validation-error">Couldn’t load equipment lists: {listsError.message}</p>;
-  if (eqError) return <p className="q-validation-error">Couldn’t load the equipment catalog: {eqError.message}</p>;
+  // Owned rows are edited through existing_equipment_meta directly, not the
+  // override/removed answer fields — see applyBasicLabEquipmentOverrides's
+  // comment in questions.ts for why.
+  function setOwnedQty(equipmentId: string, next: number) {
+    const meta = (answers.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
+    const current = meta[equipmentId];
+    if (!current) return;
+    setField('existing_equipment_meta', { ...meta, [equipmentId]: { ...current, count: Math.max(1, Math.round(next)) } });
+  }
+  function unown(equipmentId: string) {
+    const meta = (answers.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
+    const { [equipmentId]: _removed, ...rest } = meta;
+    setField('existing_equipment_meta', rest);
+  }
+  // Needed rows mirror the owned functions above — edited through
+  // needed_equipment_meta directly, not the override/removed answer fields.
+  function setNeededQty(equipmentId: string, next: number) {
+    const meta = (answers.needed_equipment_meta as Record<string, { name: string; count: number }>) || {};
+    const current = meta[equipmentId];
+    if (!current) return;
+    setField('needed_equipment_meta', { ...meta, [equipmentId]: { ...current, count: Math.max(1, Math.round(next)) } });
+  }
+  function removeNeeded(equipmentId: string) {
+    const meta = (answers.needed_equipment_meta as Record<string, { name: string; count: number }>) || {};
+    const { [equipmentId]: _removed, ...rest } = meta;
+    setField('needed_equipment_meta', rest);
+  }
 
   if (rows.length === 0) {
-    return <p className="q-inline-help">Nothing to finalize yet — you have no existing equipment on file, and the General Lab, biosafety, biomaterial, and analytical equipment lists you've drawn from are all empty or unselected.</p>;
+    return <p className="q-inline-help">Nothing here yet — add equipment you already own or still need above, or pick a biosafety level or biomaterial to draw from those lists.</p>;
   }
 
   const categoryByKey = new Map(BASIC_EQUIPMENT_CATEGORIES.map((c) => [c.key, c]));
@@ -718,7 +896,7 @@ function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setFie
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 0 }}>
         Adjust quantities as needed. Items required for your biosafety level can’t be removed, only increased.
-        Equipment you already own is fixed at what you entered in Q1. Each color-coded section below shows which list brought that equipment into this combined list.
+        Equipment you already own or still need can be adjusted or removed here too — removing an owned row means you no longer have it, and removing a needed row means you no longer want it; neither means the room doesn’t need it. Each color-coded section below shows which list brought that equipment into this combined list.
       </p>
       {/* Long lists (many categories, or a category with many rows) can
           exceed the card's own height — this panel scrolls on its own within
@@ -745,8 +923,12 @@ function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setFie
                   <div key={row.equipmentId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)' }}>
                       {row.name}
-                      {row.owned ? (
+                      {row.owned && row.needed ? (
+                        <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(owned + needed)</span>
+                      ) : row.owned ? (
                         <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(owned)</span>
+                      ) : row.needed ? (
+                        <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(needed)</span>
                       ) : row.locked && (
                         <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(required)</span>
                       )}
@@ -764,20 +946,53 @@ function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setFie
                         );
                       })}
                     </span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      {row.owned ? (
-                        <span style={{ fontSize: 14, color: 'var(--mid)', minWidth: 20, textAlign: 'center' }}>{row.quantity}</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                      {/* Owned and needed are independent controls now — both
+                          render (each with its own stepper/Remove) when a row
+                          is both, instead of only one winning an if/else-if.
+                          A small "Owned"/"Needed" label only shows once both
+                          rows are present, since a single row is already
+                          unambiguous from the (owned)/(needed) suffix above. */}
+                      {row.owned && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          {row.needed && <span style={{ fontSize: 10, color: 'var(--mid)', minWidth: 46 }}>Owned</span>}
+                          <div className="stepper">
+                            <button type="button" onClick={() => setOwnedQty(row.equipmentId, row.ownedQuantity - 1)}>−</button>
+                            <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.ownedQuantity}</span>
+                            <button type="button" onClick={() => setOwnedQty(row.equipmentId, row.ownedQuantity + 1)}>+</button>
+                          </div>
+                          <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => unown(row.equipmentId)}>Remove</button>
+                        </div>
+                      )}
+                      {row.needed && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          {row.owned && <span style={{ fontSize: 10, color: 'var(--mid)', minWidth: 46 }}>Needed</span>}
+                          <div className="stepper">
+                            <button type="button" onClick={() => setNeededQty(row.equipmentId, row.neededQuantity - 1)}>−</button>
+                            <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.neededQuantity}</span>
+                            <button type="button" onClick={() => setNeededQty(row.equipmentId, row.neededQuantity + 1)}>+</button>
+                          </div>
+                          <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => removeNeeded(row.equipmentId)}>Remove</button>
+                        </div>
+                      )}
+                      {!row.owned && !row.needed && (row.locked ? (
+                        <div className="stepper">
+                          <button type="button" onClick={() => setQty(row.equipmentId, row.quantity - 1)}>−</button>
+                          <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.quantity}</span>
+                          <button type="button" onClick={() => setQty(row.equipmentId, row.quantity + 1)}>+</button>
+                        </div>
                       ) : (
-                        <>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <div className="stepper">
                             <button type="button" onClick={() => setQty(row.equipmentId, row.quantity - 1)}>−</button>
                             <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.quantity}</span>
                             <button type="button" onClick={() => setQty(row.equipmentId, row.quantity + 1)}>+</button>
                           </div>
-                          {!row.locked && (
-                            <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => remove(row.equipmentId)}>Remove</button>
-                          )}
-                        </>
+                          <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => remove(row.equipmentId)}>Remove</button>
+                        </div>
+                      ))}
+                      {(row.owned || row.needed) && row.requiredQuantity > row.ownedQuantity + row.neededQuantity && (
+                        <span style={{ fontSize: 10, color: 'var(--mid)' }}>Sized at {row.quantity} — this list needs at least {row.requiredQuantity}</span>
                       )}
                     </div>
                   </div>

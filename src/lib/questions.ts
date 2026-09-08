@@ -1,4 +1,4 @@
-export type QuestionType = 'radio' | 'multi' | 'space' | 'budget' | 'inventory' | 'checklist' | 'analytical_equipment' | 'basic_equipment';
+export type QuestionType = 'radio' | 'multi' | 'space' | 'budget' | 'checklist' | 'equipment_plan';
 
 export interface QuestionOption {
   v: string;
@@ -38,23 +38,39 @@ export interface Question {
 
 export type Answers = Record<string, unknown>;
 
-// The full intake flow, in order: existing_equipment -> biosafety_level ->
-// biomaterials -> analytical_equipment -> basic_lab_equipment (the computed,
-// user-editable Basic Lab Equipment List — see computeBasicLabEquipment/
-// applyBasicLabEquipmentOverrides below) -> space -> operations (protocol
-// selection, plus expected weekly runs per protocol asked inline — see
-// ProtocolSelectBody in QuestionsPage.tsx, same select-then-quantify pattern
-// as analytical_equipment) -> budget. existing_equipment is asked first,
-// unconditionally (there used to be a gating "does your space already have
-// equipment?" question ahead of it; removed — whether any equipment was
-// actually entered here is now itself the signal, see hasExistingEquipment
-// in buildFinalIntakeJson and questionHint in QuestionsPage.tsx).
-// biosafety_level/biomaterials/analytical_equipment feed directly into
-// basic_lab_equipment, so they're grouped right after existing_equipment,
-// before space/protocols/budget. Tiered protocol prioritization used to be
-// its own step after this one; removed outright (the backend never actually
-// consumed it — finalIntakeJson is passed through as an opaque JSON scalar,
-// see intake.resolver.ts).
+// The full intake flow, in order: biosafety_level -> biomaterials ->
+// basic_lab_equipment (the merged equipment-planning step: add anything you
+// already own or still need, then review the resulting Basic Lab Equipment
+// List — see computeBasicLabEquipment/applyBasicLabEquipmentOverrides below)
+// -> space -> operations (protocol selection, plus expected weekly runs per
+// protocol asked inline — see ProtocolSelectBody in QuestionsPage.tsx) ->
+// budget.
+//
+// There used to be a separate "Do you already have equipment?" step asked
+// first, unconditionally, before biosafety_level/biomaterials were answered
+// — which meant the app asked the user to list their equipment before it had
+// enough context to know what to size against. It's been folded into
+// basic_lab_equipment instead: owning equipment is entered in the same step
+// where its effect (reduced quantities needed, an "Already Owned" bucket) is
+// immediately visible. Whether any equipment was actually entered is itself
+// the signal for "already has equipment" elsewhere in the flow (see
+// hasExistingEquipment in buildFinalIntakeJson and questionHint in
+// QuestionsPage.tsx) — there's no separate gating question for it.
+//
+// There also used to be a standalone "additional analytical equipment"
+// question. Removed: the equipment-plan step's tag filter (see
+// TagFilterPopover in QuestionsPage.tsx) already lets a user find analytical
+// equipment inside the same picker used for everything else, and the
+// picker's Owned/Needed toggle covers the case a dedicated analytical
+// question couldn't — "I want this but don't have it yet" (a costed
+// 'needed' row) as opposed to "I already have it" (an 'owned' row, no
+// BOM cost). See the needed_equipment_meta handling below.
+//
+// biosafety_level/biomaterials feed directly into basic_lab_equipment, so
+// they're grouped right before it, ahead of space/protocols/budget. Tiered
+// protocol prioritization used to be its own step after this one; removed
+// outright (the backend never actually consumed it — finalIntakeJson is
+// passed through as an opaque JSON scalar, see intake.resolver.ts).
 //
 // This is intentionally just the sizing-stage questions from the
 // generator's intake spec, plus the Prompt 1/2 equipment-planning questions
@@ -124,26 +140,33 @@ export const BIOMATERIAL_LIST_KEYS: Record<string, string> = {
   mammalian_suspension: 'mammalian_suspension_basic_equipment',
   mice: 'mice_basic_equipment',
 };
-export const ANALYTICAL_EQUIPMENT_LIST_KEY = 'analytical_equipment_catalog';
-
 // Kept in sync by hand with the backend's PROTOCOL_SPECIFIC_CATEGORY_KEY
 // (src/bom/protocol-equipment-list.ts) — same convention as the list keys
 // above. Never produced by anything in this file; see the category entry
 // below for why it's still declared here.
 export const PROTOCOL_SPECIFIC_CATEGORY_KEY = 'protocol_specific';
 
-// Q5's color-coded category legend — one entry per source that can
-// contribute equipment to the Basic Lab Equipment List (see
+// The equipment-plan step's color-coded category legend — one entry per
+// source that can contribute equipment to the Basic Lab Equipment List (see
 // computeBasicLabEquipment below), in the same order they're added there.
 // Colors are chosen to stay visually distinct from each other and from the
 // existing amber "still a Canvas placeholder" convention used elsewhere.
 export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; color: string }[] = [
-  // Equipment pulled in from Q1's existing-equipment inventory (see
-  // computeBasicLabEquipment's ownedMeta loop) — listed first since it needs
-  // no action from the user, just an FYI of what's already covered. Greyed
-  // out on purpose (a muted color, unlike every other category's saturated
-  // one) to visually read as "already handled, nothing to configure here".
+  // Equipment entered as already-owned in the same step (see
+  // computeBasicLabEquipment's ownedMeta loop) — listed first since an
+  // owned-only item (not required by anything else) needs no action from
+  // the user beyond what they already did to add it. Greyed out on purpose
+  // (a muted color, unlike every other category's saturated one) to
+  // visually read as "already handled, nothing to configure here".
   { key: 'owned', label: 'Already Owned', color: '#6B7280' },
+  // Equipment entered as still-needed in the same step (see
+  // computeBasicLabEquipment's neededMeta loop) — the picker's other bucket
+  // alongside 'owned'. Placed directly after it so the two user-entered
+  // buckets sit together at the top of the list, above the list-derived
+  // categories. Unlike 'owned', these rows keep a real BOM cost (see the
+  // backend's bom-generator.ts, which only special-cases 'owned'). Takes the
+  // blue freed up by removing the old 'analytical' category below.
+  { key: 'needed', label: 'Needed', color: '#3462C9' },
   { key: 'general', label: 'General Lab Equipment', color: '#00A3A3' },
   { key: 'bsl', label: 'Biosafety-Required', color: '#a67c00' },
   { key: 'bacteria', label: 'Bacterial Basic', color: '#3D8B3D' },
@@ -151,8 +174,7 @@ export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; color: st
   { key: 'mammalian_adherent', label: 'Mammalian (Adherent) Basic', color: '#7B4FD6' },
   { key: 'mammalian_suspension', label: 'Mammalian (Suspension) Basic', color: '#D64F9E' },
   { key: 'mice', label: 'Mice Basic', color: '#8A5A3B' },
-  { key: 'analytical', label: 'Analytical Additions', color: '#3462C9' },
-  // Not part of Q5's Basic Lab Equipment List (nothing here is ever
+  // Not part of the equipment-plan step's Basic Lab Equipment List (nothing here is ever
   // computed by computeBasicLabEquipment) — this key is only ever produced
   // server-side by the backend's bom/protocol-equipment-list.ts when
   // merging the Protocols Equipment List into the report's BOM, for
@@ -163,14 +185,12 @@ export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; color: st
 ];
 
 export const QS: Question[] = [
-  { id: 'existing_equipment', n: 1, t: 'Do you already have equipment?', h: 'Pulled from your equipment inventory — only the gap between this and what your protocols need gets sized', type: 'inventory' },
-  { id: 'biosafety_level', n: 2, t: 'What biosafety level is your labspace compliant with?', h: 'Adds that level\'s required equipment to your Basic Lab Equipment List', type: 'radio', opts: BIOSAFETY_LEVEL_OPTS },
-  { id: 'biomaterials', n: 3, t: 'What type of biomaterials would you like to work with?', h: 'Each one adds its own basic equipment set to your Basic Lab Equipment List', type: 'checklist', opts: BIOMATERIAL_OPTS },
-  { id: 'analytical_equipment', n: 4, t: 'Would you like any additional analytical equipment?', h: 'Optional — check anything you need beyond the basics, and set how many', type: 'analytical_equipment' },
-  { id: 'basic_lab_equipment', n: 5, t: 'Finalize Basic Lab Equipment', h: 'Your computed Basic Lab Equipment List — adjust quantities or remove anything you don’t need', type: 'basic_equipment' },
-  { id: 'space', n: 6, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
-  { id: 'operations', n: 7, t: 'Add additional protocols?', h: 'Check the ones this lab needs and set expected weekly runs for each — duration is pulled from the protocol itself.', type: 'multi', opts: OPERATION_OPTS },
-  { id: 'budget', n: 8, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
+  { id: 'biosafety_level', n: 1, t: 'What biosafety level is your labspace compliant with?', h: 'Adds that level\'s required equipment to your Basic Lab Equipment List', type: 'radio', opts: BIOSAFETY_LEVEL_OPTS },
+  { id: 'biomaterials', n: 2, t: 'What type of biomaterials would you like to work with?', h: 'Each one adds its own basic equipment set to your Basic Lab Equipment List', type: 'checklist', opts: BIOMATERIAL_OPTS },
+  { id: 'basic_lab_equipment', n: 3, t: 'Plan your Basic Lab Equipment', h: 'Add anything you already own or still need, then review the computed Basic Lab Equipment List — adjust quantities or remove anything you don’t need', type: 'equipment_plan' },
+  { id: 'space', n: 4, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
+  { id: 'operations', n: 5, t: 'Add additional protocols?', h: 'Check the ones this lab needs and set expected weekly runs for each — duration is pulled from the protocol itself.', type: 'multi', opts: OPERATION_OPTS },
+  { id: 'budget', n: 6, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
 ];
 
 // Steps where advancing past them triggers a feasibilityCheck GraphQL call
@@ -184,18 +204,19 @@ export const QS: Question[] = [
 export const FEASIBILITY_GATE_IDS = ['budget'];
 
 export const INTAKE_FIELD_KEYS = [
-  'existing_equipment_meta',
-  'biosafety_level', 'biomaterials', 'analytical_equipment_quantities',
+  'existing_equipment_meta', 'needed_equipment_meta',
+  'biosafety_level', 'biomaterials',
   'basic_lab_equipment_quantity_overrides', 'basic_lab_equipment_removed', 'basic_lab_equipment_final',
   'space_method', 'width_ft', 'height_ft', 'space_floorplan_filename',
   'operations', 'protocol_runs_per_week', 'protocol_operation_by_id',
   'budget_desired', 'budget_max', 'budget_scope',
 ];
 
-// No steps are skipped today — existing_equipment used to be conditional on
-// a gating question that's since been removed (see the flow comment above
-// QS). Kept as a function (not deleted outright) since stepIndex/QuestionsPage
-// both call it, and a future question may need to be conditional again.
+// No steps are skipped today — there used to be a gating "does your space
+// already have equipment?" question with a conditional step behind it,
+// since removed (see the flow comment above QS). Kept as a function (not
+// deleted outright) since stepIndex/QuestionsPage both call it, and a future
+// question may need to be conditional again.
 export function shouldSkip(_q: Question, _answers: Answers): boolean {
   return false;
 }
@@ -345,23 +366,40 @@ export interface EquipmentListSummary { listKey: string; equipmentIds: string[];
 export interface EquipmentCatalogEntry { equipmentId: string; name: string; }
 // sources holds every BASIC_EQUIPMENT_CATEGORIES key that contributed to
 // this row, in the order each was first added — sources[0] is treated as
-// the row's primary category for grouping in the Q5 UI, with any further
-// entries surfaced there as "also required by" cross-references.
-// owned = true means this row's quantity comes (at least partly) from Q1's
-// existing-equipment inventory ('owned' is in sources) — the lab already has
-// it, so unlike a `locked` (BSL-required) row, its quantity can't be
-// adjusted at all in Q5, not even increased.
-export interface BasicLabEquipmentRow { equipmentId: string; name: string; quantity: number; locked: boolean; owned: boolean; sources: string[]; }
+// the row's primary category for grouping in the equipment-plan step's UI,
+// with any further entries surfaced there as "also required by"
+// cross-references.
+// owned = true means this row's quantity comes (at least partly) from
+// equipment the user marked as already-owned ('owned' is in sources).
+// needed = true means the user marked this row as still-needed ('needed' is
+// in sources) — same picker, the other bucket, but unlike owned it keeps a
+// real BOM cost. An equipmentId is in at most one of the two buckets (the
+// picker's addable list excludes an item already in either), so owned and
+// needed are mutually exclusive on any one row. requiredQuantity is the
+// quantity before the owned merge below (0 if the row is owned-only, not
+// required by anything else) — the count the room actually needs to be
+// sized for. ownedQuantity/neededQuantity are how much the user says they
+// own/still need (0 on a row that isn't in that bucket). quantity is
+// max(requiredQuantity, owned-or-needed-quantity) when owned or needed,
+// else requiredQuantity — what's actually displayed/costed. Owned and
+// needed rows are user-editable like any other (see
+// applyBasicLabEquipmentOverrides below and EquipmentPicker/
+// ComputedEquipmentList in QuestionsPage.tsx), just through
+// existing_equipment_meta/needed_equipment_meta directly rather than the
+// override/removed answer fields, since editing one of these rows means
+// changing how much of it the lab actually owns or wants, not overriding a
+// list-derived quantity.
+export interface BasicLabEquipmentRow { equipmentId: string; name: string; quantity: number; requiredQuantity: number; ownedQuantity: number; neededQuantity: number; locked: boolean; owned: boolean; needed: boolean; sources: string[]; }
 
 // Basic Lab Equipment List computation (Prompt 2 spec): start with 1 of
 // every item on the General Lab Equipment List; add 1 of every item on the
 // BSL-required list matching the biosafety_level answer (locked — can't be
-// removed in Q5, only quantity-increased, since it's below the count the
-// biosafety level actually requires); add 1 of every item on each checked
-// biomaterial's list (Q3); add each Q4 analytical item at its chosen
-// quantity. The same equipmentId touched by more than one source sums into a
-// single row rather than duplicating (e.g. a centrifuge on both General and
-// Bacterial Basic -> quantity 2, not two rows of 1).
+// removed in the equipment-plan step, only quantity-increased, since it's
+// below the count the biosafety level actually requires); add 1 of every
+// item on each checked biomaterial's list; add each selected analytical
+// item at its chosen quantity. The same equipmentId touched by more than one
+// source sums into a single row rather than duplicating (e.g. a centrifuge
+// on both General and Bacterial Basic -> quantity 2, not two rows of 1).
 //
 // Deliberately pure over plain data (no GraphQL/Apollo here) so it can be
 // called from a component with already-fetched lists/catalog, or later
@@ -376,6 +414,7 @@ export function computeBasicLabEquipment(
   const quantities = new Map<string, number>();
   const locked = new Set<string>();
   const owned = new Set<string>();
+  const needed = new Set<string>();
   const sources = new Map<string, string[]>();
 
   function addSource(equipmentId: string, categoryKey: string) {
@@ -405,29 +444,51 @@ export function computeBasicLabEquipment(
     addList(BIOMATERIAL_LIST_KEYS[biomaterial], false, biomaterial);
   }
 
-  const analyticalQuantities = (answers.analytical_equipment_quantities as Record<string, number>) || {};
-  for (const [equipmentId, qty] of Object.entries(analyticalQuantities)) {
-    quantities.set(equipmentId, (quantities.get(equipmentId) ?? 0) + Math.max(1, Math.round(qty) || 1));
-    addSource(equipmentId, 'analytical');
+  // Equipment the user marked as still-needed and/or already-owned (added
+  // via EquipmentPicker's Needed/Owned buckets, same step). The two are now
+  // independent of each other — an item can be both owned and needed at
+  // once (own 2, still need 3 more) — so they're read into their own maps
+  // here without touching `quantities` yet. requiredQuantities is a
+  // snapshot of what the General/BSL/biomaterial lists alone call for,
+  // taken before either bucket is folded in, kept per-row so the UI can bind
+  // an owned/needed row's editable stepper to its own count
+  // (ownedQuantities/neededQuantities below) rather than to the post-merge
+  // display quantity.
+  const neededMeta = (answers.needed_equipment_meta as Record<string, { name: string; count: number }>) || {};
+  const ownedMeta = (answers.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
+  const requiredQuantities = new Map(quantities);
+  const neededQuantities = new Map<string, number>();
+  const ownedQuantities = new Map<string, number>();
+  for (const [equipmentId, meta] of Object.entries(neededMeta)) {
+    neededQuantities.set(equipmentId, Math.max(1, Math.round(meta.count) || 1));
+  }
+  for (const [equipmentId, meta] of Object.entries(ownedMeta)) {
+    ownedQuantities.set(equipmentId, Math.max(1, Math.round(meta.count) || 1));
   }
 
-  // Q1's existing-equipment inventory — merged in LAST, after every
-  // category above, so ownership never displaces where an item already
-  // landed: something already required by General/BSL/etc. stays under
-  // that category (with 'owned' added as an additional source, surfaced as
-  // a small "+ Already Owned" cross-reference pill same as any other
-  // secondary source) — only an item owned but not required by ANY selected
-  // category gets its own primary "Already Owned" bucket. Either way the
-  // displayed quantity is raised to at least what's owned (never summed —
-  // owning 3 of something a list only asks for 1 of shows 3, not 4), and
-  // the row is marked owned so the BOM shows no cost for it.
-  const ownedMeta = (answers.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
-  for (const [equipmentId, meta] of Object.entries(ownedMeta)) {
-    const ownedQty = Math.max(1, Math.round(meta.count) || 1);
-    const requiredQty = quantities.get(equipmentId);
-    quantities.set(equipmentId, requiredQty === undefined ? ownedQty : Math.max(requiredQty, ownedQty));
-    owned.add(equipmentId);
-    addSource(equipmentId, 'owned');
+  // Final quantity for anything owned and/or needed: owned + needed add
+  // together (own 2, need 3 more -> the room is sized for 5), floored at
+  // whatever a selected list already requires (max against
+  // requiredQuantities) — owning/needing 3 of something a list only asks
+  // for 1 of shows 3, not 4. When only one of owned/needed is set the
+  // other defaults to 0, so this reduces to the previous owned-only or
+  // needed-only behavior unchanged. 'needed' is added as a source before
+  // 'owned' so sources[0] ordering — list category, then needed, then
+  // owned — matches what it was when the two buckets were still exclusive.
+  const ownedOrNeededIds = new Set([...neededQuantities.keys(), ...ownedQuantities.keys()]);
+  for (const equipmentId of ownedOrNeededIds) {
+    const neededQty = neededQuantities.get(equipmentId) ?? 0;
+    const ownedQty = ownedQuantities.get(equipmentId) ?? 0;
+    const requiredQty = requiredQuantities.get(equipmentId) ?? 0;
+    quantities.set(equipmentId, Math.max(requiredQty, ownedQty + neededQty));
+    if (neededQuantities.has(equipmentId)) {
+      needed.add(equipmentId);
+      addSource(equipmentId, 'needed');
+    }
+    if (ownedQuantities.has(equipmentId)) {
+      owned.add(equipmentId);
+      addSource(equipmentId, 'owned');
+    }
   }
 
   return Array.from(quantities.entries())
@@ -438,25 +499,37 @@ export function computeBasicLabEquipment(
       equipmentId,
       name: nameById.get(equipmentId)!,
       quantity,
+      requiredQuantity: requiredQuantities.get(equipmentId) ?? 0,
+      ownedQuantity: ownedQuantities.get(equipmentId) ?? 0,
+      neededQuantity: neededQuantities.get(equipmentId) ?? 0,
       locked: locked.has(equipmentId),
       owned: owned.has(equipmentId),
+      needed: needed.has(equipmentId),
       sources: sources.get(equipmentId) ?? [],
     }));
 }
 
-// Applies a user's Q5 edits on top of the computed list: quantity overrides
+// Applies a user's edits on top of the computed list: quantity overrides
 // (floored at 1, per the "cannot go below 1 without removing the item
 // entirely" rule) and explicit removals. Locked (BSL-required) rows ignore
-// removal entirely — they can only have their quantity increased, matching
-// the Q5 editing rules exactly. Owned rows ignore both — the quantity is
-// whatever's actually owned, not user-editable at all.
+// removal entirely — they can only have their quantity increased. Owned and
+// needed rows ignore both overrides and removals here — not because they're
+// fixed, but because they're edited through a different channel: their
+// quantity comes straight from existing_equipment_meta/needed_equipment_meta
+// (see computeBasicLabEquipment's ownedQuantities/neededQuantities), edited
+// directly via EquipmentPicker/ComputedEquipmentList's stepper in
+// QuestionsPage.tsx, and "removing" one means un-owning/un-needing it
+// (deleting its existing_equipment_meta/needed_equipment_meta entry) rather
+// than adding it to basic_lab_equipment_removed. This guard exists so a
+// stale override or removal entry from before an item became owned/needed
+// can't fight that count.
 export function applyBasicLabEquipmentOverrides(computed: BasicLabEquipmentRow[], answers: Answers): BasicLabEquipmentRow[] {
   const removed = new Set((answers.basic_lab_equipment_removed as string[]) || []);
   const overrides = (answers.basic_lab_equipment_quantity_overrides as Record<string, number>) || {};
   return computed
-    .filter((row) => row.locked || row.owned || !removed.has(row.equipmentId))
+    .filter((row) => row.locked || row.owned || row.needed || !removed.has(row.equipmentId))
     .map((row) => ({
       ...row,
-      quantity: row.owned ? row.quantity : Math.max(1, overrides[row.equipmentId] ?? row.quantity),
+      quantity: (row.owned || row.needed) ? row.quantity : Math.max(1, overrides[row.equipmentId] ?? row.quantity),
     }));
 }

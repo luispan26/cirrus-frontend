@@ -384,3 +384,11 @@ h1,h2,h3,h4,h5,h6{font-family:var(--head);font-weight:500;letter-spacing:-.01em}
 /* PRESS STATE — glows teal when hovered/selected, flashes magenta on click */
 .btn-teal:active,.btn-dark:active,.btn-pill:active{background:var(--pk);color:#3a0022;box-shadow:var(--glow-pk);transform:scale(.97)}
 .btn-pink:active,.btn-out:active,.qm-mode-toggle:active,.chip:active,.opt-card:active,.stepper button:active,.ls-palette-item:active,.ls-station-card:active,.lc-saved-card:active,.sc-card.active:active,.dash-nav-item:active,.dash-profile-mini:active,.dash-recent-card:active{border-color:var(--pk);box-shadow:var(--glow-pk);transform:scale(.97)}
+
+/* MUST STAY LAST — .ls-fixture.bench{border:none;outline:none} (index ~316)
+   is specificity 0,2,0, same as this rule; a dashed teal outline at the same
+   opacity as the valid-heatmap tint (rgba(0,213,213,.32)) was indistinguishable
+   against it, which is what made the drag ghost invisible for the bench case.
+   A solid near-white fill plus a dark dashed border reads clearly against
+   both the teal-tinted valid cells and the pink-tinted invalid cells. */
+.ls-fixture.ls-fixture-ghost{z-index:2;pointer-events:none;background:rgba(255,255,255,.7);border:2px dashed var(--dark);outline:none;border-radius:5px;color:var(--dark);cursor:default}

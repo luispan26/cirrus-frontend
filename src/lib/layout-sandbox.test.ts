@@ -17,7 +17,7 @@
 // from placed objects — the rasterization itself was never actually
 // exercised until a real plumbing_point was placed in the live UI.
 import { describe, expect, test } from 'vitest';
-import { EMPTY_SANDBOX_LAYOUT, buildLayoutGeometryInput, type SandboxBaseObject, type SandboxLayout, type SandboxPoint } from './layout-sandbox';
+import { EMPTY_SANDBOX_LAYOUT, buildLayoutGeometryInput, centeredRectFootprint, type SandboxBaseObject, type SandboxLayout, type SandboxPoint } from './layout-sandbox';
 
 function layoutWithPoint(point: SandboxPoint, room: { widthFt: number; heightFt: number; gridFt: number } = { widthFt: 40, heightFt: 30, gridFt: 1 }): SandboxLayout {
   const object: SandboxBaseObject = {
@@ -25,7 +25,6 @@ function layoutWithPoint(point: SandboxPoint, room: { widthFt: number; heightFt:
     kind: 'column',
     name: 'Test column',
     footprint: { points: [point] },
-    locked: false,
   };
   return { ...structuredClone(EMPTY_SANDBOX_LAYOUT), room, baseObjects: [object] };
 }
@@ -114,5 +113,43 @@ describe('buildLayoutGeometryInput cell rasterization', () => {
       expect(geometry.roomHeight).toBe(31);
       expect(geometry.blockedCells).toEqual([geometry.roomWidth * geometry.roomHeight - 1]);
     });
+  });
+});
+
+// WS-7 (resizable no-placement zones): centeredRectFootprint is the shared
+// helper behind both initial placement and the resize inspector for
+// restricted_region/column (see placeBaseObjectAt/InfrastructureInspector in
+// LayoutSandboxPage.tsx) — a rectangle centered on an arbitrary point, unlike
+// wallRectFootprint's wall-flush rectangles.
+describe('centeredRectFootprint', () => {
+  test('produces a rectangle centered on the given point', () => {
+    const footprint = centeredRectFootprint({ x: 10, y: 12 }, 6, 3);
+    const xs = footprint.points.map((p) => p.x);
+    const ys = footprint.points.map((p) => p.y);
+    expect(Math.min(...xs)).toBe(7);
+    expect(Math.max(...xs)).toBe(13);
+    expect(Math.min(...ys)).toBe(10.5);
+    expect(Math.max(...ys)).toBe(13.5);
+  });
+
+  // Enforcement (canPlaceBaseObject/blockedCells) works off exactly this
+  // rectangle, so a 6x3 region at gridFt:1 covering whole grid cells must
+  // block exactly 6*3=18 cells — not 17 or 19 from an off-by-one in the
+  // cellsCoveredBy bounds-to-cell conversion tested above. Center is
+  // (20, 15.5), not (20, 15): depth 3 needs a half-integer center to land
+  // its bounds ([14,17]) on whole grid lines — centering on 15 instead
+  // would give [13.5, 16.5], which straddles a grid line and covers 4 rows
+  // instead of 3, an artifact of the center point, not a real bug.
+  test('a 6x3 restricted_region at gridFt:1 blocks exactly 18 cells', () => {
+    const room = { widthFt: 40, heightFt: 30, gridFt: 1 };
+    const object: SandboxBaseObject = {
+      id: 'test-restricted-region',
+      kind: 'restricted_region',
+      name: 'Restricted region',
+      footprint: centeredRectFootprint({ x: 20, y: 15.5 }, 6, 3),
+    };
+    const layout: SandboxLayout = { ...structuredClone(EMPTY_SANDBOX_LAYOUT), room, baseObjects: [object] };
+    const geometry = buildLayoutGeometryInput(layout);
+    expect(geometry.blockedCells).toHaveLength(18);
   });
 });

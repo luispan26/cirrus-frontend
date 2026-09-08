@@ -5,7 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { APPROVE_SANDBOX_LAYOUT_MUTATION, DAMP_OPERATIONS_QUERY, DELETE_ZONING_PLAN_MUTATION, EQUIPMENT_LIST_QUERY, LAYOUT_SANDBOX_CAPABILITIES_QUERY, SAVE_ZONING_PLAN_MUTATION, SOLVE_ZONE_REQUIREMENTS_MUTATION, STATIONS_QUERY, ZONING_PLANS_QUERY, ZONING_PLAN_CATALOGUE_DRIFT_QUERY, ZONING_PLAN_QUERY } from '../graphql/operations';
 import { ZONE_COLORS } from '../lib/kb';
 import { AEROSOL_POTENTIALS, AMPLIFICATION_STAGES, MATERIAL_CLASSES, MATERIAL_CLASS_LABELS, SPATIAL_OPERATION_KIND_LABELS, ZONE_FAMILY_COLORS, ZONE_FAMILY_LABELS, fromPlannedOperationSnapshot, isPlannedOperationComplete, isZoneable, newPlannedOperation, toOperationContextInput, toPlannedOperationSnapshot, type MaterialClass, type PlannedOperation, type PlannedOperationSnapshot, type SpatialOperationKind } from '../lib/zone-requirements';
-import { BENCH_DEPTH_FT, BENCH_SURFACE_AREA_SQFT, BENCH_WIDTH_FT, EMPTY_SANDBOX_LAYOUT, buildLayoutGeometryInput, canPlaceFixture, computeDoorSwing, computePlacementAvailability, deriveCirculationSpace, evaluateUtilityReachability, fixtureFootprint, offsetAlongWall, parseSandboxLayout, pointOnWall, polygonBounds, reanchorWallMountedObjects, snapToNearestWall, validateSandboxLayout, wallRectFootprint, wallSideOfBounds, type EquipmentMounting, type FixtureClearance, type FixtureKind, type FixtureOrientation, type MountingSurface, type SandboxBaseObject, type SandboxEquipmentAssignment, type SandboxFixture, type SandboxLayer, type SandboxLayout, type SandboxStationAssignment, type UtilityReachabilityResult, type UtilityRequirement, type UtilityStatus, type WallSide } from '../lib/layout-sandbox';
+import { BENCH_DEPTH_FT, BENCH_SURFACE_AREA_SQFT, BENCH_WIDTH_FT, EMPTY_SANDBOX_LAYOUT, buildLayoutGeometryInput, canPlaceBaseObject, canPlaceFixture, centeredRectFootprint, computeDoorSwing, computePlacementAvailability, deriveCirculationSpace, evaluateUtilityReachability, fixtureFootprint, offsetAlongWall, parseSandboxLayout, pointOnWall, polygonBounds, reanchorWallMountedObjects, snapToNearestWall, validateSandboxLayout, wallRectFootprint, wallSideOfBounds, type EquipmentMounting, type FixtureClearance, type FixtureKind, type FixtureOrientation, type MountingSurface, type SandboxBaseObject, type SandboxEquipmentAssignment, type SandboxFixture, type SandboxLayer, type SandboxLayout, type SandboxPolygon, type SandboxStationAssignment, type UtilityReachabilityResult, type UtilityRequirement, type UtilityStatus, type WallSide } from '../lib/layout-sandbox';
 import { Logo } from '../components/Logo';
 
 interface StationCatalogItem { stationId: string; name: string; zone: string; }
@@ -168,7 +168,7 @@ function CanvasLayers({ layout, layers, violations, selected, placingKind, zonin
         {isPoint
           ? object.kind === 'ventilation_point' && object.ventilation ? <VentilationMarker object={object} /> : <circle className={`ls-infra-point ${object.kind}`} cx={anchor.x} cy={anchor.y} r={.3} />
           : <polygon className={`ls-base-shape ${object.kind}`} points={polygon(object.footprint.points)} />}
-        <text x={anchor.x} y={anchor.y - (isPoint ? .45 : .2)}>{object.name}{object.locked ? ' 🔒' : ''}</text>
+        <text x={anchor.x} y={anchor.y - (isPoint ? .45 : .2)}>{object.name}</text>
         {swing && <><line className="ls-door-leaf" x1={swing.hinge.x} y1={swing.hinge.y} x2={swing.leafTip.x} y2={swing.leafTip.y} /><polyline className="ls-door-swing" points={swing.arcPoints.map((p) => `${p.x},${p.y}`).join(' ')} /></>}
       </g>;
     })}
@@ -196,20 +196,28 @@ const PLUMBING_FIELD_LABELS: Record<'coldWater' | 'hotWater' | 'drain' | 'diWate
 // share a width field (both are wall openings), the three typed point kinds
 // each show only the minimal fields the user's spec called for (no pipe
 // sizing, no duct CFM, no circuit routing).
-function InfrastructureInspector({ object, room, onUpdate, onToggleLock, onDelete }: { object: SandboxBaseObject; room: { widthFt: number; heightFt: number }; onUpdate: (fn: (object: SandboxBaseObject) => SandboxBaseObject) => void; onToggleLock: () => void; onDelete: () => void }) {
+function InfrastructureInspector({ object, room, onUpdate, onResize, onDelete }: { object: SandboxBaseObject; room: { widthFt: number; heightFt: number }; onUpdate: (fn: (object: SandboxBaseObject) => SandboxBaseObject) => void; onResize: (footprint: SandboxPolygon) => void; onDelete: () => void }) {
   const bounds = polygonBounds(object.footprint);
   const side = wallSideOfBounds(bounds, room);
   const openingWidthFt = side === 'top' || side === 'bottom' ? bounds.right - bounds.left : bounds.bottom - bounds.top;
+  const restrictedWidthFt = bounds.right - bounds.left;
+  const restrictedDepthFt = bounds.bottom - bounds.top;
+  const restrictedCenter = { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 };
   return (
     <div className="ls-inspector">
       <b>{object.name}</b>
-      <small>{object.kind.replace(/_/g, ' ')}{object.locked ? ' · locked' : ''}</small>
+      <small>{object.kind.replace(/_/g, ' ')}</small>
       <div className="ls-inspector-actions">
-        <button className="btn-out" onClick={onToggleLock}>{object.locked ? 'Unlock' : 'Lock'}</button>
         <button className="btn-out" onClick={onDelete}>Remove</button>
       </div>
       {(object.kind === 'door' || object.kind === 'window') && (
-        <label><span className="field-label">Width (ft)</span><input className="field-input" type="number" min="1" step=".5" value={openingWidthFt} onChange={(e) => onUpdate((current) => ({ ...current, footprint: resizeWallOpening(current, room, Number(e.target.value) || openingWidthFt) }))} /></label>
+        <label><span className="field-label">Width (ft)</span><input className="field-input" type="number" min="1" step=".5" value={openingWidthFt} onChange={(e) => onResize(resizeWallOpening(object, room, Number(e.target.value) || openingWidthFt))} /></label>
+      )}
+      {object.kind === 'restricted_region' && (
+        <div className="ls-room-fields">
+          <label><span className="field-label">Width (ft)</span><input className="field-input" type="number" min=".5" step=".5" value={restrictedWidthFt} onChange={(e) => onResize(centeredRectFootprint(restrictedCenter, Math.max(.5, Number(e.target.value) || restrictedWidthFt), restrictedDepthFt))} /></label>
+          <label><span className="field-label">Depth (ft)</span><input className="field-input" type="number" min=".5" step=".5" value={restrictedDepthFt} onChange={(e) => onResize(centeredRectFootprint(restrictedCenter, restrictedWidthFt, Math.max(.5, Number(e.target.value) || restrictedDepthFt)))} /></label>
+        </div>
       )}
       {object.kind === 'door' && object.door && (
         <>
@@ -321,6 +329,8 @@ export function LayoutSandboxPage() {
   const [canvasNode, setCanvasNode] = useState<HTMLDivElement | null>(null);
   const dragFrame = useRef<number | null>(null);
   const dragState = useRef<{ id: string; offsetX: number; offsetY: number; x: number; y: number } | null>(null);
+  const paletteDragFrame = useRef<number | null>(null);
+  const paletteDragState = useRef<{ kind: FixtureKind; widthFt: number; depthFt: number; x: number; y: number; onCanvas: boolean } | null>(null);
   const overlayDrag = useRef<{ id: string; clientX: number; clientY: number } | null>(null);
   // Always starts blank — the sandbox is a scratch workspace, not a
   // browser-persisted document, so a fresh visit never carries over a
@@ -342,6 +352,7 @@ export function LayoutSandboxPage() {
   const [currentPlanId, setCurrentPlanId] = useState<string | null>(null);
   const [catalogueDrift, setCatalogueDrift] = useState<CatalogueDriftEntry[] | null>(null);
   const [dragPreview, setDragPreview] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [paletteDragPos, setPaletteDragPos] = useState<{ kind: FixtureKind; widthFt: number; depthFt: number; x: number; y: number; onCanvas: boolean } | null>(null);
   const [placementPreview, setPlacementPreview] = useState<{ widthFt: number; depthFt: number; orientation: FixtureOrientation; excludeInstanceId?: string } | null>(null);
   const [selectedOverlay, setSelectedOverlay] = useState<string | null>(null);
   const [placingKind, setPlacingKind] = useState<PlaceableBaseKind | null>(null);
@@ -474,11 +485,38 @@ export function LayoutSandboxPage() {
     const direction = delta[event.key]; if (!direction) return;
     event.preventDefault(); event.stopPropagation(); moveFixture(fixture.instanceId, fixture.x + direction[0], fixture.y + direction[1]);
   }
-  function dropOnCanvas(event: React.DragEvent<HTMLDivElement>) {
-    event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect();
-    const x = Math.min(columns - 1, Math.max(0, Math.floor((event.clientX - rect.left) / rect.width * columns)));
-    const y = Math.min(rows - 1, Math.max(0, Math.floor((event.clientY - rect.top) / rect.height * rows)));
-    const type = event.dataTransfer.getData('cirrus/type'); if (type === 'fixture-template') createFixture(x, y); if (type === 'fixture-instance') moveFixture(event.dataTransfer.getData('cirrus/id'), x, y);
+  function startPaletteDrag(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
+    const widthFt = newKind === 'bench' ? BENCH_WIDTH_FT : Math.max(.5, newWidth);
+    const depthFt = newKind === 'bench' ? BENCH_DEPTH_FT : Math.max(.5, newDepth);
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const onCanvas = !!rect && event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+    const x = rect ? Math.min(columns - 1, Math.max(0, Math.floor((event.clientX - rect.left) / rect.width * columns))) : 0;
+    const y = rect ? Math.min(rows - 1, Math.max(0, Math.floor((event.clientY - rect.top) / rect.height * rows))) : 0;
+    const next = { kind: newKind, widthFt, depthFt, x, y, onCanvas };
+    paletteDragState.current = next; setPaletteDragPos(next);
+    setPlacementPreview({ widthFt, depthFt, orientation: 0 });
+  }
+  function movePaletteDrag(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = paletteDragState.current; const rect = canvasRef.current?.getBoundingClientRect(); if (!drag || !rect) return;
+    drag.onCanvas = event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+    drag.x = Math.min(columns - 1, Math.max(0, Math.floor((event.clientX - rect.left) / rect.width * columns)));
+    drag.y = Math.min(rows - 1, Math.max(0, Math.floor((event.clientY - rect.top) / rect.height * rows)));
+    if (paletteDragFrame.current !== null) return;
+    paletteDragFrame.current = requestAnimationFrame(() => { paletteDragFrame.current = null; const current = paletteDragState.current; if (current) setPaletteDragPos({ ...current }); });
+  }
+  function finishPaletteDrag(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = paletteDragState.current; if (!drag) return;
+    event.currentTarget.releasePointerCapture(event.pointerId); paletteDragState.current = null;
+    if (paletteDragFrame.current !== null) { cancelAnimationFrame(paletteDragFrame.current); paletteDragFrame.current = null; }
+    setPaletteDragPos(null); setPlacementPreview(null);
+    if (drag.onCanvas) createFixture(drag.x, drag.y);
+  }
+  function cancelPaletteDrag(event: React.PointerEvent<HTMLDivElement>) {
+    event.currentTarget.releasePointerCapture(event.pointerId); paletteDragState.current = null;
+    if (paletteDragFrame.current !== null) { cancelAnimationFrame(paletteDragFrame.current); paletteDragFrame.current = null; }
+    setPaletteDragPos(null); setPlacementPreview(null);
   }
   function assignStation(stationId: string) {
     if (!selectedFixture || selectedFixture.kind !== 'bench') return setMessage('Select a bench before assigning a station.');
@@ -686,12 +724,12 @@ export function LayoutSandboxPage() {
     let object: SandboxBaseObject;
     if (kind === 'door' || kind === 'window') {
       const { footprint } = wallRectFootprint(point, room, 3, kind === 'door' ? .5 : .3);
-      object = { id: `${kind}-${Date.now()}`, kind, name: kind === 'door' ? 'Door' : 'Window', footprint, locked: true, door: kind === 'door' ? { clearWidthIn: 36, isExit: true } : undefined };
+      object = { id: `${kind}-${Date.now()}`, kind, name: kind === 'door' ? 'Door' : 'Window', footprint, door: kind === 'door' ? { clearWidthIn: 36, isExit: true } : undefined };
     } else if (kind === 'electrical_point' || kind === 'plumbing_point') {
       const { point: snapped, side } = snapToNearestWall(point, room);
       const name = kind === 'electrical_point' ? 'Electrical point' : 'Plumbing point';
       object = {
-        id: `${kind}-${Date.now()}`, kind, name, footprint: { points: [snapped] }, locked: true,
+        id: `${kind}-${Date.now()}`, kind, name, footprint: { points: [snapped] },
         electrical: kind === 'electrical_point' ? { voltage: 120, amperage: 20, phase: 'single', receptacleCount: 1, dedicated: false, emergencyPower: false } : undefined,
         plumbing: kind === 'plumbing_point' ? { coldWater: true, hotWater: false, drain: true, diWater: false, processWaste: false } : undefined,
         utility: { mountingSurface: 'wall', wallId: side, offsetFt: offsetAlongWall(side, snapped), connectionRadiusFt: 3, maxConnections: 1, status: 'proposed' },
@@ -703,14 +741,13 @@ export function LayoutSandboxPage() {
       const mountingSurface: MountingSurface = kind === 'local_exhaust_connection' ? 'wall' : 'ceiling';
       const snap = mountingSurface === 'wall' ? snapToNearestWall(point, room) : { point, side: undefined as WallSide | undefined };
       object = {
-        id: `${kind}-${Date.now()}`, kind: 'ventilation_point', name: VENTILATION_PLACEMENT_LABELS[kind], footprint: { points: [snap.point] }, locked: true,
+        id: `${kind}-${Date.now()}`, kind: 'ventilation_point', name: VENTILATION_PLACEMENT_LABELS[kind], footprint: { points: [snap.point] },
         ventilation: { category: kind, ducted: true },
         utility: { mountingSurface, wallId: snap.side, offsetFt: snap.side ? offsetAlongWall(snap.side, snap.point) : undefined, connectionRadiusFt: 3, maxConnections: 1, status: 'proposed' },
       };
     } else {
-      const half = 1;
-      const footprint = { points: [{ x: point.x - half, y: point.y - half }, { x: point.x + half, y: point.y - half }, { x: point.x + half, y: point.y + half }, { x: point.x - half, y: point.y + half }] };
-      object = { id: `${kind}-${Date.now()}`, kind, name: kind === 'restricted_region' ? 'Restricted region' : 'Column', footprint, locked: true };
+      const footprint = centeredRectFootprint(point, 2, 2);
+      object = { id: `${kind}-${Date.now()}`, kind, name: kind === 'restricted_region' ? 'Restricted region' : 'Column', footprint };
     }
     updateLayout((current) => ({ ...current, baseObjects: [...current.baseObjects, object] }));
     setSelectedFixtureId(null); setSelectedStationId(null); setSelectedOverlay(object.id); setPlacingKind(null);
@@ -733,8 +770,6 @@ export function LayoutSandboxPage() {
   }
   function startOverlayMove(id: string, event: React.PointerEvent<SVGElement>) {
     event.preventDefault(); event.stopPropagation(); setSelectedFixtureId(null); setSelectedStationId(null); setSelectedOverlay(id);
-    const base = layout.baseObjects.find((object) => object.id === id);
-    if (base?.locked) { setMessage(`${base.name} is locked. Unlock it before moving.`); return; }
     event.currentTarget.setPointerCapture(event.pointerId);
     overlayDrag.current = { id, clientX: event.clientX, clientY: event.clientY };
   }
@@ -744,9 +779,10 @@ export function LayoutSandboxPage() {
     const dy = (event.clientY - drag.clientY) / rect.height * layout.room.heightFt;
     if (Math.abs(dx) < .01 && Math.abs(dy) < .01) return;
     drag.clientX = event.clientX; drag.clientY = event.clientY;
+    let blocked = false;
     updateLayout((current) => ({ ...current, baseObjects: current.baseObjects.map((object) => {
       if (object.id !== drag.id) return object;
-      const moved = object.footprint.points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
+      let candidate: SandboxBaseObject;
       // Wall-mounted utility points slide along their own wall — the drag's
       // component perpendicular to the wall is ignored rather than used to
       // hop to whichever wall is nearest, so the point can never drift off
@@ -756,23 +792,66 @@ export function LayoutSandboxPage() {
         const currentOffset = object.utility.offsetFt ?? offsetAlongWall(wallId, object.footprint.points[0]);
         const axisDelta = wallId === 'top' || wallId === 'bottom' ? dx : dy;
         const point = pointOnWall(wallId, currentOffset + axisDelta, current.room);
-        return { ...object, footprint: { points: [point] }, utility: { ...object.utility, offsetFt: offsetAlongWall(wallId, point) } };
+        candidate = { ...object, footprint: { points: [point] }, utility: { ...object.utility, offsetFt: offsetAlongWall(wallId, point) } };
+      } else if (object.kind === 'door' || object.kind === 'window') {
+        // Door/window openings are wall-flush rectangles (built by
+        // wallRectFootprint at placement, see placeBaseObjectAt) rather than
+        // a single wall-anchored point, so they need their own re-snap here:
+        // only the along-wall component of the drag moves them, and the
+        // resulting rect is rebuilt with wallRectFootprint so it stays flush
+        // against the same wall (clamped at the corners) instead of
+        // drifting freely into the room — this is what the removed lock
+        // feature used to prevent by simply blocking the drag outright (see
+        // startOverlayMove above, formerly the WS-5 lock gate).
+        const bounds = polygonBounds(object.footprint);
+        const side = wallSideOfBounds(bounds, current.room);
+        const alongWall = side === 'top' || side === 'bottom';
+        const openingWidthFt = alongWall ? bounds.right - bounds.left : bounds.bottom - bounds.top;
+        const depthFt = alongWall ? bounds.bottom - bounds.top : bounds.right - bounds.left;
+        const centerAlongCurrent = alongWall ? (bounds.left + bounds.right) / 2 : (bounds.top + bounds.bottom) / 2;
+        const nextCenterAlong = centerAlongCurrent + (alongWall ? dx : dy);
+        const point = side === 'top' ? { x: nextCenterAlong, y: 0 }
+          : side === 'bottom' ? { x: nextCenterAlong, y: current.room.heightFt }
+          : side === 'left' ? { x: 0, y: nextCenterAlong }
+          : { x: current.room.widthFt, y: nextCenterAlong };
+        candidate = { ...object, footprint: wallRectFootprint(point, current.room, openingWidthFt, depthFt).footprint };
+      } else {
+        const moved = object.footprint.points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
+        candidate = { ...object, footprint: { points: moved } };
       }
-      return { ...object, footprint: { points: moved } };
+      // The lock feature used to be what stopped a dragged object from ever
+      // overlapping a fixture or another object — removing it (WS-5) left
+      // this drag with no overlap check at all. Reject just this frame's
+      // move (hold the object at its last valid position) rather than the
+      // whole drag, so a blocked drag resumes moving the moment the pointer
+      // reaches a valid spot again.
+      if (!canPlaceBaseObject(candidate, current.fixtures, current.baseObjects, current.room.gridFt)) { blocked = true; return object; }
+      return candidate;
     }) }));
+    if (blocked) setMessage('That move would overlap another fixture or object.');
   }
   function finishOverlayMove(event: React.PointerEvent<SVGSVGElement>) {
     if (!overlayDrag.current) return; overlayDrag.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     setMessage('Layer object moved.');
   }
-  function toggleSelectedBaseLock() {
-    if (!selectedOverlay) return;
-    updateLayout((current) => ({ ...current, baseObjects: current.baseObjects.map((object) => object.id === selectedOverlay ? { ...object, locked: !object.locked } : object) }));
-  }
   function updateSelectedBaseObject(fn: (object: SandboxBaseObject) => SandboxBaseObject) {
     if (!selectedOverlay) return;
     updateLayout((current) => ({ ...current, baseObjects: current.baseObjects.map((object) => object.id === selectedOverlay ? fn(object) : object) }));
+  }
+  // Same revert-on-invalid pattern as updateSelectedClearance above, applied
+  // to a resized footprint (door/window width, or the new restricted_region
+  // width/depth — see InfrastructureInspector's onResize) instead of a
+  // fixture's clearance — another gap the removed lock feature happened to
+  // mask, since a resize is really just a same-place, different-size move.
+  function updateSelectedBaseFootprint(nextFootprint: SandboxPolygon) {
+    if (!selectedOverlay) return;
+    const current = layout.baseObjects.find((object) => object.id === selectedOverlay);
+    if (!current) return;
+    const candidate = { ...current, footprint: nextFootprint };
+    if (!canPlaceBaseObject(candidate, layout.fixtures, layout.baseObjects, layout.room.gridFt)) return setMessage('That size would overlap another fixture or object.');
+    updateLayout((prev) => ({ ...prev, baseObjects: prev.baseObjects.map((object) => object.id === selectedOverlay ? candidate : object) }));
+    setMessage('Layer object resized.');
   }
   function deleteSelection() {
     if (selectedOverlay) {
@@ -823,7 +902,7 @@ export function LayoutSandboxPage() {
   return <div className={`screen layout-sandbox ${layers.base ? 'show-base' : 'hide-base'} ${layers.stations ? 'show-stations' : 'hide-stations'} ${layers.equipment ? 'show-equipment' : 'hide-equipment'} ${layers.circulation ? 'show-circulation' : 'hide-circulation'}`}>
     <div className="ls-control-deck">
     <div className="ls-layer-tabs" aria-label="Canvas layers">{(['base','stations','equipment','circulation','electrical','plumbing','ventilation','validation','zoning'] as SandboxLayer[]).map((layer) => <button key={layer} className={layers[layer] ? 'active' : ''} onClick={() => setLayers((current) => ({ ...current, [layer]: !current[layer] }))}>{layer}{layer === 'validation' && violations.length ? ` (${violations.length})` : ''}</button>)}</div>
-    <div className="ls-layer-tools">{placingKind && <span className="ls-derived-note">Click the room to place a {placingKind in VENTILATION_PLACEMENT_LABELS ? VENTILATION_PLACEMENT_LABELS[placingKind as VentilationPlacementKind] : placingKind.replace(/_/g, ' ')} — Esc to cancel</span>}{selectedOverlay && <button onClick={toggleSelectedBaseLock}>{layout.baseObjects.find((object) => object.id === selectedOverlay)?.locked ? 'Unlock selected' : 'Lock selected'}</button>}{layers.circulation && !placingKind && <span className="ls-derived-note">Derived from unassigned space</span>}</div>
+    <div className="ls-layer-tools">{placingKind && <span className="ls-derived-note">Click the room to place a {placingKind in VENTILATION_PLACEMENT_LABELS ? VENTILATION_PLACEMENT_LABELS[placingKind as VentilationPlacementKind] : placingKind.replace(/_/g, ' ')} — Esc to cancel</span>}{layers.circulation && !placingKind && <span className="ls-derived-note">Derived from unassigned space</span>}</div>
     <div className="ls-backend-actions"><button disabled={sendingToSeedGenerator} onClick={() => void sendToSeedGenerator()}>{sendingToSeedGenerator ? 'Saving approved seed…' : 'Use in seed generator'}</button><button disabled={zoningLoading || !canRunZoning} title={canRunZoning ? undefined : 'Add at least one operation with a complete material context first'} onClick={() => void runZoneRequirements()}>{zoningLoading ? 'Zoning…' : 'Zone with MiniZinc'}</button><button disabled={savingZoningPlan || !canSavePlan} title={canSavePlan ? undefined : 'Add at least one operation with a complete material context first'} onClick={() => void saveCurrentPlan()}>{savingZoningPlan ? 'Saving plan…' : currentPlanId ? 'Save plan (overwrite)' : 'Save plan'}</button></div>
     {backendNotice && <div className={`ls-optimization-notice ${backendNotice.kind}`}><span>{backendNotice.kind === 'progress' ? '⏳' : '⚠'}</span><b>{backendNotice.text}</b>{backendNotice.kind === 'error' && <button onClick={() => setBackendNotice(null)}>×</button>}</div>}
     {zoningBlocked && <div className="ls-violations"><div className="ls-section-title">Zoning blocked — needs review</div>{zoningBlocked.diagnostics.map((d, i) => <div key={`${d.operationId}-${i}`} className="ls-violation-card error"><b>{d.operationId} — {d.disposition}</b><span>{d.reason}</span></div>)}</div>}
@@ -835,7 +914,7 @@ export function LayoutSandboxPage() {
     <div className="qm-topbar"><div className="logo-mark"><Logo height={40} /></div><div><b>Layout sandbox</b><div className="ls-subtitle">Place fixtures, assign stations to benches, then add equipment</div></div><div style={{ flex: 1 }} /><button className="btn-teal" onClick={useInIntake}>Use this room in my intake →</button><button className="btn-out" onClick={exportLayout}>Export JSON</button><button className="btn-out" onClick={() => fileInput.current?.click()}>Import</button><input ref={fileInput} hidden type="file" accept="application/json" onChange={(e) => importLayout(e.target.files?.[0])} /><button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>← Dashboard</button></div>
     <div className="ls-workspace">
       <aside className="ls-sidebar"><label className="field-label">Layout name</label><input className="field-input" value={layout.name} onChange={(e) => updateLayout((p) => ({ ...p, name: e.target.value }))} /><div className="ls-room-fields"><label><span className="field-label">Width (ft)</span><input className="field-input" type="number" min="5" value={layout.room.widthFt} onChange={(e) => updateLayout((p) => { const room = { ...p.room, widthFt: Math.max(5, Number(e.target.value)) }; return { ...p, room, baseObjects: reanchorWallMountedObjects(p.baseObjects, room) }; })} /></label><label><span className="field-label">Depth (ft)</span><input className="field-input" type="number" min="5" value={layout.room.heightFt} onChange={(e) => updateLayout((p) => { const room = { ...p.room, heightFt: Math.max(5, Number(e.target.value)) }; return { ...p, room, baseObjects: reanchorWallMountedObjects(p.baseObjects, room) }; })} /></label></div>
-        <div className="ls-section-title">1. Place fixtures</div><div className="ls-kind-tabs">{(['bench','laminarHood','sink','cabinet','refrigerator','door','waste'] as FixtureKind[]).map((kind) => <button key={kind} className={newKind === kind ? 'active' : ''} onClick={() => setKind(kind)}>{FIXTURE_DEFAULTS[kind].name}</button>)}</div><div className="ls-room-fields"><label><span className="field-label">Width (ft)</span><input className="field-input" type="number" min=".5" step=".5" value={newWidth} disabled={newKind === 'bench'} onChange={(e) => setNewWidth(Number(e.target.value))} /></label><label><span className="field-label">Depth (ft)</span><input className="field-input" type="number" min=".5" step=".5" value={newDepth} disabled={newKind === 'bench'} onChange={(e) => setNewDepth(Number(e.target.value))} /></label></div>{newKind === 'bench' && <p className="ls-help">Benches have a fixed 6 × 2.5 ft footprint and 15 sq ft equipment surface.</p>}{(newKind === 'bench' || newKind === 'laminarHood') && <ClearanceFields value={newClearance} overhead={newKind === 'laminarHood'} onChange={(field, value) => setNewClearance({ ...newClearance, [field]: value })} />}<div className={`ls-palette-item ls-fixture-template ${newKind}`} draggable onDragStart={(e) => { e.dataTransfer.setData('cirrus/type', 'fixture-template'); setPlacementPreview({ widthFt: newKind === 'bench' ? BENCH_WIDTH_FT : Math.max(.5, newWidth), depthFt: newKind === 'bench' ? BENCH_DEPTH_FT : Math.max(.5, newDepth), orientation: 0 }); }} onDragEnd={() => setPlacementPreview(null)}><span><b>Drag {FIXTURE_DEFAULTS[newKind].name}</b><small>{newWidth} × {newDepth} ft</small></span></div>
+        <div className="ls-section-title">1. Place fixtures</div><div className="ls-kind-tabs">{(['bench','laminarHood','sink','cabinet','refrigerator','door','waste'] as FixtureKind[]).map((kind) => <button key={kind} className={newKind === kind ? 'active' : ''} onClick={() => setKind(kind)}>{FIXTURE_DEFAULTS[kind].name}</button>)}</div><div className="ls-room-fields"><label><span className="field-label">Width (ft)</span><input className="field-input" type="number" min=".5" step=".5" value={newWidth} disabled={newKind === 'bench'} onChange={(e) => setNewWidth(Number(e.target.value))} /></label><label><span className="field-label">Depth (ft)</span><input className="field-input" type="number" min=".5" step=".5" value={newDepth} disabled={newKind === 'bench'} onChange={(e) => setNewDepth(Number(e.target.value))} /></label></div>{newKind === 'bench' && <p className="ls-help">Benches have a fixed 6 × 2.5 ft footprint and 15 sq ft equipment surface.</p>}{(newKind === 'bench' || newKind === 'laminarHood') && <ClearanceFields value={newClearance} overhead={newKind === 'laminarHood'} onChange={(field, value) => setNewClearance({ ...newClearance, [field]: value })} />}<div className={`ls-palette-item ls-fixture-template ${newKind}`} style={{ touchAction: 'none' }} onPointerDown={startPaletteDrag} onPointerMove={movePaletteDrag} onPointerUp={finishPaletteDrag} onPointerCancel={cancelPaletteDrag}><span><b>Drag {FIXTURE_DEFAULTS[newKind].name}</b><small>{newWidth} × {newDepth} ft</small></span></div>
         <div className="ls-section-title">Infrastructure</div><p className="ls-help">Pick a point, then click the room to place it — wall-mounted kinds snap to the nearest wall.</p>
         {INFRA_PALETTE.map((group) => <div key={group.layer} className="ls-infra-group"><div className="ls-infra-group-title">{group.title}</div><div className="ls-infra-buttons">{group.items.map((item) => <button key={item.kind} className={placingKind === item.kind ? 'active' : ''} onClick={() => beginPlacing(item.kind, group.layer)}>+ {item.label}</button>)}</div></div>)}
         <div className="ls-section-title">2. Assign stations</div><div className="ls-catalog-status"><span>{stationsLoading || equipmentLoading ? 'Syncing with MongoDB…' : catalogError ? 'Database unavailable' : `${stationCatalog.length} stations · ${equipmentCatalog.length} equipment`}</span><button className="btn-out" onClick={refreshCatalogs}>Refresh</button></div>{catalogError && <p className="ls-data-error">Could not load the MongoDB catalog through the Cirrus API: {catalogError.message}</p>}<p className="ls-help">Select a bench, then add a database station it supports. Stations do not occupy grid space.</p><div className="ls-palette">{stationCatalog.map((s) => <button key={s.stationId} className="ls-palette-item ls-station-choice" disabled={selectedFixture?.kind !== 'bench'} onClick={() => assignStation(s.stationId)}><i style={{ background: ZONE_COLORS[s.zone] || ZONE_COLORS.unassigned }} /><span><b>{s.name}</b><small>Add to selected bench</small></span></button>)}{!stationsLoading && !stationsError && stationCatalog.length === 0 && <p className="ls-help">No stations exist in MongoDB yet.</p>}</div>
@@ -871,8 +950,8 @@ export function LayoutSandboxPage() {
         {zoningPlansError && <p className="ls-data-error">Could not load saved plans through the Cirrus API: {zoningPlansError.message}</p>}
         {savedZoningPlans.length === 0 ? <p className="ls-help">No plans saved yet.</p> : <div className="ls-palette">{savedZoningPlans.map((plan) => <div key={plan.planId} className={`ls-assignment ${currentPlanId === plan.planId ? 'active' : ''}`}><span><b>{plan.name}</b> · {plan.roomWidthFt} × {plan.roomHeightFt} ft · {new Date(plan.updatedAt).toLocaleString()}</span><span style={{ display: 'flex', gap: 6 }}><button disabled={loadingZoningPlan} onClick={() => void loadPlan(plan.planId)}>Load</button><button onClick={() => void deletePlan(plan.planId)}>Delete</button></span></div>)}</div>}
       </aside>
-      <main className="ls-main"><div className="ls-metrics"><span>{layout.room.widthFt} × {layout.room.heightFt} ft room</span><span>{layout.fixtures.filter((f) => f.kind === 'bench').length} benches</span><span>{layout.fixtures.flatMap((f) => f.stations).length} stations</span><span>{assignedEquipment.size} equipment assigned</span><span>{utilization}% occupied</span></div><div className="ls-canvas-wrap"><div ref={canvasRef} className={`ls-canvas ${placingKind ? 'placing' : ''}`} style={{ gridTemplateColumns: `repeat(${columns}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)`, aspectRatio: `${columns} / ${rows}`, '--grid-cols': columns, '--grid-rows': rows } as React.CSSProperties} onDragOver={(e) => e.preventDefault()} onDrop={dropOnCanvas} onClick={() => { if (!placingKind) { setSelectedFixtureId(null); setSelectedStationId(null); } }}>{placementHeatmap && placementHeatmap.flatMap((row, y) => row.map((valid, x) => <div key={`ph-${x}-${y}`} className={`ls-placement-cell ${valid ? 'valid' : 'invalid'}`} style={{ gridColumn: `${x + 1} / span 1`, gridRow: `${y + 1} / span 1` }} />))}{layout.fixtures.map((f) => { const size = fixtureFootprint(f, layout.room.gridFt); const position = dragPreview?.id === f.instanceId ? dragPreview : f; return <div key={f.instanceId} tabIndex={0} role="button" aria-label={`${f.name}. Use arrow keys to move.`} className={`ls-fixture ${f.kind} ${selectedFixtureId === f.instanceId ? 'selected' : ''} ${dragPreview?.id === f.instanceId ? 'dragging' : ''}`} onPointerDown={(e) => startFixtureMove(e, f)} onPointerMove={previewFixtureMove} onPointerUp={finishFixtureMove} onPointerCancel={finishFixtureMove} onKeyDown={(e) => moveFixtureWithKeyboard(e, f)} onClick={(e) => { e.stopPropagation(); setSelectedFixtureId(f.instanceId); setSelectedStationId(null); }} style={{ gridColumn: `${position.x + 1} / span ${size.width}`, gridRow: `${position.y + 1} / span ${size.height}`, ...(f.kind === 'bench' ? { '--bench-fill': benchFill(f) } as React.CSSProperties : {}) }}><b>{f.name}</b><small>{f.widthFt} × {f.depthFt} ft{f.kind === 'bench' ? ` · ${f.stations.length} stations` : ''}</small></div>; })}</div></div><div className="ls-status">{message}</div></main>
-      <aside className="ls-sidebar ls-right"><div className="ls-section-title first">3. Fixture details</div>{selectedBaseObject ? <InfrastructureInspector object={selectedBaseObject} room={layout.room} onUpdate={updateSelectedBaseObject} onToggleLock={toggleSelectedBaseLock} onDelete={deleteSelection} /> : !selectedFixture ? <p className="ls-help">Select a fixture or an infrastructure object to inspect it.</p> : <div className="ls-inspector"><b>{selectedFixture.name}</b><small>{selectedFixture.widthFt} × {selectedFixture.depthFt} ft · {selectedFixture.orientation}° · front faces {({ 0: 'down', 90: 'right', 180: 'up', 270: 'left' } as const)[selectedFixture.orientation]}</small><div className="ls-inspector-actions"><button className="btn-out" onClick={rotateSelected}>Rotate 90°</button><button className="btn-out" onClick={removeSelected}>Remove</button></div>{(selectedFixture.kind === 'bench' || selectedFixture.kind === 'laminarHood') && <><ClearanceFields value={selectedFixture.clearance ?? { frontFt: 0, backFt: 0, sideFt: 0 }} overhead={selectedFixture.kind === 'laminarHood'} onChange={updateSelectedClearance} /><p className="ls-help">Front and back rotate with the fixture. Side clearance applies to both sides.</p></>}{selectedFixture.kind === 'laminarHood' && <div className="ls-hood-guidance"><b>Placement checks</b><ul><li>Keep away from doors, windows, busy walkways, HVAC diffusers, fans, and other air-moving equipment.</li><li>Verify room currents at the face remain within the hood manufacturer’s limits; 30–50 fpm is a common caution range.</li><li>Confirm level, vibration-free support, suitable room pressure, and a dedicated circuit where required.</li><li>Preserve certification access to HEPA filters, motor, and plenum; confirm duct routing for ducted units.</li></ul><small>Overhead clearance is recorded but cannot be validated without room-height and obstruction data.</small></div>}{selectedFixture.kind === 'bench' && <><div className="ls-capacity"><span>Equipment area</span><b>{selectedBenchUsedArea.toFixed(2)} / {selectedBenchCapacity.toFixed(2)} sq ft</b><progress max={selectedBenchCapacity} value={selectedBenchUsedArea} /></div>{selectedFixture.stations.length === 0 ? <p className="ls-help">Assign a station from the left.</p> : selectedFixture.stations.map((s) => <button key={s.instanceId} className={`ls-station-card ${selectedStationId === s.instanceId ? 'active' : ''}`} onClick={() => setSelectedStationId(s.instanceId)}><span style={{ background: ZONE_COLORS[s.zone] || ZONE_COLORS.unassigned }} /><b>{s.name}</b><small>{s.equipment.length} equipment</small></button>)}{utilityCheck && <UtilityReachabilityPanel check={utilityCheck} />}</>}</div>}<div className="ls-section-title">4. Equipment</div><p className="ls-help">Select a station above, then assign MongoDB equipment linked to that station.</p><div className="ls-palette ls-equipment-list">{visibleEquipment.map((e) => { const assigned = assignedEquipment.has(e.equipmentId); const tooLarge = selectedFixture?.kind === 'bench' && selectedBenchUsedArea + equipmentArea(e) > selectedBenchCapacity + Number.EPSILON; return <button key={e.equipmentId} className={`ls-palette-item ls-station-choice ${assigned || tooLarge ? 'disabled' : ''}`} disabled={!selectedStation || assigned || tooLarge} onClick={() => assignEquipment(e.equipmentId)}><span><b>{e.name}</b><small>{assigned ? 'Assigned' : tooLarge ? `${equipmentArea(e).toFixed(2)} sq ft · Does not fit` : `${e.widthFt} × ${e.depthFt} ft · Assign to selected station`}</small></span></button>; })}{!equipmentLoading && !equipmentError && visibleEquipment.length === 0 && <p className="ls-help">{selectedStation ? 'No MongoDB equipment is linked to this station.' : 'No equipment exists in MongoDB yet.'}</p>}</div>{selectedStation && <><div className="ls-section-title">{selectedStation.name}</div>{selectedStation.equipment.map((e) => <div className="ls-assignment" key={e.equipmentId}><span>{e.name}</span><button onClick={() => updateLayout((p) => ({ ...p, fixtures: p.fixtures.map((f) => f.instanceId !== selectedFixtureId ? f : { ...f, stations: f.stations.map((s) => s.instanceId === selectedStationId ? { ...s, equipment: s.equipment.filter((x) => x.equipmentId !== e.equipmentId) } : s) }) }))}>×</button></div>)}</>}</aside>
+      <main className="ls-main"><div className="ls-metrics"><span>{layout.room.widthFt} × {layout.room.heightFt} ft room</span><span>{layout.fixtures.filter((f) => f.kind === 'bench').length} benches</span><span>{layout.fixtures.flatMap((f) => f.stations).length} stations</span><span>{assignedEquipment.size} equipment assigned</span><span>{utilization}% occupied</span></div><div className="ls-canvas-wrap"><div ref={canvasRef} className={`ls-canvas ${placingKind ? 'placing' : ''}`} style={{ gridTemplateColumns: `repeat(${columns}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)`, aspectRatio: `${columns} / ${rows}`, '--grid-cols': columns, '--grid-rows': rows } as React.CSSProperties} onClick={() => { if (!placingKind) { setSelectedFixtureId(null); setSelectedStationId(null); } }}>{placementHeatmap && placementHeatmap.flatMap((row, y) => row.map((valid, x) => <div key={`ph-${x}-${y}`} className={`ls-placement-cell ${valid ? 'valid' : 'invalid'}`} style={{ gridColumn: `${x + 1} / span 1`, gridRow: `${y + 1} / span 1` }} />))}{layout.fixtures.map((f) => { const size = fixtureFootprint(f, layout.room.gridFt); const position = dragPreview?.id === f.instanceId ? dragPreview : f; return <div key={f.instanceId} tabIndex={0} role="button" aria-label={`${f.name}. Use arrow keys to move.`} className={`ls-fixture ${f.kind} ${selectedFixtureId === f.instanceId ? 'selected' : ''} ${dragPreview?.id === f.instanceId ? 'dragging' : ''}`} onPointerDown={(e) => startFixtureMove(e, f)} onPointerMove={previewFixtureMove} onPointerUp={finishFixtureMove} onPointerCancel={finishFixtureMove} onKeyDown={(e) => moveFixtureWithKeyboard(e, f)} onClick={(e) => { e.stopPropagation(); setSelectedFixtureId(f.instanceId); setSelectedStationId(null); }} style={{ gridColumn: `${position.x + 1} / span ${size.width}`, gridRow: `${position.y + 1} / span ${size.height}`, ...(f.kind === 'bench' ? { '--bench-fill': benchFill(f) } as React.CSSProperties : {}) }}><b>{f.name}</b><small>{f.widthFt} × {f.depthFt} ft{f.kind === 'bench' ? ` · ${f.stations.length} stations` : ''}</small></div>; })}{paletteDragPos && paletteDragPos.onCanvas && <div className={`ls-fixture ${paletteDragPos.kind} ls-fixture-ghost`} style={{ gridColumn: `${paletteDragPos.x + 1} / span ${Math.max(1, Math.ceil(paletteDragPos.widthFt / layout.room.gridFt))}`, gridRow: `${paletteDragPos.y + 1} / span ${Math.max(1, Math.ceil(paletteDragPos.depthFt / layout.room.gridFt))}` }}><b>{FIXTURE_DEFAULTS[paletteDragPos.kind].name}</b><small>{paletteDragPos.widthFt} × {paletteDragPos.depthFt} ft</small></div>}</div></div><div className="ls-status">{message}</div></main>
+      <aside className="ls-sidebar ls-right"><div className="ls-section-title first">3. Fixture details</div>{selectedBaseObject ? <InfrastructureInspector object={selectedBaseObject} room={layout.room} onUpdate={updateSelectedBaseObject} onResize={updateSelectedBaseFootprint} onDelete={deleteSelection} /> : !selectedFixture ? <p className="ls-help">Select a fixture or an infrastructure object to inspect it.</p> : <div className="ls-inspector"><b>{selectedFixture.name}</b><small>{selectedFixture.widthFt} × {selectedFixture.depthFt} ft · {selectedFixture.orientation}° · front faces {({ 0: 'down', 90: 'right', 180: 'up', 270: 'left' } as const)[selectedFixture.orientation]}</small><div className="ls-inspector-actions"><button className="btn-out" onClick={rotateSelected}>Rotate 90°</button><button className="btn-out" onClick={removeSelected}>Remove</button></div>{(selectedFixture.kind === 'bench' || selectedFixture.kind === 'laminarHood') && <><ClearanceFields value={selectedFixture.clearance ?? { frontFt: 0, backFt: 0, sideFt: 0 }} overhead={selectedFixture.kind === 'laminarHood'} onChange={updateSelectedClearance} /><p className="ls-help">Front and back rotate with the fixture. Side clearance applies to both sides.</p></>}{selectedFixture.kind === 'laminarHood' && <div className="ls-hood-guidance"><b>Placement checks</b><ul><li>Keep away from doors, windows, busy walkways, HVAC diffusers, fans, and other air-moving equipment.</li><li>Verify room currents at the face remain within the hood manufacturer’s limits; 30–50 fpm is a common caution range.</li><li>Confirm level, vibration-free support, suitable room pressure, and a dedicated circuit where required.</li><li>Preserve certification access to HEPA filters, motor, and plenum; confirm duct routing for ducted units.</li></ul><small>Overhead clearance is recorded but cannot be validated without room-height and obstruction data.</small></div>}{selectedFixture.kind === 'bench' && <><div className="ls-capacity"><span>Equipment area</span><b>{selectedBenchUsedArea.toFixed(2)} / {selectedBenchCapacity.toFixed(2)} sq ft</b><progress max={selectedBenchCapacity} value={selectedBenchUsedArea} /></div>{selectedFixture.stations.length === 0 ? <p className="ls-help">Assign a station from the left.</p> : selectedFixture.stations.map((s) => <button key={s.instanceId} className={`ls-station-card ${selectedStationId === s.instanceId ? 'active' : ''}`} onClick={() => setSelectedStationId(s.instanceId)}><span style={{ background: ZONE_COLORS[s.zone] || ZONE_COLORS.unassigned }} /><b>{s.name}</b><small>{s.equipment.length} equipment</small></button>)}{utilityCheck && <UtilityReachabilityPanel check={utilityCheck} />}</>}</div>}<div className="ls-section-title">4. Equipment</div><p className="ls-help">Select a station above, then assign MongoDB equipment linked to that station.</p><div className="ls-palette ls-equipment-list">{visibleEquipment.map((e) => { const assigned = assignedEquipment.has(e.equipmentId); const tooLarge = selectedFixture?.kind === 'bench' && selectedBenchUsedArea + equipmentArea(e) > selectedBenchCapacity + Number.EPSILON; return <button key={e.equipmentId} className={`ls-palette-item ls-station-choice ${assigned || tooLarge ? 'disabled' : ''}`} disabled={!selectedStation || assigned || tooLarge} onClick={() => assignEquipment(e.equipmentId)}><span><b>{e.name}</b><small>{assigned ? 'Assigned' : tooLarge ? `${equipmentArea(e).toFixed(2)} sq ft · Does not fit` : `${e.widthFt} × ${e.depthFt} ft · Assign to selected station`}</small></span></button>; })}{!equipmentLoading && !equipmentError && visibleEquipment.length === 0 && <p className="ls-help">{selectedStation ? 'No MongoDB equipment is linked to this station.' : 'No equipment exists in MongoDB yet.'}</p>}</div>{selectedStation && <><div className="ls-section-title">{selectedStation.name}</div>{selectedStation.equipment.map((e) => <div className="ls-assignment" key={e.equipmentId}><span>{e.name}</span><button onClick={() => updateLayout((p) => ({ ...p, fixtures: p.fixtures.map((f) => f.instanceId !== selectedFixtureId ? f : { ...f, stations: f.stations.map((s) => s.instanceId === selectedStationId ? { ...s, equipment: s.equipment.filter((x) => x.equipmentId !== e.equipmentId) } : s) }) }))}>×</button></div>)}</>}</aside>
     </div>
   </div>;
 }
