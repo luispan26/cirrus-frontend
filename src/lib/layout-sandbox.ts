@@ -48,7 +48,6 @@ export interface SandboxBaseObject {
   kind: 'wall' | 'column' | 'shaft' | 'casework' | 'door' | 'window' | 'sink' | 'fume_hood' | 'bsc' | 'electrical_panel' | 'utility_connection' | 'electrical_point' | 'plumbing_point' | 'ventilation_point' | 'restricted_region';
   name: string;
   footprint: SandboxPolygon;
-  locked: boolean;
   utility?: UtilityMeta;
   door?: { clearWidthIn: number; isExit: boolean };
   electrical?: { voltage: 120 | 208 | 240 | 'other'; voltageOther?: string; amperage: number; phase: 'single' | 'three'; receptacleCount: number; dedicated: boolean; emergencyPower: boolean };
@@ -158,7 +157,7 @@ export function polygonBounds(polygon: SandboxPolygon) {
   };
 }
 
-function rectsIntersect(a: { left: number; right: number; top: number; bottom: number }, b: { left: number; right: number; top: number; bottom: number }) {
+export function rectsIntersect(a: { left: number; right: number; top: number; bottom: number }, b: { left: number; right: number; top: number; bottom: number }) {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
@@ -253,6 +252,21 @@ export function wallRectFootprint(point: SandboxPoint, room: RoomSize, widthFt: 
   };
 }
 
+// A rectangular footprint centered on an arbitrary point, not wall-relative
+// — for freely-placed base objects (column, restricted_region). Shared by
+// initial placement and the resize inspector so both build the same shape
+// the same way, same rationale as wallRectFootprint above for door/window.
+export function centeredRectFootprint(center: SandboxPoint, widthFt: number, depthFt: number): SandboxPolygon {
+  const halfW = widthFt / 2;
+  const halfD = depthFt / 2;
+  return { points: [
+    { x: center.x - halfW, y: center.y - halfD },
+    { x: center.x + halfW, y: center.y - halfD },
+    { x: center.x + halfW, y: center.y + halfD },
+    { x: center.x - halfW, y: center.y + halfD },
+  ] };
+}
+
 function arcBetween(hinge: SandboxPoint, from: SandboxPoint, to: SandboxPoint, radius: number, steps = 14): SandboxPoint[] {
   const a0 = Math.atan2(from.y - hinge.y, from.x - hinge.x);
   const rawA1 = Math.atan2(to.y - hinge.y, to.x - hinge.x);
@@ -306,6 +320,26 @@ export function canPlaceFixture(candidate: SandboxFixture, fixtures: SandboxFixt
   if (overlapsFixture) return false;
   const candidateBounds = { left: candidate.x * gridFt, right: (candidate.x + size.width) * gridFt, top: candidate.y * gridFt, bottom: (candidate.y + size.height) * gridFt };
   return baseObjects.every((object) => !blocksFloorSpace(object.kind) || !object.footprint.points.length || !rectsIntersect(candidateBounds, polygonBounds(object.footprint)));
+}
+
+// The base-object counterpart of canPlaceFixture — used to validate a drag
+// or a resize (see moveOverlay/updateSelectedBaseFootprint in
+// LayoutSandboxPage.tsx) now that the removed lock feature no longer masks
+// the fact that neither of those ever checked for overlap. Points
+// (electrical/plumbing/ventilation) are exempt via blocksFloorSpace, same
+// as canPlaceFixture's own treatment of them. `candidate` is compared
+// against `baseObjects` by id so a dragged/resized object never collides
+// with its own pre-move copy still sitting in that array.
+export function canPlaceBaseObject(candidate: SandboxBaseObject, fixtures: SandboxFixture[], baseObjects: SandboxBaseObject[], gridFt: number): boolean {
+  if (!blocksFloorSpace(candidate.kind) || !candidate.footprint.points.length) return true;
+  const candidateBounds = polygonBounds(candidate.footprint);
+  const overlapsFixture = fixtures.some((fixture) => {
+    const size = fixtureFootprint(fixture, gridFt);
+    const fixtureBounds = { left: fixture.x * gridFt, right: (fixture.x + size.width) * gridFt, top: fixture.y * gridFt, bottom: (fixture.y + size.height) * gridFt };
+    return rectsIntersect(candidateBounds, fixtureBounds);
+  });
+  if (overlapsFixture) return false;
+  return baseObjects.every((object) => object.id === candidate.id || !blocksFloorSpace(object.kind) || !object.footprint.points.length || !rectsIntersect(candidateBounds, polygonBounds(object.footprint)));
 }
 
 // One entry per grid cell (row-major, [y][x]) saying whether a fixture of
@@ -383,7 +417,18 @@ export function parseSandboxLayout(value: unknown): SandboxLayout | null {
     const legacy = fixture as Omit<SandboxFixture, 'orientation'> & { orientation?: FixtureOrientation | 'horizontal' | 'vertical' };
     const orientation = legacy.orientation === 'vertical' ? 90 : legacy.orientation === 'horizontal' ? 0 : legacy.orientation;
     if (![0, 90, 180, 270].includes(orientation as number)) return null;
-    const parsed = { ...legacy, orientation } as SandboxFixture;
+    // Fixture position is a grid CELL INDEX (see fixtureFootprint/canPlaceFixture
+    // and the CSS grid rendering in LayoutSandboxPage, which use x/y directly as
+    // a `grid-column`/`grid-row` line number — those must be whole numbers).
+    // The report generator computes bench positions in real feet using
+    // BENCH_DEPTH_FT (2.5 ft) back-to-back pairs, which lands every other
+    // bench on a half-integer (e.g. 7.5) — harmless to the generator's own
+    // real-number overlap math, but an invalid CSS grid line here, which
+    // silently falls back to grid auto-placement and stacks fixtures on top
+    // of each other. Flooring on the way in (rather than fixing the
+    // generator) keeps this the sandbox's own coordinate contract regardless
+    // of where a layout comes from — generated, imported, or hand-authored.
+    const parsed = { ...legacy, orientation, x: Math.floor(Number(legacy.x)), y: Math.floor(Number(legacy.y)) } as SandboxFixture;
     if (parsed.kind === 'bench') {
       parsed.widthFt = BENCH_WIDTH_FT;
       parsed.depthFt = BENCH_DEPTH_FT;
@@ -409,6 +454,10 @@ export function deriveCirculationSpace(layout: SandboxLayout) {
   const columns = Math.max(1, Math.ceil(layout.room.widthFt / grid));
   const rows = Math.max(1, Math.ceil(layout.room.heightFt / grid));
   const requiredWidthFt = Math.max(layout.circulationRequirements.accessibleWidthIn, layout.circulationRequirements.egressWidthIn) / 12;
+  // A walkway-width property of the derived overlay itself (how wide a path
+  // has to be to count as circulation), not a placement clearance around
+  // fixtures/base objects — unrelated to canPlaceFixture/canPlaceBaseObject
+  // and not something WS-7's resizable no-placement zones should fold into.
   const margin = requiredWidthFt / 2;
   const blocked = new Set<string>();
   const markBounds = (left: number, top: number, right: number, bottom: number) => {

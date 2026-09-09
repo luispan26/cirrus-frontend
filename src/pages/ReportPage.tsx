@@ -20,7 +20,12 @@ export function ReportPage() {
     // the single active-session pointer at it first so /questions loads the
     // right answers.
     setSessionId(routedSessionId);
-    navigate('/questions');
+    // Land straight on budget (the last, feasibility-gated step) rather than
+    // question 1 — everything before it was already answered to produce
+    // this report — and carry the generated layout forward so the space
+    // step's sandbox buttons open on Cirrus's actual output instead of a
+    // blank room.
+    navigate('/questions', { state: { startAtQuestionId: 'budget', generatedLayout: routedData?.generated_layout?.data } });
   }
 
   const [pastedData, setPastedData] = useState<Record<string, any> | null>(null);

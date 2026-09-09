@@ -40,7 +40,15 @@ export function GeneratedLayoutPlan({ value }: { value: unknown }) {
               {layout.room.widthFt} × {layout.room.heightFt} ft · {layout.fixtures.length} bench positions · Draft revision {generated.revision ?? 1}
             </div>
           </div>
-          {generated.layoutId && <button className="btn-teal" onClick={() => navigate(`/layout-sandbox?layoutId=${encodeURIComponent(generated.layoutId!)}`)}>Open in sandbox</button>}
+          {/* Passes the layout via router state, not a `?layoutId=` query
+              string — the sandbox never read search params (see its
+              state.loadLayout mount effect), so that link was dead: it
+              opened a blank room instead of this draft. Also preferred over
+              refetching by id even now that state carries the data directly:
+              LAB_LAYOUT_QUERY resolves via layouts.service.latest(), which
+              can return a newer revision than the one this report is
+              displaying. */}
+          <button className="btn-teal" onClick={() => navigate('/layout-sandbox', { state: { loadLayout: generated.data } })}>Open in sandbox</button>
         </div>
         <LayoutFloorPlan layout={layout} hoveredId={hoveredId} onHoverChange={setHoveredId} />
         <div className="generated-layout-legend" aria-label="Station colors">{stations.map((station) => <span key={station.stationId}><i style={{ background: stationColor(station.stationId) }} />{station.name}</span>)}</div>

@@ -321,7 +321,7 @@ export const EQUIPMENT_LIST_QUERY = gql`
   query EquipmentList {
     equipmentList {
       equipmentId name costUsd widthFt depthFt heightFt stationId utilityRequirements mounting
-      needsDimensions canvasDeleted
+      needsDimensions canvasDeleted allTags
     }
   }
 `;
@@ -351,12 +351,6 @@ export const CREATE_EQUIPMENT_MUTATION = gql`
 export const SAVE_LAB_LAYOUT_MUTATION = gql`
   mutation SaveLabLayout($input: SaveLabLayoutInput!) {
     saveLabLayout(input: $input) { layoutId revision name schemaVersion }
-  }
-`;
-
-export const LAB_LAYOUT_QUERY = gql`
-  query LabLayout($layoutId: ID!) {
-    labLayout(layoutId: $layoutId) { layoutId revision name schemaVersion data createdAt }
   }
 `;
 

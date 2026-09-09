@@ -20,6 +20,7 @@ const NAV_ITEMS = [
 
 interface ReportSummary {
   id: string;
+  sessionId: string;
   status: string;
   createdAt: string;
   data: Record<string, any> | null;
@@ -161,7 +162,7 @@ export function DashboardPage() {
             <div className="dash-widget-head">
               <span>Last lab design</span>
               {latestReport && (
-                <button className="dash-widget-link" onClick={() => navigate('/report', { state: { reportData } })}>
+                <button className="dash-widget-link" onClick={() => navigate('/report', { state: { reportData, sessionId: latestReport.sessionId } })}>
                   View report →
                 </button>
               )}
