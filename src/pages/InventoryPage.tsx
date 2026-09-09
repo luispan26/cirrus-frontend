@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation } from '@apollo/client/react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -13,6 +13,10 @@ interface Station { stationId: string; name: string; }
 interface EquipmentRow {
   equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null;
   needsDimensions: boolean; canvasDeleted: boolean;
+  // canvasTags: sync-owned, replaced wholesale from Canvas on every sync.
+  // tags: human-entered, never touched by the sync. allTags: the deduped
+  // union of both — what a row is actually filterable/searchable by.
+  canvasTags: string[]; tags: string[]; allTags: string[];
 }
 
 function errMsg(e: unknown): string {
@@ -102,6 +106,21 @@ export function InventoryPage() {
     refetchEquipment();
   }
 
+  // The dropdown's vocabulary is every tag Canvas actually uses across the
+  // catalog (canvasTags, not allTags — a human-added tag on one item
+  // shouldn't get offered as a suggestion everywhere else), deduped and
+  // sorted. Same source of truth as QuestionsPage's TagFilterPopover.
+  const canvasTagOptions = useMemo(() => {
+    const equipment = equipmentData?.equipmentList ?? [];
+    return Array.from(new Set(equipment.flatMap((eq) => eq.canvasTags))).sort((a, b) => a.localeCompare(b));
+  }, [equipmentData]);
+
+  async function handleAddTag(eq: EquipmentRow, tag: string) {
+    if (!tag || eq.allTags.includes(tag)) return;
+    await updateEquipment({ variables: { equipmentId: eq.equipmentId, input: { tags: [...eq.tags, tag] } } });
+    refetchEquipment();
+  }
+
   return (
     <div className="screen">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', flexShrink: 0, borderBottom: '1px solid var(--br)' }}>
@@ -109,7 +128,6 @@ export function InventoryPage() {
           <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 15, letterSpacing: '.08em', color: 'var(--dark)' }}>
             EQUIPMENT DATABASE
           </div>
-          <div style={{ fontSize: 12, color: 'var(--mid)' }}>Publish equipment to the backend, and assign it to stations</div>
         </div>
         <button className="btn-out" onClick={() => navigate('/dashboard')}>← Dashboard</button>
       </div>
@@ -118,7 +136,7 @@ export function InventoryPage() {
 
         <div className="sec-head">Equipment<div className="sec-line" /></div>
         <p className="q-inline-help" style={{ marginTop: 0 }}>
-          Fields boxed in <span style={{ color: '#a67c00', fontWeight: 600 }}>amber</span> are still Canvas-synced placeholders — edit them to confirm the real value.
+          Fields boxed in <span style={{ color: '#a67c00', fontWeight: 600 }}>amber</span> still need attention — Canvas-synced cost/dimension placeholders to confirm, or equipment with no tags at all.
         </p>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16, alignItems: 'center' }}>
@@ -147,6 +165,7 @@ export function InventoryPage() {
             <col style={{ width: 100 }} />
             <col style={{ width: 150 }} />
             <col style={{ width: 220 }} />
+            <col style={{ width: 220 }} />
             <col style={{ width: 150 }} />
           </colgroup>
           <thead>
@@ -156,6 +175,7 @@ export function InventoryPage() {
               <th style={{ padding: '6px 10px' }}>Cost</th>
               <th style={{ padding: '6px 10px' }}>Dimensions (ft)</th>
               <th style={{ padding: '6px 10px' }}>Station</th>
+              <th style={{ padding: '6px 10px' }}>Tags</th>
               <th style={{ padding: '6px 10px' }}></th>
             </tr>
           </thead>
@@ -165,7 +185,7 @@ export function InventoryPage() {
                 return (
                   <tr key={eq.equipmentId} style={{ borderBottom: '1px solid var(--br)' }}>
                     <td style={{ padding: '6px 10px 6px 6px', fontFamily: 'var(--mono)' }}>{eq.equipmentId}</td>
-                    <td colSpan={5} style={{ padding: '10px' }}>
+                    <td colSpan={6} style={{ padding: '10px' }}>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', maxWidth: 900 }}>
                         <div style={{ flex: '0 1 220px' }}>
                           <label style={{ display: 'block', fontSize: 10, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Name</label>
@@ -206,6 +226,7 @@ export function InventoryPage() {
               // what a human still needs to go confirm.
               const costIsPlaceholder = eq.needsDimensions && eq.costUsd === 0;
               const dimsArePlaceholder = eq.needsDimensions && eq.widthFt === 1 && eq.depthFt === 1 && eq.heightFt === 1;
+              const isUntagged = eq.allTags.length === 0;
               const placeholderCellStyle = { outline: '2px solid #a67c00', outlineOffset: -2, borderRadius: 3 };
               return (
                 <tr key={eq.equipmentId} style={{ borderBottom: '1px solid var(--br)' }}>
@@ -227,6 +248,26 @@ export function InventoryPage() {
                       placeholder="Unassigned"
                     />
                   </td>
+                  <td style={{ padding: '6px 10px', ...(isUntagged ? placeholderCellStyle : {}) }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: eq.allTags.length > 0 ? 6 : 0 }}>
+                      {eq.allTags.map((tag) => (
+                        <span key={tag} style={{ fontSize: 11, color: 'var(--td)', background: 'var(--tl)', border: '1px solid var(--tline)', borderRadius: 4, padding: '1px 6px' }}>{tag}</span>
+                      ))}
+                    </div>
+                    {/* Always reset to blank after adding — this is a
+                        one-shot "add a tag" action, not a persistent
+                        selection, since a row can carry many tags at once. */}
+                    <SearchableSelect
+                      style={{ width: '100%' }}
+                      options={[
+                        { value: '', label: '+ Add tag…', disabled: true },
+                        ...canvasTagOptions.filter((tag) => !eq.allTags.includes(tag)).map((tag) => ({ value: tag, label: tag })),
+                      ]}
+                      value=""
+                      onChange={(v) => handleAddTag(eq, v)}
+                      placeholder="+ Add tag…"
+                    />
+                  </td>
                   <td style={{ padding: '6px 10px', display: 'flex', gap: 6 }}>
                     <button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => startEditEquipment(eq)}>Edit</button>
                     <button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => handleDeleteEquipment(eq.equipmentId)}>Delete</button>
@@ -235,7 +276,7 @@ export function InventoryPage() {
               );
             })}
             {!eqLoading && (equipmentData?.equipmentList ?? []).length === 0 && (
-              <tr><td colSpan={6} style={{ padding: 12, color: 'var(--mid)' }}>No equipment yet.</td></tr>
+              <tr><td colSpan={7} style={{ padding: 12, color: 'var(--mid)' }}>No equipment yet.</td></tr>
             )}
           </tbody>
         </table>

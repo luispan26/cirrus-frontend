@@ -124,7 +124,7 @@ export const BIOMATERIAL_OPTS: QuestionOption[] = [
   { v: 'mice', l: 'Mice' },
 ];
 
-// Prompt 1's nine fixed equipment membership list keys (see the backend's
+// Prompt 1's eight fixed equipment membership list keys (see the backend's
 // src/equipment-lists/equipment-list.service.ts LIST_DEFINITIONS) that the
 // Basic Lab Equipment List computation below draws from. Kept in sync by
 // hand since the frontend and backend don't share types.
@@ -166,7 +166,7 @@ export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; color: st
   // categories. Unlike 'owned', these rows keep a real BOM cost (see the
   // backend's bom-generator.ts, which only special-cases 'owned'). Takes the
   // blue freed up by removing the old 'analytical' category below.
-  { key: 'needed', label: 'Needed', color: '#3462C9' },
+  { key: 'needed', label: 'Additional Equipment', color: '#3462C9' },
   { key: 'general', label: 'General Lab Equipment', color: '#00A3A3' },
   { key: 'bsl', label: 'Biosafety-Required', color: '#a67c00' },
   { key: 'bacteria', label: 'Bacterial Basic', color: '#3D8B3D' },

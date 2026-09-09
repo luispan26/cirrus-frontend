@@ -321,7 +321,7 @@ export const EQUIPMENT_LIST_QUERY = gql`
   query EquipmentList {
     equipmentList {
       equipmentId name costUsd widthFt depthFt heightFt stationId utilityRequirements mounting
-      needsDimensions canvasDeleted allTags
+      needsDimensions canvasDeleted canvasTags tags allTags
     }
   }
 `;

@@ -630,7 +630,12 @@ function EquipmentPlanBody({ answers, setField }: { answers: Answers; setField: 
   if (eqError) return <p className="q-validation-error">Couldn’t load the equipment catalog: {eqError.message}</p>;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    // The picker (search/filter/Owned/Add) plus the computed list together
+    // can run taller than the viewport — .qm-stage's centered-flex scroll
+    // silently clips content taller than the window instead of scrolling to
+    // it (see .qm-stage in index.css), so this step gets its own bounded,
+    // self-scrolling region rather than relying on that outer scroll.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '64vh', overflowY: 'auto', paddingRight: 6 }}>
       <EquipmentPicker answers={answers} setField={setField} catalog={catalog} />
       <ComputedEquipmentList answers={answers} setField={setField} lists={lists} catalog={catalog} />
     </div>
@@ -660,9 +665,11 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
   const ownedMeta = (answers.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
   const neededMeta = (answers.needed_equipment_meta as Record<string, { name: string; count: number }>) || {};
   const [draftId, setDraftId] = useState('');
-  const [bucket, setBucket] = useState<'owned' | 'needed'>('owned');
-  const activeMeta = bucket === 'owned' ? ownedMeta : neededMeta;
-  const addable = catalog.filter((eq) => !activeMeta[eq.equipmentId]);
+  // Owned/Add are direct actions now, not a toggle behind a separate Add
+  // button — an item stays selectable here as long as at least one of the
+  // two buckets still doesn't have it (own 2, still need 3 more stays
+  // possible; only fully excluded once it's in both).
+  const addable = catalog.filter((eq) => !(ownedMeta[eq.equipmentId] && neededMeta[eq.equipmentId]));
   // View filter only — narrows which addable equipment the search below can
   // find. Deliberately component-local, not routed through setField/answers:
   // it's not an intake answer, just how this picker's own list is browsed.
@@ -680,7 +687,7 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
     }
   }, [tagFilteredAddable, draftId]);
 
-  function addSelected() {
+  function addTo(bucket: 'owned' | 'needed') {
     const eq = catalog.find((c) => c.equipmentId === draftId);
     if (!eq) return;
     if (bucket === 'owned') {
@@ -718,11 +725,30 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
             // draftId.
             options={[{ value: '', label: 'Select equipment…', disabled: true }, ...tagFilteredAddable.map((eq) => ({ value: eq.equipmentId, label: eq.name }))]}
           />
-          <div className="chips" style={{ gap: 4 }}>
-            <span className={`chip${bucket === 'owned' ? ' sel' : ''}`} onClick={() => setBucket('owned')}>Owned</span>
-            <span className={`chip${bucket === 'needed' ? ' sel' : ''}`} onClick={() => setBucket('needed')}>Needed</span>
-          </div>
-          <button type="button" className="btn-teal" style={{ padding: '6px 14px' }} onClick={addSelected}>Add</button>
+          {/* Owned/Add each commit the selected equipment straight into that
+              bucket — no separate Add button, no toggle-then-confirm step.
+              "Add" is this bucket's label for needed_equipment_meta (still
+              needed_equipment_meta under the hood, same as ComputedEquipmentList's
+              Needed rows below); disabled per-button once the selected item
+              is already in that particular bucket. */}
+          <button
+            type="button"
+            className="btn-out"
+            style={{ padding: '6px 14px' }}
+            disabled={!draftId || !!ownedMeta[draftId]}
+            onClick={() => addTo('owned')}
+          >
+            Owned
+          </button>
+          <button
+            type="button"
+            className="btn-teal"
+            style={{ padding: '6px 14px' }}
+            disabled={!draftId || !!neededMeta[draftId]}
+            onClick={() => addTo('needed')}
+          >
+            Add
+          </button>
         </div>
       )}
     </div>
@@ -900,12 +926,10 @@ function ComputedEquipmentList({
         Adjust quantities as needed. Items required for your biosafety level can’t be removed, only increased.
         Equipment you already own or still need can be adjusted or removed here too — removing an owned row means you no longer have it, and removing a needed row means you no longer want it; neither means the room doesn’t need it. Each color-coded section below shows which list brought that equipment into this combined list.
       </p>
-      {/* Long lists (many categories, or a category with many rows) can
-          exceed the card's own height — this panel scrolls on its own within
-          a bounded max-height instead of relying on the outer question card
-          area, whose centered-flex scroll silently clips content that's
-          taller than the viewport (see .qm-stage in index.css). */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 22, maxHeight: '46vh', overflowY: 'auto', paddingRight: 6 }}>
+      {/* No max-height/scroll of its own — EquipmentPlanBody's wrapper above
+          already bounds and scrolls the whole step (picker + this list)
+          together, so this only needs to lay the rows out. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       {BASIC_EQUIPMENT_CATEGORIES.map((category) => {
         const categoryRows = rowsByCategory.get(category.key);
         if (!categoryRows || categoryRows.length === 0) return null;
