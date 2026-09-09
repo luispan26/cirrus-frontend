@@ -48,6 +48,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!data) throw new Error('Login failed');
     setAuthToken(data.login.accessToken);
     setUser(data.login.user);
+    // Drop any cached query results (e.g. myReports) from a previous
+    // account on this browser/tab before the new user's pages read from
+    // cache-and-network — otherwise the previous user's Design History can
+    // flash on screen until the network response overwrites it.
+    await apolloClient.clearStore();
   }
 
   async function register(email: string, password: string, name: string) {
@@ -55,6 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!data) throw new Error('Registration failed');
     setAuthToken(data.register.accessToken);
     setUser(data.register.user);
+    await apolloClient.clearStore();
   }
 
   async function logout() {

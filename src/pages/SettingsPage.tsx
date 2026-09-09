@@ -3,8 +3,8 @@ import { IconFlask, IconLayers, IconBadgeCheck } from '../components/Icons';
 import { Logo } from '../components/Logo';
 
 const ADMIN_LINKS = [
-  { label: 'Equipment & Inventory', hint: 'Equipment Specification List — cost, dimensions, station assignment.', path: '/inventory', icon: IconFlask },
-  { label: 'Equipment Membership Lists', hint: 'Assign equipment into the nine configurable lists (BSL requirements, workflow catalogs, etc).', path: '/equipment-lists', icon: IconLayers },
+  { label: 'Equipment Database', hint: 'Equipment Specification List — cost, dimensions, station assignment.', path: '/inventory', icon: IconFlask },
+  { label: 'Equipment Lists', hint: 'Assign equipment into the nine configurable lists (BSL requirements, workflow catalogs, etc).', path: '/equipment-lists', icon: IconLayers },
   { label: 'Validated Protocols', hint: 'Every protocol currently selectable in the intake questionnaire — remove one to pull it from that list.', path: '/validated-protocols', icon: IconBadgeCheck },
 ];
 

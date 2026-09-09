@@ -121,7 +121,7 @@ export function EquipmentListsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', flexShrink: 0, borderBottom: '1px solid var(--br)' }}>
         <div>
           <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 15, letterSpacing: '.08em', color: 'var(--dark)' }}>
-            EQUIPMENT MEMBERSHIP LISTS
+            EQUIPMENT LISTS
           </div>
           <div style={{ fontSize: 12, color: 'var(--mid)' }}>Assign Equipment Specification List entries into each configurable list — an item can be on more than one, flagged below if so</div>
         </div>

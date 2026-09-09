@@ -107,7 +107,7 @@ export function InventoryPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 24px', flexShrink: 0, borderBottom: '1px solid var(--br)' }}>
         <div>
           <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, fontSize: 15, letterSpacing: '.08em', color: 'var(--dark)' }}>
-            EQUIPMENT & INVENTORY
+            EQUIPMENT DATABASE
           </div>
           <div style={{ fontSize: 12, color: 'var(--mid)' }}>Publish equipment to the backend, and assign it to stations</div>
         </div>

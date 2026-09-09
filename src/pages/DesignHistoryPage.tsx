@@ -56,7 +56,21 @@ export function DesignHistoryPage() {
   // (the Dashboard's "Labs designed" stat and "Last lab design" preview both
   // still need the full history), this page just no longer lists older rows.
   const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const reports = (data?.myReports ?? []).filter((r) => new Date(r.createdAt).getTime() >= oneWeekAgo);
+  const recentReports = (data?.myReports ?? []).filter((r) => new Date(r.createdAt).getTime() >= oneWeekAgo);
+
+  // Collapses same-session, same-content report rows down to just the
+  // newest one — a resubmission that produced identical output shouldn't
+  // read as two separate lab designs (see reports.service.ts's own dedup
+  // check, which closes the normal path for this; this catches the rest,
+  // e.g. two reports created by a near-simultaneous double-submit). myReports
+  // is sorted newest-first, so the first row seen per key wins.
+  const seenKeys = new Set<string>();
+  const reports = recentReports.filter((r) => {
+    const key = `${r.sessionId}::${JSON.stringify(r.data)}`;
+    if (seenKeys.has(key)) return false;
+    seenKeys.add(key);
+    return true;
+  });
 
   return (
     <div className="screen" style={{ background: 'var(--light)' }}>

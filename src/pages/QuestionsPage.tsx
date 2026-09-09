@@ -47,7 +47,7 @@ function validateQuestion(id: string, answers: Answers) {
 }
 
 // space/budget mean different things depending on whether the client already
-// has equipment — inferred from whether existing_equipment (Q1) actually has
+// has equipment — inferred from whether existing_equipment (Q4) actually has
 // entries, since there's no separate gating question for it anymore — the
 // hint under the question title reflects that instead of a single static string.
 function questionHint(q: (typeof QS)[number], answers: Answers): string {
@@ -297,8 +297,14 @@ function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: 
         const { [p.value]: _removedOp, ...restOps } = operationByProtocolId;
         setField('protocol_operation_by_id', restOps);
       }
-    } else if (p.operationId) {
-      setField('protocol_operation_by_id', { ...operationByProtocolId, [p.value]: p.operationId });
+    } else {
+      // Selecting a protocol defaults it to 1 run/week — the user can raise
+      // that or uncheck the protocol entirely, but a freshly-checked box
+      // never sits at an empty/zero run count.
+      setField('protocol_runs_per_week', { ...runs, [p.value]: 1 });
+      if (p.operationId) {
+        setField('protocol_operation_by_id', { ...operationByProtocolId, [p.value]: p.operationId });
+      }
     }
   }
 
@@ -310,7 +316,9 @@ function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: 
   }
 
   function setRuns(opId: string, value: number) {
-    setField('protocol_runs_per_week', { ...runs, [opId]: Math.max(0, Math.round(value)) });
+    // Floored at 1 while the protocol stays checked — deselecting it
+    // entirely is how a user drops it back out, not dialing runs to 0.
+    setField('protocol_runs_per_week', { ...runs, [opId]: Math.max(1, Math.round(value)) });
   }
 
   if (loading) return <p className="q-inline-help">Loading validated protocols…</p>;
@@ -376,12 +384,12 @@ function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: 
                   <input
                     className="field-input"
                     type="number"
-                    min={0}
+                    min={1}
                     step={1}
                     style={{ width: 80 }}
-                    placeholder="0"
-                    value={runs[p.value] ?? ''}
-                    onChange={(e) => setRuns(p.value, Number(e.target.value) || 0)}
+                    placeholder="1"
+                    value={runs[p.value] ?? 1}
+                    onChange={(e) => setRuns(p.value, Number(e.target.value) || 1)}
                   />
                   <span style={{ fontSize: 12, color: 'var(--mid)' }}>runs/week</span>
                 </div>
@@ -548,7 +556,7 @@ function InventoryBody({ answers, setField }: { answers: Answers; setField: (k: 
     <>
       <p className="q-inline-help">
         {catalog.length === 0
-          ? 'No equipment in your inventory yet — add it on the Equipment & Inventory page, or skip this and it\'ll all be sized as new.'
+          ? 'No equipment in your inventory yet — add it on the Equipment Database page, or skip this and it\'ll all be sized as new.'
           : 'Only what you already have — sizing subtracts this from what your protocols still need.'}
       </p>
 
@@ -626,7 +634,7 @@ function AnalyticalEquipmentBody({ answers, setField }: { answers: Answers; setF
   if (eqError) return <p className="q-validation-error">Couldn’t load the equipment catalog: {eqError.message}</p>;
 
   if (items.length === 0) {
-    return <p className="q-inline-help">No analytical equipment has been catalogued yet — skip this question, or check back once it's added via Settings → Equipment Membership Lists.</p>;
+    return <p className="q-inline-help">No analytical equipment has been catalogued yet — skip this question, or check back once it's added via Settings → Equipment Lists.</p>;
   }
 
   return (
@@ -718,7 +726,7 @@ function BasicLabEquipmentBody({ answers, setField }: { answers: Answers; setFie
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 0 }}>
         Adjust quantities as needed. Items required for your biosafety level can’t be removed, only increased.
-        Equipment you already own is fixed at what you entered in Q1. Each color-coded section below shows which list brought that equipment into this combined list.
+        Equipment you already own is fixed at what you entered in Q4. Each color-coded section below shows which list brought that equipment into this combined list.
       </p>
       {/* Long lists (many categories, or a category with many rows) can
           exceed the card's own height — this panel scrolls on its own within

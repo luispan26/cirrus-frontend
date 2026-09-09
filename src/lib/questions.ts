@@ -38,21 +38,24 @@ export interface Question {
 
 export type Answers = Record<string, unknown>;
 
-// The full intake flow, in order: existing_equipment -> biosafety_level ->
-// biomaterials -> analytical_equipment -> basic_lab_equipment (the computed,
-// user-editable Basic Lab Equipment List — see computeBasicLabEquipment/
-// applyBasicLabEquipmentOverrides below) -> space -> operations (protocol
-// selection, plus expected weekly runs per protocol asked inline — see
-// ProtocolSelectBody in QuestionsPage.tsx, same select-then-quantify pattern
-// as analytical_equipment) -> budget. existing_equipment is asked first,
-// unconditionally (there used to be a gating "does your space already have
-// equipment?" question ahead of it; removed — whether any equipment was
-// actually entered here is now itself the signal, see hasExistingEquipment
-// in buildFinalIntakeJson and questionHint in QuestionsPage.tsx).
-// biosafety_level/biomaterials/analytical_equipment feed directly into
-// basic_lab_equipment, so they're grouped right after existing_equipment,
-// before space/protocols/budget. Tiered protocol prioritization used to be
-// its own step after this one; removed outright (the backend never actually
+// The full intake flow, in order: biosafety_level -> biomaterials ->
+// analytical_equipment -> existing_equipment -> basic_lab_equipment (the
+// computed, user-editable Basic Lab Equipment List — see
+// computeBasicLabEquipment/applyBasicLabEquipmentOverrides below) -> space ->
+// operations (protocol selection, plus expected weekly runs per protocol
+// asked inline — see ProtocolSelectBody in QuestionsPage.tsx, same
+// select-then-quantify pattern as analytical_equipment) -> budget.
+// biosafety_level/biomaterials/analytical_equipment all feed the computed
+// Basic Lab Equipment List, so they're asked first to establish what the lab
+// needs; existing_equipment comes right after them, immediately before the
+// basic_lab_equipment step that verifies/finalizes the combined list — so a
+// user answers "what do you already have" with the full needs picture just
+// asked, right before seeing it reconciled (there used to be a gating "does
+// your space already have equipment?" question ahead of everything; removed
+// — whether any equipment was actually entered here is now itself the
+// signal, see hasExistingEquipment in buildFinalIntakeJson and questionHint
+// in QuestionsPage.tsx). Tiered protocol prioritization used to be its own
+// step after this one; removed outright (the backend never actually
 // consumed it — finalIntakeJson is passed through as an opaque JSON scalar,
 // see intake.resolver.ts).
 //
@@ -138,7 +141,7 @@ export const PROTOCOL_SPECIFIC_CATEGORY_KEY = 'protocol_specific';
 // Colors are chosen to stay visually distinct from each other and from the
 // existing amber "still a Canvas placeholder" convention used elsewhere.
 export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; color: string }[] = [
-  // Equipment pulled in from Q1's existing-equipment inventory (see
+  // Equipment pulled in from Q4's existing-equipment inventory (see
   // computeBasicLabEquipment's ownedMeta loop) — listed first since it needs
   // no action from the user, just an FYI of what's already covered. Greyed
   // out on purpose (a muted color, unlike every other category's saturated
@@ -163,10 +166,10 @@ export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; color: st
 ];
 
 export const QS: Question[] = [
-  { id: 'existing_equipment', n: 1, t: 'Do you already have equipment?', h: 'Pulled from your equipment inventory — only the gap between this and what your protocols need gets sized', type: 'inventory' },
-  { id: 'biosafety_level', n: 2, t: 'What biosafety level is your labspace compliant with?', h: 'Adds that level\'s required equipment to your Basic Lab Equipment List', type: 'radio', opts: BIOSAFETY_LEVEL_OPTS },
-  { id: 'biomaterials', n: 3, t: 'What type of biomaterials would you like to work with?', h: 'Each one adds its own basic equipment set to your Basic Lab Equipment List', type: 'checklist', opts: BIOMATERIAL_OPTS },
-  { id: 'analytical_equipment', n: 4, t: 'Would you like any additional analytical equipment?', h: 'Optional — check anything you need beyond the basics, and set how many', type: 'analytical_equipment' },
+  { id: 'biosafety_level', n: 1, t: 'What biosafety level is your labspace compliant with?', h: 'Adds that level\'s required equipment to your Basic Lab Equipment List', type: 'radio', opts: BIOSAFETY_LEVEL_OPTS },
+  { id: 'biomaterials', n: 2, t: 'What type of biomaterials would you like to work with?', h: 'Each one adds its own basic equipment set to your Basic Lab Equipment List', type: 'checklist', opts: BIOMATERIAL_OPTS },
+  { id: 'analytical_equipment', n: 3, t: 'Would you like any additional analytical equipment?', h: 'Optional — check anything you need beyond the basics, and set how many', type: 'analytical_equipment' },
+  { id: 'existing_equipment', n: 4, t: 'Do you already have equipment?', h: 'Pulled from your equipment inventory — only the gap between this and what your protocols need gets sized', type: 'inventory' },
   { id: 'basic_lab_equipment', n: 5, t: 'Finalize Basic Lab Equipment', h: 'Your computed Basic Lab Equipment List — adjust quantities or remove anything you don’t need', type: 'basic_equipment' },
   { id: 'space', n: 6, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
   { id: 'operations', n: 7, t: 'Add additional protocols?', h: 'Check the ones this lab needs and set expected weekly runs for each — duration is pulled from the protocol itself.', type: 'multi', opts: OPERATION_OPTS },
@@ -347,7 +350,7 @@ export interface EquipmentCatalogEntry { equipmentId: string; name: string; }
 // this row, in the order each was first added — sources[0] is treated as
 // the row's primary category for grouping in the Q5 UI, with any further
 // entries surfaced there as "also required by" cross-references.
-// owned = true means this row's quantity comes (at least partly) from Q1's
+// owned = true means this row's quantity comes (at least partly) from Q4's
 // existing-equipment inventory ('owned' is in sources) — the lab already has
 // it, so unlike a `locked` (BSL-required) row, its quantity can't be
 // adjusted at all in Q5, not even increased.
@@ -411,7 +414,7 @@ export function computeBasicLabEquipment(
     addSource(equipmentId, 'analytical');
   }
 
-  // Q1's existing-equipment inventory — merged in LAST, after every
+  // Q4's existing-equipment inventory — merged in LAST, after every
   // category above, so ownership never displaces where an item already
   // landed: something already required by General/BSL/etc. stays under
   // that category (with 'owned' added as an additional source, surfaced as

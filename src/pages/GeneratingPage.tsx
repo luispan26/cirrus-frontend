@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@apollo/client/react';
 import { GENERATE_REPORT_MUTATION, REPORT_QUERY } from '../graphql/operations';
@@ -23,7 +23,17 @@ export function GeneratingPage() {
     }
   }
 
+  // Guards against the mount effect firing twice (React 18 StrictMode
+  // double-invokes effects in dev, and a fast remount could too) — without
+  // this, two near-simultaneous generateReport calls can both race past the
+  // backend's "unchanged since last report" dedup check before either
+  // finishes, creating two report documents for the same session and
+  // showing as a duplicate entry in Design History. The "Try again" button
+  // below calls start() directly and is unaffected by this guard.
+  const hasStarted = useRef(false);
   useEffect(() => {
+    if (hasStarted.current) return;
+    hasStarted.current = true;
     start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

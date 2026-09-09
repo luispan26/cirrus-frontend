@@ -211,6 +211,12 @@ export const ME_QUERY = gql`
   }
 `;
 
+export const USERS_COUNT_QUERY = gql`
+  query UsersCount {
+    usersCount
+  }
+`;
+
 export const MY_REPORTS_QUERY = gql`
   query MyReports {
     myReports {

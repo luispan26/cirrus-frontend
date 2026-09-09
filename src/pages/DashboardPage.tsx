@@ -3,9 +3,10 @@ import { useQuery } from '@apollo/client/react';
 import { useAuth } from '../context/AuthContext';
 import { IconHistory, IconLayers, IconFlask, IconGear, IconLogout } from '../components/Icons';
 import {
-  MY_REPORTS_QUERY, EQUIPMENT_COUNT_QUERY, VALIDATED_PROTOCOLS_QUERY, REPORTS_COUNT_QUERY,
+  MY_REPORTS_QUERY, EQUIPMENT_COUNT_QUERY, VALIDATED_PROTOCOLS_QUERY, REPORTS_COUNT_QUERY, USERS_COUNT_QUERY,
 } from '../graphql/operations';
 import { parseSandboxLayout } from '../lib/layout-sandbox';
+import { resetSessionId } from '../lib/session';
 import { LabAssetBench } from '../components/LabAssets';
 import { LayoutFloorPlan } from '../components/LayoutFloorPlan';
 import { Logo } from '../components/Logo';
@@ -28,9 +29,6 @@ interface ReportSummary {
 function cap(s: string | undefined): string {
   return s ? s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : '';
 }
-
-// DAMPLab Canvas — separate app (see cumulab/canvas-deploy), not a route in this SPA.
-const CANVAS_URL = (import.meta.env.VITE_CANVAS_URL as string) || 'http://localhost:8088';
 
 function LayoutThumbnail({ reportData, label }: { reportData: Record<string, any> | null; label: string }) {
   const layout = reportData?.generated_layout?.data ? parseSandboxLayout(reportData.generated_layout.data) : null;
@@ -58,10 +56,22 @@ export function DashboardPage() {
   const { data: reportsCountData } = useQuery<{ reportsCount: number }>(REPORTS_COUNT_QUERY, {
     fetchPolicy: 'cache-and-network',
   });
+  const { data: usersCountData } = useQuery<{ usersCount: number }>(USERS_COUNT_QUERY, {
+    fetchPolicy: 'cache-and-network',
+  });
 
   async function handleLogout() {
     await logout();
     navigate('/login', { replace: true });
+  }
+
+  // Skips the "Choose your path" scenario screen — its only real option was
+  // always New Lab Design (the other two cards are coming-soon placeholders)
+  // — and goes straight into the questionnaire, same reset-then-navigate as
+  // that screen's own card used to do.
+  function startNewLabDesign() {
+    resetSessionId();
+    navigate('/questions');
   }
 
   const initial = (user?.name || user?.email || '?').trim().charAt(0).toUpperCase();
@@ -74,6 +84,7 @@ export function DashboardPage() {
   const registeredEquipmentCount = equipmentCountData?.equipmentList.length ?? 0;
   const protocolsCount = protocolsData?.validatedProtocols.length ?? 0;
   const labsDesignedCount = reportsCountData?.reportsCount ?? 0;
+  const usersCount = usersCountData?.usersCount ?? 0;
 
   return (
     <div className="screen dash-screen">
@@ -104,45 +115,46 @@ export function DashboardPage() {
         </aside>
 
         <div className="dash-main">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
-            <div>
-              <h2 style={{ fontFamily: 'var(--head)', fontSize: 26, fontWeight: 500, color: 'var(--dark)', letterSpacing: '-0.01em' }}>Welcome back</h2>
-              <p style={{ fontSize: 13, color: 'var(--mid)', marginTop: 4 }}>Start a new lab design or pick up where you left off.</p>
+          <div style={{ marginBottom: 24 }}>
+            <h2 style={{ fontFamily: 'var(--head)', fontSize: 26, fontWeight: 500, color: 'var(--dark)', letterSpacing: '-0.01em' }}>Welcome back</h2>
+            <p style={{ fontSize: 13, color: 'var(--mid)', marginTop: 4 }}>Start a new lab design or pick up where you left off.</p>
+          </div>
+
+          <div
+            className="dash-widget"
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 16,
+              flexWrap: 'wrap',
+              marginBottom: 18,
+              border: '1px solid var(--tline)',
+              boxShadow: 'var(--glow-teal), var(--shadow-sm)',
+            }}
+          >
+            <button className="btn-teal" onClick={startNewLabDesign}>+ Design a New Lab</button>
+            <div className="stat" style={{ padding: '14px 22px', border: 'none', boxShadow: 'none', background: 'transparent' }}>
+              <div
+                className="stat-val"
+                style={{
+                  fontSize: 26,
+                  backgroundImage: 'linear-gradient(135deg, var(--teal), var(--pk))',
+                  WebkitBackgroundClip: 'text',
+                  backgroundClip: 'text',
+                  color: 'transparent',
+                }}
+              >
+                {labsDesignedCount}
+              </div>
+              <div className="stat-lbl">Labs designed</div>
             </div>
-            <button className="btn-teal" onClick={() => navigate('/scenario')}>+ New lab design</button>
           </div>
 
           <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-            <div className="stat" style={{ padding: '20px 22px' }}><div className="stat-val" style={{ color: '#049295', fontSize: 26 }}>{registeredEquipmentCount}</div><div className="stat-lbl">Registered equipment</div></div>
-            <div className="stat" style={{ padding: '20px 22px' }}><div className="stat-val" style={{ color: '#049295', fontSize: 26 }}>{labsDesignedCount}</div><div className="stat-lbl">Labs designed</div></div>
-            <div className="stat" style={{ padding: '20px 22px' }}><div className="stat-val" style={{ color: '#FF3FA4', fontSize: 26 }}>{protocolsCount}</div><div className="stat-lbl">Validated protocols</div></div>
-          </div>
-
-          <div className="sc-grid" style={{ maxWidth: 'none', gridTemplateColumns: 'repeat(4, 1fr)' }}>
-            <div className="sc-card active" onClick={() => navigate('/layout-candidates')}>
-              <div className="sc-tag">SEED LAB</div>
-              <div className="sc-title">Review candidates</div>
-              <div className="sc-desc">Generate a batch from a saved layout, compare scores, and choose promising seeds.</div>
-              <div className="sc-cta">Open →</div>
-            </div>
-            <div className="sc-card active" onClick={() => navigate('/layout-sandbox')}>
-              <div className="sc-tag">SANDBOX</div>
-              <div className="sc-title">Build a layout</div>
-              <div className="sc-desc">Place bench stations manually, then assign equipment to each station.</div>
-              <div className="sc-cta">Open →</div>
-            </div>
-            <div className="sc-card active" onClick={() => window.open(CANVAS_URL, '_blank', 'noopener,noreferrer')}>
-              <div className="sc-tag">CANVAS</div>
-              <div className="sc-title">Open Canvas</div>
-              <div className="sc-desc">Build workflows from your lab's services on the DAMPLab Canvas workspace.</div>
-              <div className="sc-cta">Open →</div>
-            </div>
-            <div className="sc-card dim">
-              <div className="sc-tag">AEOLUS</div>
-              <div className="sc-title">Aeolus</div>
-              <div className="sc-desc">Connect to Aeolus.</div>
-              <span className="cs-badge">Coming soon</span>
-            </div>
+            <div className="stat" style={{ padding: '20px 22px' }}><div className="stat-val" style={{ color: 'var(--td)', fontSize: 26 }}>{registeredEquipmentCount}</div><div className="stat-lbl">Registered equipment</div></div>
+            <div className="stat" style={{ padding: '20px 22px' }}><div className="stat-val" style={{ color: 'var(--pkd)', fontSize: 26 }}>{protocolsCount}</div><div className="stat-lbl">Validated protocols</div></div>
+            <div className="stat" style={{ padding: '20px 22px' }}><div className="stat-val" style={{ color: 'var(--violet)', fontSize: 26 }}>{usersCount}</div><div className="stat-lbl">Unique users</div></div>
           </div>
 
           <div className="dash-widget dash-widget-preview" style={{ marginTop: 24 }}>
@@ -160,7 +172,7 @@ export function DashboardPage() {
               <div className="dash-widget-empty">
                 <div className="dash-asset-icon"><LabAssetBench /></div>
                 No completed lab designs yet.
-                <button className="dash-widget-link" onClick={() => navigate('/scenario')} style={{ display: 'block', margin: '6px auto 0' }}>
+                <button className="dash-widget-link" onClick={startNewLabDesign} style={{ display: 'block', margin: '6px auto 0' }}>
                   Start one →
                 </button>
               </div>
