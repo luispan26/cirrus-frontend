@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@apollo/client/react';
 import { useAuth } from '../context/AuthContext';
-import { IconHistory, IconLayers, IconFlask, IconGear, IconLogout } from '../components/Icons';
+import { IconHistory, IconLayers, IconGear, IconLogout } from '../components/Icons';
 import {
   MY_REPORTS_QUERY, EQUIPMENT_COUNT_QUERY, VALIDATED_PROTOCOLS_QUERY, REPORTS_COUNT_QUERY, USERS_COUNT_QUERY,
 } from '../graphql/operations';
@@ -14,7 +14,6 @@ import { Logo } from '../components/Logo';
 const NAV_ITEMS = [
   { label: 'Design history', path: '/history', icon: IconHistory },
   { label: 'Saved layouts', path: '/layout-candidates', icon: IconLayers },
-  { label: 'Protocols', path: '/protocols', icon: IconFlask },
   { label: 'Settings', path: '/settings', icon: IconGear },
 ];
 
@@ -153,8 +152,14 @@ export function DashboardPage() {
           </div>
 
           <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-            <div className="stat" style={{ padding: '20px 22px' }}><div className="stat-val" style={{ color: 'var(--td)', fontSize: 26 }}>{registeredEquipmentCount}</div><div className="stat-lbl">Registered equipment</div></div>
-            <div className="stat" style={{ padding: '20px 22px' }}><div className="stat-val" style={{ color: 'var(--pkd)', fontSize: 26 }}>{protocolsCount}</div><div className="stat-lbl">Validated protocols</div></div>
+            <button className="stat stat-link" style={{ padding: '20px 22px' }} onClick={() => navigate('/inventory')} title="View the Equipment Database">
+              <div className="stat-val" style={{ color: 'var(--td)', fontSize: 26 }}>{registeredEquipmentCount}</div>
+              <div className="stat-lbl">Registered equipment</div>
+            </button>
+            <button className="stat stat-link" style={{ padding: '20px 22px' }} onClick={() => navigate('/validated-protocols')} title="View Validated Protocols">
+              <div className="stat-val" style={{ color: 'var(--pkd)', fontSize: 26 }}>{protocolsCount}</div>
+              <div className="stat-lbl">Validated protocols</div>
+            </button>
             <div className="stat" style={{ padding: '20px 22px' }}><div className="stat-val" style={{ color: 'var(--violet)', fontSize: 26 }}>{usersCount}</div><div className="stat-lbl">Unique users</div></div>
           </div>
 

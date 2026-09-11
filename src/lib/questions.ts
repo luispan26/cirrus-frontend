@@ -274,6 +274,16 @@ export interface FinalIntakeJson {
   // Design Report's BOM can reuse Q5's color-coded-by-source grouping.
   basic_lab_equipment: { equipment_id: string; name: string; quantity: number; sources: string[] }[];
   operations: string[];
+  // Every protocol the user actually checked in Q5 (ProtocolSelectBody),
+  // by its own real protocols.io id — unlike `operations` above (resolved
+  // catalog Operation ids, deduped), this is the raw, undeduped selection,
+  // so two different validated protocols that both match the same Operation
+  // still both appear. Titles/sourceUrls aren't known here (this file has no
+  // access to VALIDATED_PROTOCOLS_QUERY's data) — the backend resolves them
+  // from ValidatedProtocolsService at report-generation time (see
+  // ReportsService.buildSelectedProtocols) for the report's Protocols
+  // section.
+  selected_protocols: { protocol_id: string; runs_per_week: number }[];
   existing_equipment: { equipment_id: string; name: string; count: number }[];
   space: {
     sqft: number; width_ft: number; height_ft: number; ceiling_ft: number; rooms: string; renovation: boolean;
@@ -342,6 +352,7 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
     biomaterials: (a.biomaterials as string[]) || [],
     basic_lab_equipment: (a.basic_lab_equipment_final as { equipment_id: string; name: string; quantity: number; sources: string[] }[]) || [],
     operations: resolveOperations(a),
+    selected_protocols: rawSelectedProtocolIds.map((protocolId) => ({ protocol_id: protocolId, runs_per_week: rawRunsPerWeek[protocolId] ?? 0 })),
     existing_equipment: Object.entries(existingMeta).map(([equipment_id, meta]) => ({ equipment_id, name: meta.name, count: Math.max(1, meta.count ?? 1) })),
     space: {
       sqft: Math.round(width_ft * height_ft) || 0,

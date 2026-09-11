@@ -593,6 +593,7 @@ export const VALIDATED_PROTOCOLS_QUERY = gql`
       protocolId
       title
       sourceUrl
+      cellType
       createdAt
     }
   }
@@ -601,6 +602,16 @@ export const VALIDATED_PROTOCOLS_QUERY = gql`
 export const REMOVE_VALIDATED_PROTOCOL_MUTATION = gql`
   mutation RemoveValidatedProtocol($protocolId: ID!) {
     removeValidatedProtocol(protocolId: $protocolId)
+  }
+`;
+
+export const SET_VALIDATED_PROTOCOL_CELL_TYPE_MUTATION = gql`
+  mutation SetValidatedProtocolCellType($protocolId: ID!, $cellType: String) {
+    setValidatedProtocolCellType(protocolId: $protocolId, cellType: $cellType) {
+      id
+      protocolId
+      cellType
+    }
   }
 `;
 
