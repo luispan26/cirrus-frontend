@@ -157,6 +157,7 @@ export function ReportView({ data }: { data: Record<string, any> }) {
   const staff = asArray(data.staff);
   const recommended = asArray(data.recommended_equipment);
   const revenue = asObject(data.revenue_projections);
+  const selectedProtocols = asArray(data.selected_protocols);
 
   const pieData = computeCostByCategory(bom);
 
@@ -209,6 +210,30 @@ export function ReportView({ data }: { data: Record<string, any> }) {
                     <td style={{ color: '#69707F' }}>{e.purpose || '—'}</td>
                     <td>{e.quantity || 1}</td>
                     <td style={{ fontWeight: 600, color: '#FF3FA4' }}>{fmt(e.estimated_cost)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {selectedProtocols.length > 0 && (
+        <>
+          <div className="sec-head">Protocols<div className="sec-line" /></div>
+          <div style={{ borderRadius: 10, overflow: 'hidden', marginBottom: 4 }}>
+            <table className="rep-table">
+              <thead><tr><th>Protocol</th><th>Weekly runs</th><th></th></tr></thead>
+              <tbody>
+                {selectedProtocols.map((p: any, i: number) => (
+                  <tr className={i % 2 === 1 ? 'odd' : ''} key={p.protocolId + i}>
+                    <td style={{ fontWeight: 600 }}>{p.title}</td>
+                    <td>{p.runsPerWeek}</td>
+                    <td>
+                      <a href={p.sourceUrl} target="_blank" rel="noreferrer" style={{ color: '#049295', fontWeight: 600 }}>
+                        View on protocols.io →
+                      </a>
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -225,6 +225,8 @@ h1,h2,h3,h4,h5,h6{font-family:var(--head);font-weight:500;letter-spacing:-.01em}
 .stat{background:var(--white);border-radius:14px;padding:14px 16px;text-align:center;border:1px solid var(--br);box-shadow:var(--shadow-sm)}
 .stat-val{font-family:var(--head);font-size:20px;font-weight:600;margin-bottom:4px}
 .stat-lbl{font-family:var(--mono);font-size:10px;color:var(--mid);text-transform:uppercase;letter-spacing:.08em}
+.stat-link{font:inherit;cursor:pointer;width:100%;transition:all .18s cubic-bezier(.4,0,.2,1)}
+.stat-link:hover{box-shadow:var(--shadow-md);border-color:var(--teal);transform:translateY(-2px)}
 .sec-head{font-family:var(--head);font-size:14px;font-weight:500;color:var(--dark);margin:18px 0 10px;display:flex;align-items:center;gap:10px;letter-spacing:.01em}
 .sec-line{flex:1;height:1px;background:linear-gradient(90deg,var(--br),transparent)}
 .rep-table{width:100%;border-collapse:collapse;background:var(--white);border-radius:14px;overflow:hidden;border:1px solid var(--br);margin-bottom:4px;box-shadow:var(--shadow-sm)}

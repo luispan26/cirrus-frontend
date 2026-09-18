@@ -39,10 +39,7 @@ export function InventoryPage() {
 
   const [eqForm, setEqForm] = useState({ equipmentId: '', name: '', costUsd: '', widthFt: '', depthFt: '', heightFt: '', stationId: '' });
   const [eqFormError, setEqFormError] = useState('');
-
-  const [editingEquipmentId, setEditingEquipmentId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ name: '', costUsd: '', widthFt: '', depthFt: '', heightFt: '' });
-  const [editFormError, setEditFormError] = useState('');
+  const [rowError, setRowError] = useState<{ equipmentId: string; message: string } | null>(null);
 
   async function handleCreateEquipment() {
     setEqFormError('');
@@ -72,38 +69,24 @@ export function InventoryPage() {
     await deleteEquipment({ variables: { equipmentId: id } });
     refetchEquipment();
   }
-  function startEditEquipment(eq: EquipmentRow) {
-    setEditingEquipmentId(eq.equipmentId);
-    setEditForm({ name: eq.name, costUsd: String(eq.costUsd), widthFt: String(eq.widthFt), depthFt: String(eq.depthFt), heightFt: String(eq.heightFt) });
-    setEditFormError('');
-  }
-  function cancelEditEquipment() {
-    setEditingEquipmentId(null);
-    setEditFormError('');
-  }
-  async function handleSaveEquipment(id: string) {
-    setEditFormError('');
-    const { name, costUsd, widthFt, depthFt, heightFt } = editForm;
-    if (!name.trim() || !costUsd || !widthFt || !depthFt || !heightFt) {
-      setEditFormError('Name, cost, and all three dimensions are required.');
-      return;
-    }
-    try {
-      await updateEquipment({
-        variables: {
-          equipmentId: id,
-          input: { name: name.trim(), costUsd: parseFloat(costUsd), widthFt: parseFloat(widthFt), depthFt: parseFloat(depthFt), heightFt: parseFloat(heightFt) },
-        },
-      });
-      setEditingEquipmentId(null);
-      refetchEquipment();
-    } catch (e) {
-      setEditFormError(errMsg(e));
-    }
-  }
   async function handleReassignEquipment(id: string, stationId: string) {
     await assignEquipment({ variables: { equipmentId: id, stationId: stationId || null } });
     refetchEquipment();
+  }
+
+  // Commits a single field edited in place in the table. `value` is the raw
+  // input string; a no-op (blank, unchanged, or unparsable number) skips the
+  // mutation entirely so blurring a field you didn't touch doesn't refetch.
+  async function handleUpdateField(eq: EquipmentRow, field: 'costUsd' | 'widthFt' | 'depthFt' | 'heightFt', value: string) {
+    const num = parseFloat(value);
+    if (Number.isNaN(num) || num === eq[field]) return;
+    setRowError(null);
+    try {
+      await updateEquipment({ variables: { equipmentId: eq.equipmentId, input: { [field]: num } } });
+      refetchEquipment();
+    } catch (e) {
+      setRowError({ equipmentId: eq.equipmentId, message: errMsg(e) });
+    }
   }
 
   // The dropdown's vocabulary is every tag Canvas actually uses across the
@@ -118,6 +101,14 @@ export function InventoryPage() {
   async function handleAddTag(eq: EquipmentRow, tag: string) {
     if (!tag || eq.allTags.includes(tag)) return;
     await updateEquipment({ variables: { equipmentId: eq.equipmentId, input: { tags: [...eq.tags, tag] } } });
+    refetchEquipment();
+  }
+
+  // Only tags in eq.tags (human-entered) can be removed here — a tag that's
+  // in allTags solely via canvasTags is sync-owned and would just reappear
+  // on the next Canvas sync, so it's not offered a remove control.
+  async function handleRemoveTag(eq: EquipmentRow, tag: string) {
+    await updateEquipment({ variables: { equipmentId: eq.equipmentId, input: { tags: eq.tags.filter((t) => t !== tag) } } });
     refetchEquipment();
   }
 
@@ -162,11 +153,11 @@ export function InventoryPage() {
           <colgroup>
             <col style={{ width: 130 }} />
             <col />
-            <col style={{ width: 100 }} />
-            <col style={{ width: 150 }} />
+            <col style={{ width: 120 }} />
+            <col style={{ width: 230 }} />
+            <col style={{ width: 200 }} />
             <col style={{ width: 220 }} />
-            <col style={{ width: 220 }} />
-            <col style={{ width: 150 }} />
+            <col style={{ width: 110 }} />
           </colgroup>
           <thead>
             <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--br)' }}>
@@ -181,42 +172,6 @@ export function InventoryPage() {
           </thead>
           <tbody>
             {(equipmentData?.equipmentList ?? []).map((eq) => {
-              if (editingEquipmentId === eq.equipmentId) {
-                return (
-                  <tr key={eq.equipmentId} style={{ borderBottom: '1px solid var(--br)' }}>
-                    <td style={{ padding: '6px 10px 6px 6px', fontFamily: 'var(--mono)' }}>{eq.equipmentId}</td>
-                    <td colSpan={6} style={{ padding: '10px' }}>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', maxWidth: 900 }}>
-                        <div style={{ flex: '0 1 220px' }}>
-                          <label style={{ display: 'block', fontSize: 10, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Name</label>
-                          <input className="field-input" style={{ width: '100%' }} value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
-                        </div>
-                        <div style={{ flex: '0 0 100px' }}>
-                          <label style={{ display: 'block', fontSize: 10, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Cost ($)</label>
-                          <input className="field-input" style={{ width: '100%' }} type="number" value={editForm.costUsd} onChange={(e) => setEditForm({ ...editForm, costUsd: e.target.value })} />
-                        </div>
-                        <div style={{ flex: '0 0 90px' }}>
-                          <label style={{ display: 'block', fontSize: 10, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Width (ft)</label>
-                          <input className="field-input" style={{ width: '100%' }} type="number" value={editForm.widthFt} onChange={(e) => setEditForm({ ...editForm, widthFt: e.target.value })} />
-                        </div>
-                        <div style={{ flex: '0 0 90px' }}>
-                          <label style={{ display: 'block', fontSize: 10, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Depth (ft)</label>
-                          <input className="field-input" style={{ width: '100%' }} type="number" value={editForm.depthFt} onChange={(e) => setEditForm({ ...editForm, depthFt: e.target.value })} />
-                        </div>
-                        <div style={{ flex: '0 0 90px' }}>
-                          <label style={{ display: 'block', fontSize: 10, fontWeight: 600, color: 'var(--mid)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 4 }}>Height (ft)</label>
-                          <input className="field-input" style={{ width: '100%' }} type="number" value={editForm.heightFt} onChange={(e) => setEditForm({ ...editForm, heightFt: e.target.value })} />
-                        </div>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <button className="btn-teal" style={{ padding: '9px 14px', fontSize: 12 }} onClick={() => handleSaveEquipment(eq.equipmentId)}>Save</button>
-                          <button className="btn-out" style={{ padding: '9px 14px', fontSize: 12 }} onClick={cancelEditEquipment}>Cancel</button>
-                        </div>
-                      </div>
-                      {editFormError && <div style={{ color: '#a33', fontSize: 12, marginTop: 8 }}>{editFormError}</div>}
-                    </td>
-                  </tr>
-                );
-              }
               // needsDimensions means this row is still a Canvas-synced
               // placeholder, but the placeholder only ever touches two
               // areas — cost and the width/depth/height trio (see
@@ -227,6 +182,7 @@ export function InventoryPage() {
               const costIsPlaceholder = eq.needsDimensions && eq.costUsd === 0;
               const dimsArePlaceholder = eq.needsDimensions && eq.widthFt === 1 && eq.depthFt === 1 && eq.heightFt === 1;
               const isUntagged = eq.allTags.length === 0;
+              const placeholderInputStyle = { outline: '2px solid #a67c00', outlineOffset: -2 };
               const placeholderCellStyle = { outline: '2px solid #a67c00', outlineOffset: -2, borderRadius: 3 };
               return (
                 <tr key={eq.equipmentId} style={{ borderBottom: '1px solid var(--br)' }}>
@@ -237,8 +193,49 @@ export function InventoryPage() {
                       <span title="No longer seen in the last Canvas sync" style={{ marginLeft: 6, fontSize: 11, color: 'var(--mid)', border: '1px solid var(--br)', borderRadius: 4, padding: '1px 5px' }}>missing from Canvas</span>
                     )}
                   </td>
-                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', ...(costIsPlaceholder ? placeholderCellStyle : {}) }}>${eq.costUsd.toLocaleString()}</td>
-                  <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', ...(dimsArePlaceholder ? placeholderCellStyle : {}) }}>{eq.widthFt} × {eq.depthFt} × {eq.heightFt}</td>
+                  <td style={{ padding: '6px 10px' }}>
+                    <input
+                      key={`cost-${eq.costUsd}`}
+                      className="field-input"
+                      style={{ width: 90, padding: '5px 8px', fontSize: 13, ...(costIsPlaceholder ? placeholderInputStyle : {}) }}
+                      type="number"
+                      defaultValue={eq.costUsd}
+                      onBlur={(e) => handleUpdateField(eq, 'costUsd', e.target.value)}
+                    />
+                  </td>
+                  <td style={{ padding: '6px 10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <input
+                        key={`w-${eq.widthFt}`}
+                        className="field-input"
+                        title="Width (ft)"
+                        style={{ width: 54, padding: '5px 6px', fontSize: 13, ...(dimsArePlaceholder ? placeholderInputStyle : {}) }}
+                        type="number"
+                        defaultValue={eq.widthFt}
+                        onBlur={(e) => handleUpdateField(eq, 'widthFt', e.target.value)}
+                      />
+                      <span style={{ color: 'var(--mid)' }}>×</span>
+                      <input
+                        key={`d-${eq.depthFt}`}
+                        className="field-input"
+                        title="Depth (ft)"
+                        style={{ width: 54, padding: '5px 6px', fontSize: 13, ...(dimsArePlaceholder ? placeholderInputStyle : {}) }}
+                        type="number"
+                        defaultValue={eq.depthFt}
+                        onBlur={(e) => handleUpdateField(eq, 'depthFt', e.target.value)}
+                      />
+                      <span style={{ color: 'var(--mid)' }}>×</span>
+                      <input
+                        key={`h-${eq.heightFt}`}
+                        className="field-input"
+                        title="Height (ft)"
+                        style={{ width: 54, padding: '5px 6px', fontSize: 13, ...(dimsArePlaceholder ? placeholderInputStyle : {}) }}
+                        type="number"
+                        defaultValue={eq.heightFt}
+                        onBlur={(e) => handleUpdateField(eq, 'heightFt', e.target.value)}
+                      />
+                    </div>
+                  </td>
                   <td style={{ padding: '6px 10px' }}>
                     <SearchableSelect
                       style={{ width: '100%' }}
@@ -250,9 +247,25 @@ export function InventoryPage() {
                   </td>
                   <td style={{ padding: '6px 10px', ...(isUntagged ? placeholderCellStyle : {}) }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: eq.allTags.length > 0 ? 6 : 0 }}>
-                      {eq.allTags.map((tag) => (
-                        <span key={tag} style={{ fontSize: 11, color: 'var(--td)', background: 'var(--tl)', border: '1px solid var(--tline)', borderRadius: 4, padding: '1px 6px' }}>{tag}</span>
-                      ))}
+                      {eq.allTags.map((tag) => {
+                        const removable = eq.tags.includes(tag);
+                        return (
+                          <span key={tag} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--td)', background: 'var(--tl)', border: '1px solid var(--tline)', borderRadius: 4, padding: '1px 4px 1px 6px' }}>
+                            {tag}
+                            {removable ? (
+                              <button
+                                onClick={() => handleRemoveTag(eq, tag)}
+                                title={`Remove "${tag}"`}
+                                style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--mid)', fontSize: 12, lineHeight: 1, padding: 0 }}
+                              >
+                                ×
+                              </button>
+                            ) : (
+                              <span title="Synced from Canvas — remove it there" style={{ color: 'var(--mid)', fontSize: 10 }}>🔒</span>
+                            )}
+                          </span>
+                        );
+                      })}
                     </div>
                     {/* Always reset to blank after adding — this is a
                         one-shot "add a tag" action, not a persistent
@@ -268,9 +281,11 @@ export function InventoryPage() {
                       placeholder="+ Add tag…"
                     />
                   </td>
-                  <td style={{ padding: '6px 10px', display: 'flex', gap: 6 }}>
-                    <button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => startEditEquipment(eq)}>Edit</button>
+                  <td style={{ padding: '6px 10px' }}>
                     <button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => handleDeleteEquipment(eq.equipmentId)}>Delete</button>
+                    {rowError?.equipmentId === eq.equipmentId && (
+                      <div style={{ color: '#a33', fontSize: 11, marginTop: 4 }}>{rowError.message}</div>
+                    )}
                   </td>
                 </tr>
               );
