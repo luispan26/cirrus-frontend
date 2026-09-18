@@ -673,3 +673,64 @@ export function evaluateUtilityReachability(fixture: SandboxFixture, baseObjects
   }
   return { reachable, requirementResults };
 }
+
+// The inverse of buildLayoutGeometryInput's rasterization: turns
+// placeBenchesForSandbox's grid-cell result (PlaceBenchesForSandboxMutation's
+// benchResult.benches, in the placement subgrid's own coordinates) into
+// SandboxFixture objects a person can see, select, and nudge like any other
+// hand-placed fixture.
+//
+// ASSUMES the sandbox's room.gridFt is 1 (one room cell = 12"): the
+// backend's own sandbox-zone-request.ts hardcodes a 12"-per-cell grid for
+// every room it solves against today (see DEFAULT_GRID_CELL_SIZE_INCHES's
+// own comment there) regardless of what this layout's actual gridFt is, so
+// converting through a different gridFt here would only relocate a bench
+// onto a grid the backend never actually solved against — not make the
+// result more correct. Fix both sides together, not just this one, once a
+// real gridFt is threaded through as an input field.
+export interface PlacementGridCell { row: number; column: number; }
+
+export interface PlacedBenchGeometry {
+  id: string;
+  zoneId: string;
+  rotationDegrees: number;
+  footprintCells: PlacementGridCell[]; // in the placement subgrid — see PlacedBenchType.footprintCells' own field comment
+}
+
+const SANDBOX_ROOM_CELL_SIZE_INCHES = 12; // matches DEFAULT_GRID_CELL_SIZE_INCHES on the backend — see this function's own header comment
+
+// A manually-placed bench's own instanceId is `bench-${Date.now()}` (see
+// LayoutSandboxPage's placeFixtureAt) — this prefix must never collide with
+// that, since a caller re-running bench placement needs to tell "replace my
+// own previous auto-placed benches" apart from "a person's hand-placed
+// bench happens to also start with bench-".
+export const AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX = 'auto-bench-';
+
+export function sandboxFixturesFromBenchPlacement(benches: PlacedBenchGeometry[], placementCellSizeInches: number, zoneNameById: Map<string, string>): SandboxFixture[] {
+  return benches.map((bench) => {
+    const rows = bench.footprintCells.map((c) => c.row);
+    const columns = bench.footprintCells.map((c) => c.column);
+    const minRow = Math.min(...rows), maxRow = Math.max(...rows);
+    const minColumn = Math.min(...columns), maxColumn = Math.max(...columns);
+    const footprintWidthFt = ((maxColumn - minColumn + 1) * placementCellSizeInches) / 12;
+    const footprintHeightFt = ((maxRow - minRow + 1) * placementCellSizeInches) / 12;
+    // fixtureFootprint swaps width/depth for a 90/270 fixture — undo that
+    // here so re-deriving the footprint from (widthFt, depthFt, orientation)
+    // reproduces the real solved footprint exactly.
+    const vertical = bench.rotationDegrees === 90 || bench.rotationDegrees === 270;
+    const widthFt = vertical ? footprintHeightFt : footprintWidthFt;
+    const depthFt = vertical ? footprintWidthFt : footprintHeightFt;
+
+    return {
+      instanceId: `${AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX}${bench.id}`,
+      kind: 'bench',
+      name: zoneNameById.get(bench.zoneId) ? `Bench (${zoneNameById.get(bench.zoneId)})` : 'Bench',
+      x: (minColumn * placementCellSizeInches) / SANDBOX_ROOM_CELL_SIZE_INCHES,
+      y: (minRow * placementCellSizeInches) / SANDBOX_ROOM_CELL_SIZE_INCHES,
+      widthFt,
+      depthFt,
+      orientation: (bench.rotationDegrees as FixtureOrientation) ?? 0,
+      stations: [],
+    };
+  });
+}

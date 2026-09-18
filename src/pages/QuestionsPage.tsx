@@ -9,14 +9,14 @@ import { useIntakeSync } from '../hooks/useIntakeSync';
 import {
   QS, OPERATION_OPTS, DAMPLAB_MATCH_KEYWORDS, shouldSkip, stepIndex, buildFinalIntakeJson, FEASIBILITY_GATE_IDS,
   computeBasicLabEquipment, applyBasicLabEquipmentOverrides, BASIC_EQUIPMENT_CATEGORIES,
-  type Answers, type QuestionOption,
+  type Answers, type QuestionOption, type WallSide,
 } from '../lib/questions';
 import {
   FEASIBILITY_CHECK_QUERY, EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, VALIDATED_PROTOCOLS_QUERY, MY_REPORTS_QUERY,
 } from '../graphql/operations';
 import { getSessionId } from '../lib/session';
 
-type EquipmentRow = { equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null; allTags: string[] };
+type EquipmentRow = { equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null; utilityType: string | null; allTags: string[] };
 type EquipmentListRow = { listKey: string; displayName: string; equipmentIds: string[] };
 
 type FeasibilityIssue = { field: string; message: string };
@@ -263,6 +263,7 @@ function QuestionBody({
       {q.type === 'space' && <SpaceBody answers={answers} setField={setField} generatedLayout={generatedLayout} />}
       {q.type === 'budget' && <BudgetBody answers={answers} setField={setField} />}
       {q.type === 'equipment_plan' && <EquipmentPlanBody answers={answers} setField={setField} />}
+      {q.type === 'layout_prefs' && <LayoutPrefsBody answers={answers} setField={setField} />}
     </div>
   );
 }
@@ -1021,6 +1022,210 @@ function ComputedEquipmentList({
           </div>
         );
       })}
+      </div>
+    </div>
+  );
+}
+
+const WALL_OPTIONS: { value: WallSide; label: string }[] = [
+  { value: 'N', label: 'North wall' },
+  { value: 'S', label: 'South wall' },
+  { value: 'E', label: 'East wall' },
+  { value: 'W', label: 'West wall' },
+];
+
+function capitalizeWords(s: string): string {
+  return s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// The layout_prefs step: layout-priority sliders plus optional manual
+// door/utility placement — the intake side of LayoutGeneratorService's
+// optimization pass and door/utilities fields (see buildLayoutPrefsJson in
+// questions.ts). Every control here is opt-in by construction: each one only
+// ever calls setField from its own onChange, never from a default/prop value
+// on mount, so a user who never touches this step sends nothing and the
+// generator behaves exactly as it did before this step existed.
+function LayoutPrefsBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+  const width = parseFloat((answers.width_ft as string) || '0') || 0;
+  const height = parseFloat((answers.height_ft as string) || '0') || 0;
+  const hasRoomSize = width > 0 && height > 0;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+      <LayoutPrioritySliders answers={answers} setField={setField} />
+      <LayoutDoorPicker answers={answers} setField={setField} hasRoomSize={hasRoomSize} width={width} height={height} />
+      <LayoutUtilityPicker answers={answers} setField={setField} hasRoomSize={hasRoomSize} width={width} height={height} />
+    </div>
+  );
+}
+
+function PrioritySlider({ label, hint, value, onChange }: { label: string; hint: string; value: number | undefined; onChange: (v: number) => void }) {
+  return (
+    <div>
+      <label className="field-label">{label}</label>
+      <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 6 }}>{hint}</p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 11, color: 'var(--mid)' }}>Low</span>
+        <input
+          type="range" min={0} max={1} step={0.05}
+          value={value ?? 0.5}
+          onChange={(e) => onChange(Number(e.target.value))}
+          style={{ flex: 1 }}
+        />
+        <span style={{ fontSize: 11, color: 'var(--mid)' }}>High</span>
+      </div>
+    </div>
+  );
+}
+
+function LayoutPrioritySliders({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+  return (
+    <div className="field-wrap">
+      <label className="field-label">Layout priorities</label>
+      <p className="q-inline-help" style={{ marginTop: 0 }}>
+        Leave these alone for a balanced layout. Moving one re-runs bench placement to favor it.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <PrioritySlider
+          label="Throughput"
+          hint="How much to minimize travel time between stations in a workflow."
+          value={answers.layout_priority_throughput as number | undefined}
+          onChange={(v) => setField('layout_priority_throughput', v)}
+        />
+        <PrioritySlider
+          label="Walking distance"
+          hint="How much to minimize overall distance walked between stations."
+          value={answers.layout_priority_walking_distance as number | undefined}
+          onChange={(v) => setField('layout_priority_walking_distance', v)}
+        />
+        <PrioritySlider
+          label="Contamination control"
+          hint="How strongly to keep each zone's equipment clustered together, away from other zones."
+          value={answers.layout_priority_contamination as number | undefined}
+          onChange={(v) => setField('layout_priority_contamination', v)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function LayoutDoorPicker({
+  answers, setField, hasRoomSize, width, height,
+}: {
+  answers: Answers; setField: (k: string, v: unknown) => void; hasRoomSize: boolean; width: number; height: number;
+}) {
+  const wall = answers.door_wall as WallSide | undefined;
+  const manual = !!wall;
+  const runLength = wall === 'N' || wall === 'S' ? width : height;
+
+  function useAuto() {
+    setField('door_wall', undefined);
+    setField('door_offset_ft', undefined);
+  }
+
+  return (
+    <div className="field-wrap">
+      <label className="field-label">Door placement</label>
+      {!hasRoomSize ? (
+        <p className="q-inline-help" style={{ marginTop: 0 }}>Set your room size on the Space step first to choose a door location.</p>
+      ) : (
+        <>
+          <p className="q-inline-help" style={{ marginTop: 0 }}>Defaults to a centered door on the south wall if left on auto.</p>
+          <div className="chips" style={{ marginBottom: manual ? 10 : 0 }}>
+            <span className={`chip${!manual ? ' sel' : ''}`} onClick={useAuto}>Let the generator choose</span>
+            <span className={`chip${manual ? ' sel' : ''}`} onClick={() => setField('door_wall', 'S')}>Choose manually</span>
+          </div>
+          {manual && (
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <select className="field-input" style={{ width: 160 }} value={wall} onChange={(e) => setField('door_wall', e.target.value)}>
+                {WALL_OPTIONS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
+              </select>
+              <input
+                className="field-input" type="number" style={{ width: 120 }} min={0} max={runLength}
+                placeholder="Offset (ft)"
+                value={(answers.door_offset_ft as string | number | undefined) ?? ''}
+                onChange={(e) => setField('door_offset_ft', e.target.value)}
+              />
+              <span style={{ fontSize: 12, color: 'var(--mid)' }}>ft along a {runLength} ft wall</span>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Only surfaces a utility type if it's needed by something already on the
+// finalized Basic Lab Equipment List (Q3's basic_lab_equipment_final) — a
+// selected protocol's own equipment usage (bom/protocol-equipment-list.ts's
+// Protocols Equipment List) is computed server-side from real usage data and
+// isn't visible to this step, so a utility type only that equipment needs
+// won't get a placement control here. It still gets the generator's existing
+// "needs a hookup that wasn't in the request" warning either way — this step
+// only ever adds placements, never removes the fallback.
+function LayoutUtilityPicker({
+  answers, setField, hasRoomSize, width, height,
+}: {
+  answers: Answers; setField: (k: string, v: unknown) => void; hasRoomSize: boolean; width: number; height: number;
+}) {
+  const { data, loading } = useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
+  const catalog = data?.equipmentList ?? [];
+  const finalEquipmentIds = new Set(((answers.basic_lab_equipment_final as { equipment_id: string }[]) || []).map((r) => r.equipment_id));
+
+  const neededTypes = Array.from(new Set(
+    catalog.filter((eq) => eq.utilityType && finalEquipmentIds.has(eq.equipmentId)).map((eq) => eq.utilityType as string),
+  )).sort();
+
+  const placements = (answers.utility_placements as Record<string, { wall: WallSide; offsetFt: number }>) || {};
+
+  function setPlacementWall(type: string, wall: WallSide | '') {
+    if (!wall) {
+      const { [type]: _removed, ...rest } = placements;
+      setField('utility_placements', rest);
+      return;
+    }
+    setField('utility_placements', { ...placements, [type]: { wall, offsetFt: placements[type]?.offsetFt ?? 0 } });
+  }
+  function setPlacementOffset(type: string, offsetFt: number) {
+    const current = placements[type];
+    if (!current) return;
+    setField('utility_placements', { ...placements, [type]: { ...current, offsetFt } });
+  }
+
+  if (loading || !hasRoomSize || neededTypes.length === 0) return null;
+
+  return (
+    <div className="field-wrap" style={{ marginBottom: 0 }}>
+      <label className="field-label">Utility hookups</label>
+      <p className="q-inline-help" style={{ marginTop: 0 }}>
+        Your equipment plan needs these hookups. Place any you already know the location for — anything left "Not specified" still gets placed, just flagged to confirm before build.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {neededTypes.map((type) => {
+          const placement = placements[type];
+          const runLength = placement?.wall === 'N' || placement?.wall === 'S' ? width : height;
+          return (
+            <div key={type} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, minWidth: 100 }}>{capitalizeWords(type)}</span>
+              <select
+                className="field-input" style={{ width: 160 }}
+                value={placement?.wall ?? ''}
+                onChange={(e) => setPlacementWall(type, e.target.value as WallSide | '')}
+              >
+                <option value="">Not specified</option>
+                {WALL_OPTIONS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
+              </select>
+              {placement && (
+                <input
+                  className="field-input" type="number" style={{ width: 120 }} min={0} max={runLength}
+                  placeholder="Offset (ft)"
+                  value={placement.offsetFt ?? ''}
+                  onChange={(e) => setPlacementOffset(type, Number(e.target.value) || 0)}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -17,7 +17,18 @@
 // from placed objects — the rasterization itself was never actually
 // exercised until a real plumbing_point was placed in the live UI.
 import { describe, expect, test } from 'vitest';
-import { EMPTY_SANDBOX_LAYOUT, buildLayoutGeometryInput, centeredRectFootprint, type SandboxBaseObject, type SandboxLayout, type SandboxPoint } from './layout-sandbox';
+import {
+  AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX,
+  EMPTY_SANDBOX_LAYOUT,
+  buildLayoutGeometryInput,
+  centeredRectFootprint,
+  fixtureFootprint,
+  sandboxFixturesFromBenchPlacement,
+  type PlacedBenchGeometry,
+  type SandboxBaseObject,
+  type SandboxLayout,
+  type SandboxPoint,
+} from './layout-sandbox';
 
 function layoutWithPoint(point: SandboxPoint, room: { widthFt: number; heightFt: number; gridFt: number } = { widthFt: 40, heightFt: 30, gridFt: 1 }): SandboxLayout {
   const object: SandboxBaseObject = {
@@ -151,5 +162,71 @@ describe('centeredRectFootprint', () => {
     const layout: SandboxLayout = { ...structuredClone(EMPTY_SANDBOX_LAYOUT), room, baseObjects: [object] };
     const geometry = buildLayoutGeometryInput(layout);
     expect(geometry.blockedCells).toHaveLength(18);
+  });
+});
+
+describe('sandboxFixturesFromBenchPlacement', () => {
+  // The round trip this function exists for: a solved bench's footprint
+  // (a rectangle of placement-subgrid cells) must come back out of
+  // fixtureFootprint(resultingFixture, 1) as the exact same cell rectangle
+  // it started as, for both rotations BENCH_PLACEMENT_MODEL ever returns.
+  function rectCells(minRow: number, maxRow: number, minColumn: number, maxColumn: number): { row: number; column: number }[] {
+    const cells: { row: number; column: number }[] = [];
+    for (let row = minRow; row <= maxRow; row++) for (let column = minColumn; column <= maxColumn; column++) cells.push({ row, column });
+    return cells;
+  }
+
+  test('rotationDegrees 0: a 12x5 subcell footprint (72"x30" bench at 6"/subcell) round-trips', () => {
+    const bench: PlacedBenchGeometry = { id: 'b1', zoneId: 'zone-a', rotationDegrees: 0, footprintCells: rectCells(2, 6, 3, 14) };
+    const [fixture] = sandboxFixturesFromBenchPlacement([bench], 6, new Map());
+    expect(fixture.orientation).toBe(0);
+    // 12 subcells wide * 6" = 72" = 6ft; 5 subcells deep * 6" = 30" = 2.5ft.
+    expect(fixture.widthFt).toBeCloseTo(6);
+    expect(fixture.depthFt).toBeCloseTo(2.5);
+    const footprint = fixtureFootprint(fixture, 1); // gridFt 1 -> footprint in feet, same units as widthFt/depthFt
+    expect(footprint).toEqual({ width: 6, height: 3 }); // ceil(2.5/1) = 3, not 2 -- Math.ceil rounding is fixtureFootprint's own behavior, not this function's
+  });
+
+  test('rotationDegrees 90: the same bench turned 90 degrees swaps its footprint span, and this function undoes that swap', () => {
+    const bench: PlacedBenchGeometry = { id: 'b2', zoneId: 'zone-a', rotationDegrees: 90, footprintCells: rectCells(2, 13, 3, 7) };
+    const [fixture] = sandboxFixturesFromBenchPlacement([bench], 6, new Map());
+    expect(fixture.orientation).toBe(90);
+    // Rotated: 5 subcells wide * 6" = 2.5ft, 12 subcells deep * 6" = 6ft --
+    // stored as (widthFt: 6, depthFt: 2.5) so fixtureFootprint's own
+    // vertical-swap logic reconstructs the real (2.5ft, 6ft) footprint.
+    expect(fixture.widthFt).toBeCloseTo(6);
+    expect(fixture.depthFt).toBeCloseTo(2.5);
+    const footprint = fixtureFootprint(fixture, 1);
+    expect(footprint).toEqual({ width: 3, height: 6 }); // ceil(2.5/1)=3 wide, 6 deep -- the 90-degree swap survived the round trip
+  });
+
+  test('position: the fixture lands at the footprint\'s minimum row/column corner, in room-cell units', () => {
+    const bench: PlacedBenchGeometry = { id: 'b3', zoneId: 'zone-a', rotationDegrees: 0, footprintCells: rectCells(4, 8, 10, 21) };
+    const [fixture] = sandboxFixturesFromBenchPlacement([bench], 6, new Map());
+    // minColumn=10, minRow=4, placementCellSizeInches=6 -> 60"=5ft, 24"=2ft,
+    // divided by the assumed 12"/room-cell (SANDBOX_ROOM_CELL_SIZE_INCHES).
+    expect(fixture.x).toBeCloseTo(5);
+    expect(fixture.y).toBeCloseTo(2);
+  });
+
+  test('names the fixture after its zone when a name is supplied, otherwise falls back to a generic label', () => {
+    const bench: PlacedBenchGeometry = { id: 'b4', zoneId: 'zone-a', rotationDegrees: 0, footprintCells: rectCells(0, 1, 0, 1) };
+    const [named] = sandboxFixturesFromBenchPlacement([bench], 6, new Map([['zone-a', 'Wet Bench Zone']]));
+    expect(named.name).toBe('Bench (Wet Bench Zone)');
+    const [unnamed] = sandboxFixturesFromBenchPlacement([bench], 6, new Map());
+    expect(unnamed.name).toBe('Bench');
+  });
+
+  // A manually-placed bench gets instanceId `bench-${Date.now()}`
+  // (LayoutSandboxPage's placeFixtureAt) — a caller re-running bench
+  // placement needs to replace only ITS OWN previous auto-placed benches
+  // (by filtering on this prefix), never a person's hand-placed one, so
+  // this prefix must never match that pattern.
+  test('instanceId uses a prefix that never collides with a manually-placed bench\'s own instanceId', () => {
+    const bench: PlacedBenchGeometry = { id: 'b5', zoneId: 'zone-a', rotationDegrees: 0, footprintCells: rectCells(0, 1, 0, 1) };
+    const [fixture] = sandboxFixturesFromBenchPlacement([bench], 6, new Map());
+    const manualBenchInstanceId = `bench-${Date.now()}`;
+    expect(fixture.instanceId.startsWith(AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX)).toBe(true);
+    expect(manualBenchInstanceId.startsWith(AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX)).toBe(false);
   });
 });

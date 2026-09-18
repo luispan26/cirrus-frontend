@@ -84,6 +84,11 @@ export const PLACE_BENCHES_MUTATION = gql`
       validation {
         state
         violations
+        unroutableBenchIds
+        navigableRegionCells {
+          row
+          column
+        }
       }
       placementGrid {
         rows
@@ -117,6 +122,108 @@ export const PLACE_BENCHES_MUTATION = gql`
         accessCells {
           row
           column
+        }
+      }
+    }
+  }
+`;
+
+export const GENERATE_ZONES_AND_PLACE_BENCHES_MUTATION = gql`
+  mutation GenerateZonesAndPlaceBenches($input: GenerateZonesAndPlaceBenchesInput!) {
+    generateZonesAndPlaceBenches(input: $input) {
+      zoneResult {
+        solveStatus
+        validation {
+          state
+          violations
+        }
+        unassignedCells {
+          row
+          column
+        }
+        circulationCells {
+          row
+          column
+        }
+        zones {
+          id
+          family
+          areaCells
+          minimumWidthCells
+          cells {
+            row
+            column
+          }
+          boundingBox {
+            minimumRow
+            maximumRow
+            minimumColumn
+            maximumColumn
+          }
+          boundaryEdges {
+            side
+            cell {
+              row
+              column
+            }
+          }
+          circulationAccessCells {
+            row
+            column
+          }
+          adjacentFeatureIds
+          nearbyUtilities {
+            featureId
+            type
+            distanceCells
+          }
+        }
+      }
+      benchResult {
+        solveStatus
+        accessConnectivityMode
+        validation {
+          state
+          violations
+          unroutableBenchIds
+          navigableRegionCells {
+            row
+            column
+          }
+        }
+        placementGrid {
+          rows
+          columns
+          cellSizeInches
+          sourceCellSizeInches
+          scaleFactor
+        }
+        remainingZoneCells {
+          row
+          column
+        }
+        remainingPlaceableCells {
+          row
+          column
+        }
+        benches {
+          id
+          requirementId
+          zoneId
+          origin {
+            row
+            column
+          }
+          rotationDegrees
+          accessSide
+          footprintCells {
+            row
+            column
+          }
+          accessCells {
+            row
+            column
+          }
         }
       }
     }
@@ -320,7 +427,7 @@ export const DELETE_STATION_MUTATION = gql`
 export const EQUIPMENT_LIST_QUERY = gql`
   query EquipmentList {
     equipmentList {
-      equipmentId name costUsd widthFt depthFt heightFt stationId utilityRequirements mounting
+      equipmentId name costUsd widthFt depthFt heightFt stationId utilityType utilityRequirements mounting
       needsDimensions canvasDeleted canvasTags tags allTags
     }
   }
@@ -406,6 +513,81 @@ export const SOLVE_ZONE_REQUIREMENTS_MUTATION = gql`
         confirmedBiosafetyLevel
         minimumAreaCells
         targetAreaCells
+      }
+    }
+  }
+`;
+
+// The bench-placement counterpart to SOLVE_ZONE_REQUIREMENTS_MUTATION —
+// same room geometry + operationContexts, plus benchRequirements
+// referencing the zone ids that selection compiles to (call
+// solveZoneRequirements first to see them). zoneResult carries the real
+// per-zone cell lists (not a flat cellZones re-derivation), and
+// benchResult.benches is in the placement subgrid's own coordinates —
+// see layout-sandbox.ts's sandboxFixturesFromBenchPlacement for the
+// conversion back to the sandbox's (x, y) feet.
+export const PLACE_BENCHES_FOR_SANDBOX_MUTATION = gql`
+  mutation PlaceBenchesForSandbox($input: SandboxPlaceBenchesInput!) {
+    placeBenchesForSandbox(input: $input) {
+      status
+      blockingDiagnostics {
+        operationId
+        disposition
+        reason
+      }
+      insufficientDataDiagnostics {
+        operationIds
+        reason
+      }
+      zoneRequirements {
+        id
+        family
+        operationIds
+        materialClasses
+        requiresBsc
+        sharingPolicy
+        confirmedBiosafetyLevel
+        minimumAreaCells
+        targetAreaCells
+      }
+      zoneResult {
+        solveStatus
+        validation {
+          state
+          violations
+        }
+        zones {
+          id
+          cells {
+            row
+            column
+          }
+        }
+      }
+      benchResult {
+        solveStatus
+        placementGrid {
+          cellSizeInches
+        }
+        validation {
+          state
+          violations
+          unroutableBenchIds
+        }
+        benches {
+          id
+          requirementId
+          zoneId
+          origin {
+            row
+            column
+          }
+          rotationDegrees
+          footprintCells {
+            row
+            column
+          }
+        }
       }
     }
   }

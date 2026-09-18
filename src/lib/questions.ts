@@ -1,4 +1,8 @@
-export type QuestionType = 'radio' | 'multi' | 'space' | 'budget' | 'checklist' | 'equipment_plan';
+export type QuestionType = 'radio' | 'multi' | 'space' | 'budget' | 'checklist' | 'equipment_plan' | 'layout_prefs';
+
+// Mirrors the backend's WallSide (layout-generation/intake-payload.type.ts)
+// — kept in sync by hand, same convention as GENERAL_LAB_LIST_KEY etc. below.
+export type WallSide = 'N' | 'S' | 'E' | 'W';
 
 export interface QuestionOption {
   v: string;
@@ -44,7 +48,10 @@ export type Answers = Record<string, unknown>;
 // List — see computeBasicLabEquipment/applyBasicLabEquipmentOverrides below)
 // -> space -> operations (protocol selection, plus expected weekly runs per
 // protocol asked inline — see ProtocolSelectBody in QuestionsPage.tsx) ->
-// budget.
+// budget -> layout_prefs (optional — layout priority sliders plus manual
+// door/utility placement, all defaulted so a user can skip it entirely; see
+// LayoutPrefsBody in QuestionsPage.tsx and the layout_weights/door/utilities
+// fields on FinalIntakeJson below).
 //
 // There used to be a separate "Do you already have equipment?" step asked
 // first, unconditionally, before biosafety_level/biomaterials were answered
@@ -74,8 +81,8 @@ export type Answers = Record<string, unknown>;
 //
 // This is intentionally just the sizing-stage questions from the
 // generator's intake spec, plus the Prompt 1/2 equipment-planning questions
-// — no facilities/staff/schedule/constraints/growth/layout-weights/
-// business-model questions, and no "how long does each run take" question
+// — no facilities/staff/schedule/constraints/growth/business-model
+// questions, and no "how long does each run take" question
 // (the weekly-runs input only asks frequency — duration comes from each
 // protocol's own Operation.estimatedTimeHours metadata, see
 // capacity-planner.ts's estimatedTimeHoursFor). FinalIntakeJson.bsl (the
@@ -191,6 +198,10 @@ export const QS: Question[] = [
   { id: 'space', n: 4, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
   { id: 'operations', n: 5, t: 'Add additional protocols?', h: 'Check the ones this lab needs and set expected weekly runs for each — duration is pulled from the protocol itself.', type: 'multi', opts: OPERATION_OPTS },
   { id: 'budget', n: 6, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
+  {
+    id: 'layout_prefs', n: 7, t: 'Layout preferences', type: 'layout_prefs',
+    h: 'Optional — tune what the generator optimizes for, and where the door/utility hookups go. Leave anything here alone and the generator decides.',
+  },
 ];
 
 // Steps where advancing past them triggers a feasibilityCheck GraphQL call
@@ -210,6 +221,8 @@ export const INTAKE_FIELD_KEYS = [
   'space_method', 'width_ft', 'height_ft', 'space_floorplan_filename',
   'operations', 'protocol_runs_per_week', 'protocol_operation_by_id',
   'budget_desired', 'budget_max', 'budget_scope',
+  'layout_priority_throughput', 'layout_priority_walking_distance', 'layout_priority_contamination',
+  'door_wall', 'door_offset_ft', 'utility_placements',
 ];
 
 // No steps are skipped today — there used to be a gating "does your space
@@ -303,6 +316,22 @@ export interface FinalIntakeJson {
   // the real one. When more than one selected protocol shares an
   // operation, only the first is used for this lookup.
   demand: { runs_per_week_by_operation: Record<string, number>; protocol_ids_by_operation: Record<string, string> };
+  // The layout_prefs step's three fields, each present only if the user
+  // actually touched that control — see buildFinalIntakeJson below for the
+  // opt-in logic and LayoutPrefsBody (QuestionsPage.tsx) for the inputs.
+  // Absent means "let the generator decide", not "use these defaults" — the
+  // backend (LayoutGeneratorService.generate) treats a missing layout_weights
+  // as skip-the-optimization-pass, and a missing door/utilities as its own
+  // existing defaults (centered south-wall door, uncovered-utility warnings).
+  //
+  // door/utilities intentionally use the backend's own camelCase field names
+  // (offsetFt, not offset_ft) — unlike the rest of this JSON, these two
+  // objects are passed straight through to LayoutGeneratorService's
+  // DoorSpec/UtilitySpec (layout-generation/intake-payload.type.ts), not
+  // re-parsed by anything in between.
+  layout_weights?: { throughput: number; walking_distance: number; contamination: number };
+  door?: { wall: WallSide; offsetFt: number };
+  utilities?: { type: string; wall: WallSide; offsetFt: number }[];
 }
 
 export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
@@ -359,7 +388,43 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
     budget: { desired: budgetDesired, max: budgetMax || budgetDesired, scope: (a.budget_scope as string) || 'equipment_only' },
     allocation: { equipment: hasCon ? 0.5 : 0.7, construction: hasCon ? 0.25 : 0, staffing: 0.1, consumables: 0.1, contingency: 0.05 },
     demand: { runs_per_week_by_operation: runsPerWeekByOperation, protocol_ids_by_operation: protocolIdsByOperation },
+    ...buildLayoutPrefsJson(a),
   };
+}
+
+// layout_weights/door/utilities are each omitted entirely unless the user
+// actually touched the corresponding layout_prefs control (see
+// LayoutPrefsBody in QuestionsPage.tsx, which only ever calls setField from
+// an input's onChange, never on mount) — an untouched slider/selector must
+// not silently start sending a value, since the backend takes *any*
+// layout_weights presence as "run the optimization pass" (see
+// LayoutGeneratorService.generate).
+function buildLayoutPrefsJson(a: Answers): Pick<FinalIntakeJson, 'layout_weights' | 'door' | 'utilities'> {
+  const result: Pick<FinalIntakeJson, 'layout_weights' | 'door' | 'utilities'> = {};
+
+  const throughput = a.layout_priority_throughput as number | undefined;
+  const walkingDistance = a.layout_priority_walking_distance as number | undefined;
+  const contamination = a.layout_priority_contamination as number | undefined;
+  if (throughput !== undefined || walkingDistance !== undefined || contamination !== undefined) {
+    result.layout_weights = {
+      throughput: throughput ?? 0.5,
+      walking_distance: walkingDistance ?? 0.5,
+      contamination: contamination ?? 0.5,
+    };
+  }
+
+  const doorWall = a.door_wall as WallSide | undefined;
+  if (doorWall) {
+    result.door = { wall: doorWall, offsetFt: Number(a.door_offset_ft) || 0 };
+  }
+
+  const utilityPlacements = (a.utility_placements as Record<string, { wall: WallSide; offsetFt: number }>) || {};
+  const utilityEntries = Object.entries(utilityPlacements).filter(([, placement]) => placement?.wall);
+  if (utilityEntries.length > 0) {
+    result.utilities = utilityEntries.map(([type, placement]) => ({ type, wall: placement.wall, offsetFt: Number(placement.offsetFt) || 0 }));
+  }
+
+  return result;
 }
 
 export interface EquipmentListSummary { listKey: string; equipmentIds: string[]; }
