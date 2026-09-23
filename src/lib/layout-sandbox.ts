@@ -54,11 +54,13 @@ export interface SandboxBaseObject {
   plumbing?: { coldWater: boolean; hotWater: boolean; drain: boolean; diWater: boolean; processWaste: boolean; flowGpm?: number };
   ventilation?: { category: VentilationCategory; cfm?: number; ducted: boolean };
 }
-// The three typed point kinds are wall/ceiling-mounted service points, not
-// physical obstructions — like a window, they're attached to a surface but
-// don't occupy floor area, so they must not collide with fixtures or block
-// derived circulation the way a column, casework, or door footprint does.
-const NON_BLOCKING_BASE_KINDS = new Set<SandboxBaseObject['kind']>(['electrical_point', 'plumbing_point', 'ventilation_point']);
+// Windows and the three typed point kinds are attached to a wall/ceiling
+// but don't occupy floor area, so they must not collide with fixtures,
+// block derived circulation, or become no-placement cells for the bench
+// solvers the way a column, casework, or door footprint does. (A window's
+// drawn 0.3ft-deep strip used to round up to a full blocked row along its
+// wall — in effect a 1ft clearance nothing asked for.)
+const NON_BLOCKING_BASE_KINDS = new Set<SandboxBaseObject['kind']>(['window', 'electrical_point', 'plumbing_point', 'ventilation_point']);
 export function blocksFloorSpace(kind: SandboxBaseObject['kind']): boolean {
   return !NON_BLOCKING_BASE_KINDS.has(kind);
 }

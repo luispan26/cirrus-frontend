@@ -325,3 +325,12 @@ describe('buildBenchPlacementGeometryInput — fixtures are no-placement areas',
     expect(buildBenchPlacementGeometryInput(layout).blockedCells).toEqual([]);
   });
 });
+
+describe('architecture needs no clearance', () => {
+  test('a window on the wall blocks no floor; a column blocks only its own footprint', () => {
+    const window: SandboxBaseObject = { id: 'w', kind: 'window', name: 'Window', footprint: { points: [{ x: 5.8, y: 0 }, { x: 8.8, y: 0 }, { x: 8.8, y: 0.3 }, { x: 5.8, y: 0.3 }] } };
+    const column: SandboxBaseObject = { id: 'c', kind: 'column', name: 'Column', footprint: { points: [{ x: 10, y: 10 }, { x: 11, y: 10 }, { x: 11, y: 11 }, { x: 10, y: 11 }] } };
+    const geometry = buildBenchPlacementGeometryInput({ ...structuredClone(EMPTY_SANDBOX_LAYOUT), baseObjects: [window, column] });
+    expect(geometry.blockedCells).toEqual([10 * 40 + 10]);
+  });
+});
