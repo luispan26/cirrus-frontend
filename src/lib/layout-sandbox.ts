@@ -148,6 +148,63 @@ export function fixtureFootprint(fixture: SandboxFixture, gridFt: number) {
   return { width: Math.max(1, Math.ceil(width / gridFt)), height: Math.max(1, Math.ceil(depth / gridFt)) };
 }
 
+// A fixture's real footprint in feet — exact, not rounded up to whole grid
+// cells like fixtureFootprint. Solver-placed benches sit on a 6" grid (a
+// 2.5ft-deep bench, a half-foot offset), so rounding would make two benches
+// placed back to back look like they overlap.
+export interface RectFt { left: number; top: number; right: number; bottom: number; }
+export function fixtureRectFt(fixture: SandboxFixture, gridFt: number): RectFt {
+  const vertical = fixture.orientation === 90 || fixture.orientation === 270;
+  const width = vertical ? fixture.depthFt : fixture.widthFt;
+  const depth = vertical ? fixture.widthFt : fixture.depthFt;
+  const left = fixture.x * gridFt, top = fixture.y * gridFt;
+  return { left, top, right: left + width, bottom: top + depth };
+}
+
+// Which side of a fixture is its working front, by orientation: 0 faces
+// down the canvas (+y), 90 left, 180 up, 270 right — "front and back rotate
+// with the fixture" (ClearanceFields).
+export function fixtureFrontSide(orientation: FixtureOrientation): WallSide {
+  return orientation === 0 ? 'bottom' : orientation === 90 ? 'left' : orientation === 180 ? 'top' : 'right';
+}
+
+// The clear working aisle in front of a fixture (clearance.frontFt deep,
+// the full length of its front edge), or null when it has none.
+export function fixtureFrontAisleFt(fixture: SandboxFixture, gridFt: number): RectFt | null {
+  const depth = fixture.clearance?.frontFt ?? 0;
+  if (depth <= 0) return null;
+  const r = fixtureRectFt(fixture, gridFt);
+  switch (fixtureFrontSide(fixture.orientation)) {
+    case 'bottom': return { left: r.left, right: r.right, top: r.bottom, bottom: r.bottom + depth };
+    case 'top': return { left: r.left, right: r.right, top: r.top - depth, bottom: r.top };
+    case 'left': return { left: r.left - depth, right: r.left, top: r.top, bottom: r.bottom };
+    case 'right': return { left: r.right, right: r.right + depth, top: r.top, bottom: r.bottom };
+  }
+}
+
+// Kept clear in front of every door: the swing (door width deep) plus a
+// DOOR_LANDING_FT landing beyond it, a foot wider than the door on each
+// side — the same landing the zone/bench maximizer reserves on the backend
+// (room-circulation.ts computeDoorLandings).
+export const DOOR_LANDING_FT = 5;
+export function doorClearanceRectFt(door: SandboxBaseObject, room: { widthFt: number; heightFt: number }): RectFt | null {
+  if (!door.footprint.points.length) return null;
+  const b = polygonBounds(door.footprint);
+  const side = wallSideOfBounds(b, room);
+  const alongWall = side === 'top' || side === 'bottom';
+  const span = alongWall ? b.right - b.left : b.bottom - b.top;
+  const depth = span + DOOR_LANDING_FT;
+  const width = Math.max(span + 2, DOOR_LANDING_FT);
+  const center = alongWall ? (b.left + b.right) / 2 : (b.top + b.bottom) / 2;
+  const a0 = center - width / 2, a1 = center + width / 2;
+  switch (side) {
+    case 'top': return { left: a0, right: a1, top: 0, bottom: depth };
+    case 'bottom': return { left: a0, right: a1, top: room.heightFt - depth, bottom: room.heightFt };
+    case 'left': return { left: 0, right: depth, top: a0, bottom: a1 };
+    case 'right': return { left: room.widthFt - depth, right: room.widthFt, top: a0, bottom: a1 };
+  }
+}
+
 export function polygonBounds(polygon: SandboxPolygon) {
   return {
     left: Math.min(...polygon.points.map((p) => p.x)),
@@ -417,18 +474,16 @@ export function parseSandboxLayout(value: unknown): SandboxLayout | null {
     const legacy = fixture as Omit<SandboxFixture, 'orientation'> & { orientation?: FixtureOrientation | 'horizontal' | 'vertical' };
     const orientation = legacy.orientation === 'vertical' ? 90 : legacy.orientation === 'horizontal' ? 0 : legacy.orientation;
     if (![0, 90, 180, 270].includes(orientation as number)) return null;
-    // Fixture position is a grid CELL INDEX (see fixtureFootprint/canPlaceFixture
-    // and the CSS grid rendering in LayoutSandboxPage, which use x/y directly as
-    // a `grid-column`/`grid-row` line number — those must be whole numbers).
-    // The report generator computes bench positions in real feet using
-    // BENCH_DEPTH_FT (2.5 ft) back-to-back pairs, which lands every other
-    // bench on a half-integer (e.g. 7.5) — harmless to the generator's own
-    // real-number overlap math, but an invalid CSS grid line here, which
-    // silently falls back to grid auto-placement and stacks fixtures on top
-    // of each other. Flooring on the way in (rather than fixing the
-    // generator) keeps this the sandbox's own coordinate contract regardless
-    // of where a layout comes from — generated, imported, or hand-authored.
-    const parsed = { ...legacy, orientation, x: Math.floor(Number(legacy.x)), y: Math.floor(Number(legacy.y)) } as SandboxFixture;
+    // Fixture position is kept exactly as saved, fractions included.
+    // Solver-placed benches sit on a 6" grid, so a back-to-back pair lands
+    // every other bench on a half-foot (e.g. 7.5). This used to be floored
+    // because fixtures were drawn as CSS grid items (a grid line must be a
+    // whole number); they're now drawn absolutely at their exact feet
+    // (fixtureRectFt), and flooring shifted one bench of each pair half a
+    // foot — overlapping its partner or leaving a gap after any reload.
+    const x = Number(legacy.x), y = Number(legacy.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const parsed = { ...legacy, orientation, x, y } as SandboxFixture;
     if (parsed.kind === 'bench') {
       parsed.widthFt = BENCH_WIDTH_FT;
       parsed.depthFt = BENCH_DEPTH_FT;
@@ -572,25 +627,44 @@ export function buildLayoutGeometryInput(layout: SandboxLayout): LayoutGeometryI
   };
 }
 
-// Only rule enforced: no two floor-blocking placed objects (fixtures or
-// base objects) may occupy the same physical space — electrical/plumbing/
-// ventilation points are exempt (see blocksFloorSpace). Everything else
-// this used to check (clearance zones, exit/door-swing clearance,
-// circulation routing, bench capacity, station access faces, electrical
-// circuit wiring) has been intentionally removed.
+// The Sandbox's global rules — exactly two, both on exact footprints:
+//   1. Aisle clearance: every fixture's front working aisle
+//      (clearance.frontFt, on the side fixtureFrontSide names) lies inside
+//      the room and is clear of every other fixture and every
+//      floor-blocking base object. Aisles may overlap each other — two
+//      facing benches sharing one aisle is the normal layout.
+//   2. Door clearance: no fixture sits in a door's swing + landing
+//      (doorClearanceRectFt).
+// Everything else (fixture/base overlap, circulation routing, capacity,
+// station faces, wiring) is intentionally not checked here, so the solver's
+// own output shows up as-is. Manual placement/moves still refuse overlaps
+// (canPlaceFixture) — that's an editing aid, not a global rule.
 export function validateSandboxLayout(layout: SandboxLayout): LayoutViolation[] {
   const violations: LayoutViolation[] = [];
+  const gridFt = layout.room.gridFt;
+  const overlaps = (a: RectFt, b: RectFt) => a.left < b.right - 1e-6 && b.left < a.right - 1e-6 && a.top < b.bottom - 1e-6 && b.top < a.bottom - 1e-6;
+  const blockingBase = layout.baseObjects.filter((object) => blocksFloorSpace(object.kind) && object.footprint.points.length);
+
   for (const fixture of layout.fixtures) {
-    if (!canPlaceFixture(fixture, layout.fixtures, layout.baseObjects, layout.room.gridFt)) {
-      violations.push({ id: `placement-${fixture.instanceId}`, severity: 'error', layer: 'validation', objectIds: [fixture.instanceId], message: `${fixture.name} overlaps another object.`, fix: { type: 'move-fixture', targetId: fixture.instanceId, label: 'Move to nearest open position' } });
+    const aisle = fixtureFrontAisleFt(fixture, gridFt);
+    if (!aisle) continue;
+    const outside = aisle.left < -1e-6 || aisle.top < -1e-6 || aisle.right > layout.room.widthFt + 1e-6 || aisle.bottom > layout.room.heightFt + 1e-6;
+    const blockers = [
+      ...layout.fixtures.filter((other) => other.instanceId !== fixture.instanceId && overlaps(aisle, fixtureRectFt(other, gridFt))).map((other) => ({ id: other.instanceId, name: other.name })),
+      ...blockingBase.filter((object) => overlaps(aisle, polygonBounds(object.footprint))).map((object) => ({ id: object.id, name: object.name })),
+    ];
+    if (outside || blockers.length > 0) {
+      const what = blockers.length > 0 ? `blocked by ${blockers.map((b) => b.name).join(', ')}` : 'runs outside the room';
+      violations.push({ id: `aisle-${fixture.instanceId}`, severity: 'error', layer: 'validation', objectIds: [fixture.instanceId, ...blockers.map((b) => b.id)], message: `${fixture.name}'s ${fixture.clearance?.frontFt} ft front aisle is ${what}.` });
     }
   }
-  for (let i = 0; i < layout.baseObjects.length; i++) {
-    for (let j = i + 1; j < layout.baseObjects.length; j++) {
-      const a = layout.baseObjects[i], b = layout.baseObjects[j];
-      if (blocksFloorSpace(a.kind) && blocksFloorSpace(b.kind) && a.footprint.points.length && b.footprint.points.length && rectsIntersect(polygonBounds(a.footprint), polygonBounds(b.footprint))) {
-        violations.push({ id: `base-overlap-${a.id}-${b.id}`, severity: 'error', layer: 'base', objectIds: [a.id, b.id], message: `${a.name} overlaps ${b.name}.` });
-      }
+
+  for (const door of layout.baseObjects.filter((object) => object.kind === 'door')) {
+    const zone = doorClearanceRectFt(door, layout.room);
+    if (!zone) continue;
+    const intruders = layout.fixtures.filter((fixture) => overlaps(zone, fixtureRectFt(fixture, gridFt)));
+    if (intruders.length > 0) {
+      violations.push({ id: `door-${door.id}`, severity: 'error', layer: 'validation', objectIds: intruders.map((f) => f.instanceId), message: `${intruders.map((f) => f.name).join(', ')} ${intruders.length === 1 ? 'sits' : 'sit'} in ${door.name}'s clearance (swing + ${DOOR_LANDING_FT} ft landing).` });
     }
   }
   return violations;
@@ -695,6 +769,19 @@ export interface PlacedBenchGeometry {
   zoneId: string;
   rotationDegrees: number;
   footprintCells: PlacementGridCell[]; // in the placement subgrid — see PlacedBenchType.footprintCells' own field comment
+  accessSide?: string | null; // GridEdgeSide — the side the bench is worked from
+}
+
+// GridEdgeSide (any case) → the orientation whose front (fixtureFrontSide)
+// is that side. Falls back to the rotation when the side is missing.
+function orientationForAccessSide(accessSide: string | null | undefined, rotationDegrees: number): FixtureOrientation {
+  switch ((accessSide ?? '').toLowerCase()) {
+    case 'south': return 0;
+    case 'west': return 90;
+    case 'north': return 180;
+    case 'east': return 270;
+    default: return (rotationDegrees as FixtureOrientation) ?? 0;
+  }
 }
 
 const SANDBOX_ROOM_CELL_SIZE_INCHES = 12; // matches DEFAULT_GRID_CELL_SIZE_INCHES on the backend — see this function's own header comment
@@ -706,7 +793,19 @@ const SANDBOX_ROOM_CELL_SIZE_INCHES = 12; // matches DEFAULT_GRID_CELL_SIZE_INCH
 // bench happens to also start with bench-".
 export const AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX = 'auto-bench-';
 
-export function sandboxFixturesFromBenchPlacement(benches: PlacedBenchGeometry[], placementCellSizeInches: number, zoneNameById: Map<string, string>): SandboxFixture[] {
+// workingAisleFt is the SAME aisle width every bench in this call was
+// solved against (both callers pass one PlaceBenchesInput.benchRequirements
+// list per call, and every requirement in it shares one
+// workingAisleWidthInches — see PlaceBenchesForSandboxResponse's own
+// benchRequirementsFromZoneRequirements/ZoneBenchMaximizerService callers).
+// Without this, every auto-placed bench came back with clearance
+// undefined — indistinguishable, to the rest of the Sandbox (the details
+// panel, overlap/clearance validation), from a bench with NO required
+// aisle at all, even though the solver enforced a real one. frontFt is the
+// right field for it: ClearanceFields' own comment ("front and back rotate
+// with the fixture") matches accessSide always being the solved bench's
+// own working edge.
+export function sandboxFixturesFromBenchPlacement(benches: PlacedBenchGeometry[], placementCellSizeInches: number, zoneNameById: Map<string, string>, workingAisleFt: number): SandboxFixture[] {
   return benches.map((bench) => {
     const rows = bench.footprintCells.map((c) => c.row);
     const columns = bench.footprintCells.map((c) => c.column);
@@ -729,7 +828,8 @@ export function sandboxFixturesFromBenchPlacement(benches: PlacedBenchGeometry[]
       y: (minRow * placementCellSizeInches) / SANDBOX_ROOM_CELL_SIZE_INCHES,
       widthFt,
       depthFt,
-      orientation: (bench.rotationDegrees as FixtureOrientation) ?? 0,
+      orientation: orientationForAccessSide(bench.accessSide, bench.rotationDegrees),
+      clearance: { frontFt: workingAisleFt, backFt: 0, sideFt: 0 },
       stations: [],
     };
   });

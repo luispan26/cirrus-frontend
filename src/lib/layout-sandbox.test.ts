@@ -24,6 +24,9 @@ import {
   centeredRectFootprint,
   fixtureFootprint,
   sandboxFixturesFromBenchPlacement,
+  parseSandboxLayout,
+  validateSandboxLayout,
+  type SandboxFixture,
   type PlacedBenchGeometry,
   type SandboxBaseObject,
   type SandboxLayout,
@@ -178,7 +181,7 @@ describe('sandboxFixturesFromBenchPlacement', () => {
 
   test('rotationDegrees 0: a 12x5 subcell footprint (72"x30" bench at 6"/subcell) round-trips', () => {
     const bench: PlacedBenchGeometry = { id: 'b1', zoneId: 'zone-a', rotationDegrees: 0, footprintCells: rectCells(2, 6, 3, 14) };
-    const [fixture] = sandboxFixturesFromBenchPlacement([bench], 6, new Map());
+    const [fixture] = sandboxFixturesFromBenchPlacement([bench], 6, new Map(), 5);
     expect(fixture.orientation).toBe(0);
     // 12 subcells wide * 6" = 72" = 6ft; 5 subcells deep * 6" = 30" = 2.5ft.
     expect(fixture.widthFt).toBeCloseTo(6);
@@ -187,9 +190,18 @@ describe('sandboxFixturesFromBenchPlacement', () => {
     expect(footprint).toEqual({ width: 6, height: 3 }); // ceil(2.5/1) = 3, not 2 -- Math.ceil rounding is fixtureFootprint's own behavior, not this function's
   });
 
+  // Without this, every auto-placed bench came back with clearance
+  // undefined -- indistinguishable from "no aisle required" even though the
+  // solver enforced a real one (see this function's own header comment).
+  test('carries the solved working aisle through as clearance.frontFt', () => {
+    const bench: PlacedBenchGeometry = { id: 'b1a', zoneId: 'zone-a', rotationDegrees: 0, footprintCells: rectCells(0, 1, 0, 1) };
+    const [fixture] = sandboxFixturesFromBenchPlacement([bench], 6, new Map(), 5);
+    expect(fixture.clearance).toEqual({ frontFt: 5, backFt: 0, sideFt: 0 });
+  });
+
   test('rotationDegrees 90: the same bench turned 90 degrees swaps its footprint span, and this function undoes that swap', () => {
     const bench: PlacedBenchGeometry = { id: 'b2', zoneId: 'zone-a', rotationDegrees: 90, footprintCells: rectCells(2, 13, 3, 7) };
-    const [fixture] = sandboxFixturesFromBenchPlacement([bench], 6, new Map());
+    const [fixture] = sandboxFixturesFromBenchPlacement([bench], 6, new Map(), 5);
     expect(fixture.orientation).toBe(90);
     // Rotated: 5 subcells wide * 6" = 2.5ft, 12 subcells deep * 6" = 6ft --
     // stored as (widthFt: 6, depthFt: 2.5) so fixtureFootprint's own
@@ -202,7 +214,7 @@ describe('sandboxFixturesFromBenchPlacement', () => {
 
   test('position: the fixture lands at the footprint\'s minimum row/column corner, in room-cell units', () => {
     const bench: PlacedBenchGeometry = { id: 'b3', zoneId: 'zone-a', rotationDegrees: 0, footprintCells: rectCells(4, 8, 10, 21) };
-    const [fixture] = sandboxFixturesFromBenchPlacement([bench], 6, new Map());
+    const [fixture] = sandboxFixturesFromBenchPlacement([bench], 6, new Map(), 5);
     // minColumn=10, minRow=4, placementCellSizeInches=6 -> 60"=5ft, 24"=2ft,
     // divided by the assumed 12"/room-cell (SANDBOX_ROOM_CELL_SIZE_INCHES).
     expect(fixture.x).toBeCloseTo(5);
@@ -211,9 +223,9 @@ describe('sandboxFixturesFromBenchPlacement', () => {
 
   test('names the fixture after its zone when a name is supplied, otherwise falls back to a generic label', () => {
     const bench: PlacedBenchGeometry = { id: 'b4', zoneId: 'zone-a', rotationDegrees: 0, footprintCells: rectCells(0, 1, 0, 1) };
-    const [named] = sandboxFixturesFromBenchPlacement([bench], 6, new Map([['zone-a', 'Wet Bench Zone']]));
+    const [named] = sandboxFixturesFromBenchPlacement([bench], 6, new Map([['zone-a', 'Wet Bench Zone']]), 5);
     expect(named.name).toBe('Bench (Wet Bench Zone)');
-    const [unnamed] = sandboxFixturesFromBenchPlacement([bench], 6, new Map());
+    const [unnamed] = sandboxFixturesFromBenchPlacement([bench], 6, new Map(), 5);
     expect(unnamed.name).toBe('Bench');
   });
 
@@ -224,9 +236,74 @@ describe('sandboxFixturesFromBenchPlacement', () => {
   // this prefix must never match that pattern.
   test('instanceId uses a prefix that never collides with a manually-placed bench\'s own instanceId', () => {
     const bench: PlacedBenchGeometry = { id: 'b5', zoneId: 'zone-a', rotationDegrees: 0, footprintCells: rectCells(0, 1, 0, 1) };
-    const [fixture] = sandboxFixturesFromBenchPlacement([bench], 6, new Map());
+    const [fixture] = sandboxFixturesFromBenchPlacement([bench], 6, new Map(), 5);
     const manualBenchInstanceId = `bench-${Date.now()}`;
     expect(fixture.instanceId.startsWith(AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX)).toBe(true);
     expect(manualBenchInstanceId.startsWith(AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX)).toBe(false);
+  });
+});
+
+// The Sandbox's two global rules (validateSandboxLayout): a bench's front
+// working aisle must be clear, and nothing may sit in a door's swing +
+// landing. Measured on exact footprints, so a solver-placed back-to-back
+// pair (two 2.5ft benches on a 6" grid) is never a false "overlap".
+describe('validateSandboxLayout — aisle and door clearance only', () => {
+  const bench = (instanceId: string, x: number, y: number, orientation: SandboxFixture['orientation']): SandboxFixture => ({
+    instanceId, kind: 'bench', name: instanceId, x, y, widthFt: 6, depthFt: 2.5, orientation, clearance: { frontFt: 5, backFt: 0, sideFt: 0 }, stations: [],
+  });
+  const layoutWith = (fixtures: SandboxFixture[], baseObjects: SandboxBaseObject[] = []): SandboxLayout => ({ ...structuredClone(EMPTY_SANDBOX_LAYOUT), fixtures, baseObjects });
+  const northDoor: SandboxBaseObject = { id: 'door-1', kind: 'door', name: 'Door', footprint: { points: [{ x: 12, y: 0 }, { x: 15, y: 0 }, { x: 15, y: 0.5 }, { x: 12, y: 0.5 }] } };
+
+  test('a back-to-back pair facing opposite ways, each with a clear 5ft aisle, is valid', () => {
+    // North bench faces up (180), south bench faces down (0), backs touching at y=15.
+    const layout = layoutWith([bench('north', 10, 12.5, 180), bench('south', 10, 15, 0)]);
+    expect(validateSandboxLayout(layout)).toEqual([]);
+  });
+
+  test('a bench sitting in another bench\'s front aisle is flagged', () => {
+    const layout = layoutWith([bench('a', 10, 10, 0), bench('b', 10, 14, 0)]); // b is 1.5ft in front of a
+    const ids = validateSandboxLayout(layout).map((v) => v.id);
+    expect(ids).toContain('aisle-a');
+    expect(ids).not.toContain('aisle-b');
+  });
+
+  test('a front aisle running out of the room is flagged', () => {
+    const layout = layoutWith([bench('edge', 10, 26, 0)]); // front would reach y=33.5 in a 30ft room
+    expect(validateSandboxLayout(layout).map((v) => v.id)).toEqual(['aisle-edge']);
+  });
+
+  test('two benches sharing one aisle (facing each other) are valid — aisles may overlap', () => {
+    const layout = layoutWith([bench('top', 10, 10, 0), bench('bottom', 10, 17.5, 180)]);
+    expect(validateSandboxLayout(layout)).toEqual([]);
+  });
+
+  test('a bench inside a door\'s swing + landing is flagged; one just outside it is not', () => {
+    // Door 3ft wide at x 12..15 on the top wall -> clearance x 11..16, y 0..8.
+    const inside = validateSandboxLayout(layoutWith([bench('near', 12, 6, 180)], [northDoor]));
+    expect(inside.map((v) => v.id)).toContain('door-door-1');
+    const outside = validateSandboxLayout(layoutWith([bench('far', 12, 8, 0)], [northDoor]));
+    expect(outside).toEqual([]);
+  });
+});
+
+describe('sandboxFixturesFromBenchPlacement — facing side', () => {
+  test('maps the solved accessSide to the orientation whose front is that side', () => {
+    const cells = [{ row: 0, column: 0 }, { row: 4, column: 11 }];
+    const orientationFor = (accessSide: string, rotationDegrees: number) => sandboxFixturesFromBenchPlacement([{ id: 'b', zoneId: 'z', rotationDegrees, accessSide, footprintCells: cells }], 6, new Map(), 5)[0].orientation;
+    expect(orientationFor('SOUTH', 0)).toBe(0);
+    expect(orientationFor('north', 0)).toBe(180);
+    expect(orientationFor('West', 90)).toBe(90);
+    expect(orientationFor('east', 90)).toBe(270);
+  });
+});
+
+describe('parseSandboxLayout — fixture positions', () => {
+  test('keeps half-foot positions exactly, so a reloaded back-to-back pair stays touching', () => {
+    const pair: SandboxFixture[] = [
+      { instanceId: 'a', kind: 'bench', name: 'a', x: 5, y: 10, widthFt: 6, depthFt: 2.5, orientation: 90, clearance: { frontFt: 5, backFt: 0, sideFt: 0 }, stations: [] },
+      { instanceId: 'b', kind: 'bench', name: 'b', x: 7.5, y: 10, widthFt: 6, depthFt: 2.5, orientation: 270, clearance: { frontFt: 5, backFt: 0, sideFt: 0 }, stations: [] },
+    ];
+    const parsed = parseSandboxLayout(JSON.parse(JSON.stringify({ ...EMPTY_SANDBOX_LAYOUT, fixtures: pair })));
+    expect(parsed?.fixtures.map((f) => [f.x, f.y])).toEqual([[5, 10], [7.5, 10]]);
   });
 });

@@ -780,6 +780,7 @@ export const PLACE_BENCHES_FOR_SANDBOX_MUTATION = gql`
             column
           }
           rotationDegrees
+          accessSide
           footprintCells {
             row
             column

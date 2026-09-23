@@ -1,5 +1,5 @@
 import { ZONE_FAMILY_COLORS } from '../../lib/zone-requirements';
-import { computeDoorSwing, deriveCirculationSpace, fixtureFootprint, validateSandboxLayout, type SandboxLayer, type SandboxLayout } from '../../lib/layout-sandbox';
+import { computeDoorSwing, deriveCirculationSpace, fixtureRectFt, validateSandboxLayout, type SandboxLayer, type SandboxLayout } from '../../lib/layout-sandbox';
 import { POINT_KINDS } from './constants';
 import { baseObjectLayer, hexToRgba } from './helpers';
 import type { ZoningOverlay } from './types';
@@ -35,6 +35,6 @@ export function CanvasLayers({ layout, layers, violations, selected, placingKind
       </g>;
     })}
     {layers.circulation && circulation.reachable.map((cell) => <rect key={`circulation-${cell.x}-${cell.y}`} className="ls-derived-circulation" x={cell.x * circulation.gridFt} y={cell.y * circulation.gridFt} width={circulation.gridFt} height={circulation.gridFt} />)}
-    {layers.validation && violations.flatMap((violation) => violation.objectIds.map((id) => { const fixture = layout.fixtures.find((item) => item.instanceId === id); if (!fixture) return null; const size = fixtureFootprint(fixture, layout.room.gridFt); return <rect key={`${violation.id}-${id}`} className={`ls-validation-shape ${violation.severity}`} x={fixture.x * layout.room.gridFt} y={fixture.y * layout.room.gridFt} width={size.width * layout.room.gridFt} height={size.height * layout.room.gridFt} />; }))}
+    {layers.validation && violations.flatMap((violation) => violation.objectIds.map((id) => { const fixture = layout.fixtures.find((item) => item.instanceId === id); if (!fixture) return null; const r = fixtureRectFt(fixture, layout.room.gridFt); return <rect key={`${violation.id}-${id}`} className={`ls-validation-shape ${violation.severity}`} x={r.left} y={r.top} width={r.right - r.left} height={r.bottom - r.top} />; }))}
   </svg>;
 }
