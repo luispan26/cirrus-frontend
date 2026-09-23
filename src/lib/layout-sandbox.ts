@@ -627,6 +627,32 @@ export function buildLayoutGeometryInput(layout: SandboxLayout): LayoutGeometryI
   };
 }
 
+// buildLayoutGeometryInput plus every fixture already in the room as a
+// no-placement area, for the bench-placement solvers: a hood, sink,
+// cabinet, fridge, waste bin or hand-placed bench is an obstacle to plan
+// around — blocked at its own footprint, with no clearance of its own
+// added (only doors keep a landing; see DOOR_LANDING_FT). A cell counts
+// as blocked if the fixture covers any part of it. Benches a previous
+// solve auto-placed (AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX) are left out,
+// since the solve replaces them.
+export function buildBenchPlacementGeometryInput(layout: SandboxLayout): LayoutGeometryInput {
+  const geometry = buildLayoutGeometryInput(layout);
+  const grid = layout.room.gridFt;
+  const blocked = new Set(geometry.blockedCells);
+  const entrance = new Set(geometry.entranceCells);
+  for (const fixture of layout.fixtures) {
+    if (fixture.instanceId.startsWith(AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX)) continue;
+    const r = fixtureRectFt(fixture, grid);
+    const x0 = Math.max(0, Math.floor(r.left / grid + 1e-6)), x1 = Math.min(geometry.roomWidth - 1, Math.ceil(r.right / grid - 1e-6) - 1);
+    const y0 = Math.max(0, Math.floor(r.top / grid + 1e-6)), y1 = Math.min(geometry.roomHeight - 1, Math.ceil(r.bottom / grid - 1e-6) - 1);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const cell = y * geometry.roomWidth + x;
+      if (!entrance.has(cell)) blocked.add(cell);
+    }
+  }
+  return { ...geometry, blockedCells: [...blocked] };
+}
+
 // The Sandbox's global rules — exactly two, both on exact footprints:
 //   1. Aisle clearance: every fixture's front working aisle
 //      (clearance.frontFt, on the side fixtureFrontSide names) lies inside

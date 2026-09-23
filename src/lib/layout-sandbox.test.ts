@@ -20,6 +20,7 @@ import { describe, expect, test } from 'vitest';
 import {
   AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX,
   EMPTY_SANDBOX_LAYOUT,
+  buildBenchPlacementGeometryInput,
   buildLayoutGeometryInput,
   centeredRectFootprint,
   fixtureFootprint,
@@ -305,5 +306,22 @@ describe('parseSandboxLayout — fixture positions', () => {
     ];
     const parsed = parseSandboxLayout(JSON.parse(JSON.stringify({ ...EMPTY_SANDBOX_LAYOUT, fixtures: pair })));
     expect(parsed?.fixtures.map((f) => [f.x, f.y])).toEqual([[5, 10], [7.5, 10]]);
+  });
+});
+
+describe('buildBenchPlacementGeometryInput — fixtures are no-placement areas', () => {
+  const fixture = (instanceId: string, kind: SandboxFixture['kind'], x: number, y: number, widthFt: number, depthFt: number): SandboxFixture => ({ instanceId, kind, name: instanceId, x, y, widthFt, depthFt, orientation: 0, stations: [] });
+
+  test('a placed fixture blocks exactly the cells its footprint touches, with no clearance added', () => {
+    const layout: SandboxLayout = { ...structuredClone(EMPTY_SANDBOX_LAYOUT), fixtures: [fixture('hood', 'laminarHood', 10, 20, 4, 2.5)] };
+    const geometry = buildBenchPlacementGeometryInput(layout);
+    const expected: number[] = [];
+    for (let y = 20; y <= 22; y++) for (let x = 10; x <= 13; x++) expected.push(y * 40 + x); // 4 x 2.5ft -> 4 x 3 cells
+    expect([...geometry.blockedCells].sort((a, b) => a - b)).toEqual(expected);
+  });
+
+  test('benches a previous solve auto-placed are not obstacles — the solve replaces them', () => {
+    const layout: SandboxLayout = { ...structuredClone(EMPTY_SANDBOX_LAYOUT), fixtures: [fixture(`${AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX}bench-0a`, 'bench', 10, 20, 6, 2.5)] };
+    expect(buildBenchPlacementGeometryInput(layout).blockedCells).toEqual([]);
   });
 });

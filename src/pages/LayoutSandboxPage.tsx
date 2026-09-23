@@ -4,7 +4,7 @@ import { useLazyQuery, useMutation, useQuery } from '@apollo/client/react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { APPROVE_SANDBOX_LAYOUT_MUTATION, DAMP_OPERATIONS_QUERY, DELETE_ZONING_PLAN_MUTATION, EQUIPMENT_LIST_QUERY, LAYOUT_SANDBOX_CAPABILITIES_QUERY, MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION, PLACE_BENCHES_FOR_SANDBOX_MUTATION, SAVE_ZONING_PLAN_MUTATION, SOLVE_ZONE_REQUIREMENTS_MUTATION, STATIONS_QUERY, ZONING_PLANS_QUERY, ZONING_PLAN_CATALOGUE_DRIFT_QUERY, ZONING_PLAN_QUERY } from '../graphql/operations';
 import { ZONE_FAMILY_COLORS, ZONE_FAMILY_LABELS, fromPlannedOperationSnapshot, isPlannedOperationComplete, isZoneable, toOperationContextInput, toPlannedOperationSnapshot, type PlannedOperation, type PlannedOperationSnapshot } from '../lib/zone-requirements';
-import { AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX, BENCH_DEPTH_FT, BENCH_SURFACE_AREA_SQFT, BENCH_WIDTH_FT, EMPTY_SANDBOX_LAYOUT, buildLayoutGeometryInput, canPlaceBaseObject, canPlaceFixture, centeredRectFootprint, computePlacementAvailability, evaluateUtilityReachability, fixtureFootprint, fixtureRectFt, offsetAlongWall, parseSandboxLayout, pointOnWall, polygonBounds, reanchorWallMountedObjects, sandboxFixturesFromBenchPlacement, snapToNearestWall, validateSandboxLayout, wallRectFootprint, wallSideOfBounds, type FixtureClearance, type FixtureKind, type FixtureOrientation, type MountingSurface, type SandboxBaseObject, type SandboxEquipmentAssignment, type SandboxFixture, type SandboxLayer, type SandboxLayout, type SandboxPolygon, type SandboxStationAssignment, type WallSide } from '../lib/layout-sandbox';
+import { AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX, BENCH_DEPTH_FT, BENCH_SURFACE_AREA_SQFT, BENCH_WIDTH_FT, EMPTY_SANDBOX_LAYOUT, buildBenchPlacementGeometryInput, buildLayoutGeometryInput, canPlaceBaseObject, canPlaceFixture, centeredRectFootprint, computePlacementAvailability, evaluateUtilityReachability, fixtureFootprint, fixtureRectFt, offsetAlongWall, parseSandboxLayout, pointOnWall, polygonBounds, reanchorWallMountedObjects, sandboxFixturesFromBenchPlacement, snapToNearestWall, validateSandboxLayout, wallRectFootprint, wallSideOfBounds, type FixtureClearance, type FixtureKind, type FixtureOrientation, type MountingSurface, type SandboxBaseObject, type SandboxEquipmentAssignment, type SandboxFixture, type SandboxLayer, type SandboxLayout, type SandboxPolygon, type SandboxStationAssignment, type WallSide } from '../lib/layout-sandbox';
 import { Logo } from '../components/Logo';
 import { CanvasLayers } from '../components/sandbox/CanvasLayers';
 import { EquipmentPanel } from '../components/sandbox/EquipmentPanel';
@@ -671,7 +671,7 @@ export function LayoutSandboxPage() {
       setMessage('Add at least one operation with a complete material context before placing benches.');
       return;
     }
-    const geometry = buildLayoutGeometryInput(layout);
+    const geometry = buildBenchPlacementGeometryInput(layout);
     setBackendNotice({ kind: 'progress', text: 'Compiling zone requirements, zoning, and placing benches…' });
     try {
       const response = await placeBenchesForSandbox({
@@ -745,7 +745,9 @@ export function LayoutSandboxPage() {
   // does, so switching between the two buttons always reflects only the
   // most recent solve, never a stale mix of both.
   async function runMaximizeZonesAndBenches() {
-    const geometry = buildLayoutGeometryInput(layout);
+    // Fixtures already in the room are no-placement areas (see
+    // buildBenchPlacementGeometryInput).
+    const geometry = buildBenchPlacementGeometryInput(layout);
     // Matches MaximizeZonesAndBenchesForSandboxInput.workingAisleFt's own
     // backend default — kept explicit here (rather than omitting the field
     // and letting the server default it) so this value is also what gets
