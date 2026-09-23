@@ -433,10 +433,32 @@ export function LayoutSandboxPage() {
     setMessage('Bench clearance updated.');
   }
   function removeSelected() { if (!selectedFixture) return; updateLayout((p) => ({ ...p, fixtures: p.fixtures.filter((f) => f.instanceId !== selectedFixture.instanceId) })); setSelectedFixtureId(null); setSelectedStationId(null); setMessage('Fixture removed.'); }
-  // Hands the room size back to the intake wizard's "space" question
-  // (QuestionsPage.tsx) via router state — a one-shot hand-off.
+  // Hands the room size, and the exit door's placement if one was set, back
+  // to the intake wizard's "space"/"layout_prefs" questions (QuestionsPage.tsx)
+  // via router state — a one-shot hand-off. Only the door crosses over here:
+  // fixtures/equipment placed in the sandbox still don't (see space.method's
+  // doc comment in questions.ts), and neither do utility hookups yet — a
+  // sandbox utility point's kind (electrical/plumbing/ventilation) has no
+  // reliable mapping onto the free-form utilityType string real equipment
+  // catalog rows carry (findUncoveredEquipment on the backend does exact
+  // string matching against it), so a guessed mapping could silently mark an
+  // equipment need as "covered" by the wrong hookup.
   function useInIntake() {
-    navigate('/questions', { state: { spaceFromSandbox: { width_ft: layout.room.widthFt, height_ft: layout.room.heightFt } } });
+    const exitDoor = layout.baseObjects.find((object) => object.kind === 'door' && object.door?.isExit && object.footprint.points.length > 0);
+    let door: { wall: 'N' | 'S' | 'E' | 'W'; offsetFt: number } | undefined;
+    if (exitDoor) {
+      const bounds = polygonBounds(exitDoor.footprint);
+      const side = wallSideOfBounds(bounds, layout.room);
+      const center = { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 };
+      // layout-sandbox.ts's WallSide (top/bottom/left/right, geometry-shaped)
+      // -> the intake questionnaire's WallSide (N/S/E/W, mirrors the
+      // backend's — see questions.ts). Offset is along the same axis in both
+      // (x for top/bottom <-> N/S, y for left/right <-> W/E), so it carries
+      // over unchanged; only the label needs translating.
+      const SANDBOX_WALL_TO_INTAKE: Record<WallSide, 'N' | 'S' | 'E' | 'W'> = { top: 'N', bottom: 'S', left: 'W', right: 'E' };
+      door = { wall: SANDBOX_WALL_TO_INTAKE[side], offsetFt: Math.round(offsetAlongWall(side, center) * 100) / 100 };
+    }
+    navigate('/questions', { state: { spaceFromSandbox: { width_ft: layout.room.widthFt, height_ft: layout.room.heightFt, door } } });
   }
   async function sendToSeedGenerator() {
     setBackendNotice({ kind: 'progress', text: 'Adding this design to the approved seed library…' });

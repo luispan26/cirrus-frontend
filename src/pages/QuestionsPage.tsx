@@ -94,16 +94,24 @@ export function QuestionsPage() {
   // report's "Edit questionnaire", see ReportPage.tsx).
   useEffect(() => {
     const state = location.state as {
-      spaceFromSandbox?: { width_ft: number; height_ft: number };
+      spaceFromSandbox?: { width_ft: number; height_ft: number; door?: { wall: WallSide; offsetFt: number } };
       startAtQuestionId?: string;
       generatedLayout?: unknown;
     } | null;
     if (!state) return;
     if (state.spaceFromSandbox) {
-      const { width_ft, height_ft } = state.spaceFromSandbox;
+      const { width_ft, height_ft, door } = state.spaceFromSandbox;
       setField('width_ft', String(width_ft));
       setField('height_ft', String(height_ft));
       setField('space_method', 'sandbox');
+      // Pre-fills the layout_prefs door question with the exit door the user
+      // actually placed in the sandbox, same shape LayoutDoorPicker's manual
+      // entry writes (door_wall/door_offset_ft) — so a sandbox-defined room
+      // doesn't ask the user to re-place a door it already knows about.
+      if (door) {
+        setField('door_wall', door.wall);
+        setField('door_offset_ft', door.offsetFt);
+      }
       const spaceIndex = QS.findIndex((sq) => sq.id === 'space');
       if (spaceIndex >= 0) setQi(spaceIndex);
     }
