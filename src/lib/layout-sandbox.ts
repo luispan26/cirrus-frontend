@@ -184,10 +184,11 @@ export function fixtureFrontAisleFt(fixture: SandboxFixture, gridFt: number): Re
   }
 }
 
-// Kept clear in front of every door: the swing (door width deep) plus a
-// DOOR_LANDING_FT landing beyond it, a foot wider than the door on each
-// side — the same landing the zone/bench maximizer reserves on the backend
-// (room-circulation.ts computeDoorLandings).
+// Kept clear straight in front of every door: exactly the door's width
+// (nothing on its sides), the swing (door width deep) plus a
+// DOOR_LANDING_FT landing beyond it — the same landing the zone/bench
+// maximizer reserves on the backend (room-circulation.ts
+// computeDoorLandings).
 export const DOOR_LANDING_FT = 5;
 export function doorClearanceRectFt(door: SandboxBaseObject, room: { widthFt: number; heightFt: number }): RectFt | null {
   if (!door.footprint.points.length) return null;
@@ -196,9 +197,7 @@ export function doorClearanceRectFt(door: SandboxBaseObject, room: { widthFt: nu
   const alongWall = side === 'top' || side === 'bottom';
   const span = alongWall ? b.right - b.left : b.bottom - b.top;
   const depth = span + DOOR_LANDING_FT;
-  const width = Math.max(span + 2, DOOR_LANDING_FT);
-  const center = alongWall ? (b.left + b.right) / 2 : (b.top + b.bottom) / 2;
-  const a0 = center - width / 2, a1 = center + width / 2;
+  const a0 = alongWall ? b.left : b.top, a1 = alongWall ? b.right : b.bottom;
   switch (side) {
     case 'top': return { left: a0, right: a1, top: 0, bottom: depth };
     case 'bottom': return { left: a0, right: a1, top: room.heightFt - depth, bottom: room.heightFt };

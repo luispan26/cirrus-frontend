@@ -279,11 +279,17 @@ describe('validateSandboxLayout — aisle and door clearance only', () => {
   });
 
   test('a bench inside a door\'s swing + landing is flagged; one just outside it is not', () => {
-    // Door 3ft wide at x 12..15 on the top wall -> clearance x 11..16, y 0..8.
+    // Door 3ft wide at x 12..15 on the top wall -> clearance x 12..15, y 0..8.
     const inside = validateSandboxLayout(layoutWith([bench('near', 12, 6, 180)], [northDoor]));
     expect(inside.map((v) => v.id)).toContain('door-door-1');
     const outside = validateSandboxLayout(layoutWith([bench('far', 12, 8, 0)], [northDoor]));
     expect(outside).toEqual([]);
+  });
+
+  test('the door clearance is only in front of the door, not beside it', () => {
+    // A bench right beside the door opening (x 15..21), front facing down.
+    const beside = validateSandboxLayout(layoutWith([bench('beside', 15, 3, 0)], [northDoor]));
+    expect(beside).toEqual([]);
   });
 });
 
