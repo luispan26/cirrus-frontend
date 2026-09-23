@@ -230,6 +230,102 @@ export const GENERATE_ZONES_AND_PLACE_BENCHES_MUTATION = gql`
   }
 `;
 
+export const MAXIMIZE_ZONES_AND_BENCHES_MUTATION = gql`
+  mutation MaximizeZonesAndBenches($input: MaximizeZonesAndBenchesInput!) {
+    maximizeZonesAndBenches(input: $input) {
+      totalZones
+      totalBenches
+      zoneHandoff {
+        grid {
+          rows
+          columns
+          cellSizeInches
+          usableCells {
+            row
+            column
+          }
+          blockedCells {
+            row
+            column
+          }
+          reservedCirculationCells {
+            row
+            column
+          }
+        }
+        fixedFeatures {
+          id
+          type
+          cells {
+            row
+            column
+          }
+        }
+        zones {
+          id
+          family
+          minimumWidthCells
+          cells {
+            row
+            column
+          }
+          circulationAccessCells {
+            row
+            column
+          }
+        }
+      }
+      benchResult {
+        solveStatus
+        accessConnectivityMode
+        validation {
+          state
+          violations
+          unroutableBenchIds
+          navigableRegionCells {
+            row
+            column
+          }
+        }
+        placementGrid {
+          rows
+          columns
+          cellSizeInches
+          sourceCellSizeInches
+          scaleFactor
+        }
+        remainingZoneCells {
+          row
+          column
+        }
+        remainingPlaceableCells {
+          row
+          column
+        }
+        benches {
+          id
+          requirementId
+          zoneId
+          origin {
+            row
+            column
+          }
+          rotationDegrees
+          accessSide
+          footprintCells {
+            row
+            column
+          }
+          accessCells {
+            row
+            column
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const FEASIBILITY_CHECK_QUERY = gql`
   query FeasibilityCheck($input: JSON!) {
     feasibilityCheck(input: $input) {

@@ -13,6 +13,7 @@ import { ProtocolsPage } from './pages/ProtocolsPage';
 import { FloorPlanParserTestPage } from './pages/FloorPlanParserTestPage';
 import { ZoneGenerationTestPage } from './pages/ZoneGenerationTestPage';
 import { BenchPlacementTestPage } from './pages/BenchPlacementTestPage';
+import { ZoneBenchMaximizerTestPage } from './pages/ZoneBenchMaximizerTestPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { EquipmentListsPage } from './pages/EquipmentListsPage';
 import { StationsPage } from './pages/StationsPage';
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/floor-plan-parser-test" element={<FloorPlanParserTestPage />} />
         <Route path="/zone-generation-test" element={<ZoneGenerationTestPage />} />
         <Route path="/bench-placement-test" element={<BenchPlacementTestPage />} />
+        <Route path="/zone-bench-maximizer-test" element={<ZoneBenchMaximizerTestPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/equipment-lists" element={<EquipmentListsPage />} />
         <Route path="/stations" element={<StationsPage />} />
