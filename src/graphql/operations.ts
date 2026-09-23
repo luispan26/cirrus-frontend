@@ -326,6 +326,107 @@ export const MAXIMIZE_ZONES_AND_BENCHES_MUTATION = gql`
   }
 `;
 
+// Same result shape as MAXIMIZE_ZONES_AND_BENCHES_MUTATION, but takes the
+// Sandbox's own flat-cell-index geometry (buildLayoutGeometryInput's
+// output) instead of an intake-style width/height/door — so a real,
+// hand-drawn room (columns, restricted regions, the actual exit door
+// position) can be maximized directly.
+export const MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION = gql`
+  mutation MaximizeZonesAndBenchesForSandbox($input: MaximizeZonesAndBenchesForSandboxInput!) {
+    maximizeZonesAndBenchesForSandbox(input: $input) {
+      totalZones
+      totalBenches
+      zoneHandoff {
+        grid {
+          rows
+          columns
+          cellSizeInches
+          usableCells {
+            row
+            column
+          }
+          blockedCells {
+            row
+            column
+          }
+          reservedCirculationCells {
+            row
+            column
+          }
+        }
+        fixedFeatures {
+          id
+          type
+          cells {
+            row
+            column
+          }
+        }
+        zones {
+          id
+          family
+          minimumWidthCells
+          cells {
+            row
+            column
+          }
+          circulationAccessCells {
+            row
+            column
+          }
+        }
+      }
+      benchResult {
+        solveStatus
+        accessConnectivityMode
+        validation {
+          state
+          violations
+          unroutableBenchIds
+          navigableRegionCells {
+            row
+            column
+          }
+        }
+        placementGrid {
+          rows
+          columns
+          cellSizeInches
+          sourceCellSizeInches
+          scaleFactor
+        }
+        remainingZoneCells {
+          row
+          column
+        }
+        remainingPlaceableCells {
+          row
+          column
+        }
+        benches {
+          id
+          requirementId
+          zoneId
+          origin {
+            row
+            column
+          }
+          rotationDegrees
+          accessSide
+          footprintCells {
+            row
+            column
+          }
+          accessCells {
+            row
+            column
+          }
+        }
+      }
+    }
+  }
+`;
+
 export const FEASIBILITY_CHECK_QUERY = gql`
   query FeasibilityCheck($input: JSON!) {
     feasibilityCheck(input: $input) {

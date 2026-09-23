@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLazyQuery, useMutation, useQuery } from '@apollo/client/react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { APPROVE_SANDBOX_LAYOUT_MUTATION, DAMP_OPERATIONS_QUERY, DELETE_ZONING_PLAN_MUTATION, EQUIPMENT_LIST_QUERY, LAYOUT_SANDBOX_CAPABILITIES_QUERY, PLACE_BENCHES_FOR_SANDBOX_MUTATION, SAVE_ZONING_PLAN_MUTATION, SOLVE_ZONE_REQUIREMENTS_MUTATION, STATIONS_QUERY, ZONING_PLANS_QUERY, ZONING_PLAN_CATALOGUE_DRIFT_QUERY, ZONING_PLAN_QUERY } from '../graphql/operations';
+import { APPROVE_SANDBOX_LAYOUT_MUTATION, DAMP_OPERATIONS_QUERY, DELETE_ZONING_PLAN_MUTATION, EQUIPMENT_LIST_QUERY, LAYOUT_SANDBOX_CAPABILITIES_QUERY, MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION, PLACE_BENCHES_FOR_SANDBOX_MUTATION, SAVE_ZONING_PLAN_MUTATION, SOLVE_ZONE_REQUIREMENTS_MUTATION, STATIONS_QUERY, ZONING_PLANS_QUERY, ZONING_PLAN_CATALOGUE_DRIFT_QUERY, ZONING_PLAN_QUERY } from '../graphql/operations';
 import { ZONE_FAMILY_COLORS, ZONE_FAMILY_LABELS, fromPlannedOperationSnapshot, isPlannedOperationComplete, isZoneable, toOperationContextInput, toPlannedOperationSnapshot, type PlannedOperation, type PlannedOperationSnapshot } from '../lib/zone-requirements';
 import { AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX, BENCH_DEPTH_FT, BENCH_SURFACE_AREA_SQFT, BENCH_WIDTH_FT, EMPTY_SANDBOX_LAYOUT, buildLayoutGeometryInput, canPlaceBaseObject, canPlaceFixture, centeredRectFootprint, computePlacementAvailability, evaluateUtilityReachability, fixtureFootprint, offsetAlongWall, parseSandboxLayout, pointOnWall, polygonBounds, reanchorWallMountedObjects, sandboxFixturesFromBenchPlacement, snapToNearestWall, validateSandboxLayout, wallRectFootprint, wallSideOfBounds, type FixtureClearance, type FixtureKind, type FixtureOrientation, type MountingSurface, type SandboxBaseObject, type SandboxEquipmentAssignment, type SandboxFixture, type SandboxLayer, type SandboxLayout, type SandboxPolygon, type SandboxStationAssignment, type WallSide } from '../lib/layout-sandbox';
 import { Logo } from '../components/Logo';
@@ -47,6 +47,29 @@ interface SolveZoneRequirementsResponse {
 }
 
 interface PlacedBenchEntry { id: string; requirementId: string; zoneId: string; origin: { row: number; column: number }; rotationDegrees: number; footprintCells: { row: number; column: number }[]; }
+
+// maximizeZonesAndBenchesForSandbox has no notion of equipment/operations —
+// its zones only ever carry id/family, never the full ZoneRequirementSummary
+// shape solveZoneRequirements produces (operationIds, materialClasses,
+// biosafety, etc.). runMaximizeZonesAndBenches synthesizes placeholder
+// ZoneRequirementSummary entries for the zoning overlay's legend, which only
+// ever reads .family (see CanvasLayers.tsx and this page's own legend strip).
+interface MaximizeZonesAndBenchesForSandboxResponse {
+  maximizeZonesAndBenchesForSandbox: {
+    totalZones: number;
+    totalBenches: number;
+    zoneHandoff: {
+      zones: Array<{ id: string; family: string; cells: { row: number; column: number }[] }>;
+    };
+    benchResult: {
+      solveStatus: string | null;
+      placementGrid: { cellSizeInches: number };
+      validation: { state: string; violations: string[]; unroutableBenchIds: string[] | null };
+      benches: PlacedBenchEntry[];
+    };
+  };
+}
+
 interface PlaceBenchesForSandboxResponse {
   placeBenchesForSandbox: {
     status: string;
@@ -187,6 +210,7 @@ export function LayoutSandboxPage() {
   const [approveSandboxLayout, { loading: sendingToSeedGenerator }] = useMutation<ApproveSandboxLayoutResponse>(APPROVE_SANDBOX_LAYOUT_MUTATION);
   const [solveZoneRequirements, { loading: zoningLoading }] = useMutation<SolveZoneRequirementsResponse>(SOLVE_ZONE_REQUIREMENTS_MUTATION);
   const [placeBenchesForSandbox, { loading: benchPlacementLoading }] = useMutation<PlaceBenchesForSandboxResponse>(PLACE_BENCHES_FOR_SANDBOX_MUTATION);
+  const [maximizeZonesAndBenchesForSandbox, { loading: maximizingLoading }] = useMutation<MaximizeZonesAndBenchesForSandboxResponse>(MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION);
   const { data: zoningPlansData, loading: zoningPlansLoading, error: zoningPlansError, refetch: refetchZoningPlans } = useQuery<ZoningPlansResponse>(ZONING_PLANS_QUERY, { fetchPolicy: 'cache-and-network' });
   const [saveZoningPlan, { loading: savingZoningPlan }] = useMutation<SaveZoningPlanResponse>(SAVE_ZONING_PLAN_MUTATION);
   const [deleteZoningPlan] = useMutation(DELETE_ZONING_PLAN_MUTATION);
@@ -710,6 +734,60 @@ export function LayoutSandboxPage() {
     }
   }
 
+  // The equipment-agnostic counterpart to runBenchPlacement: no operations
+  // needed at all (canRunZoning gates the other two buttons; this one
+  // never checks it) — carves as many zones as the room's own drawn shape
+  // fits and packs as many benches into each as it can hold. Overwrites the
+  // zoning overlay and auto-placed benches the same way runBenchPlacement
+  // does, so switching between the two buttons always reflects only the
+  // most recent solve, never a stale mix of both.
+  async function runMaximizeZonesAndBenches() {
+    const geometry = buildLayoutGeometryInput(layout);
+    setBackendNotice({ kind: 'progress', text: 'Maximizing zones and benches — this can take a while for larger rooms.' });
+    try {
+      const response = await maximizeZonesAndBenchesForSandbox({
+        variables: { input: { roomWidth: geometry.roomWidth, roomHeight: geometry.roomHeight, blockedCells: geometry.blockedCells, entranceCells: geometry.entranceCells, sinkCells: geometry.sinkCells } },
+      });
+      const result = response.data?.maximizeZonesAndBenchesForSandbox;
+      if (!result) throw new Error('The server did not return a result');
+
+      const zoneNumberById = new Map(result.zoneHandoff.zones.map((z, i) => [z.id, i + 1] as const));
+      const cellZones = new Array(geometry.roomWidth * geometry.roomHeight).fill(0);
+      for (const zone of result.zoneHandoff.zones) {
+        const zoneNumber = zoneNumberById.get(zone.id);
+        if (!zoneNumber) continue;
+        for (const cell of zone.cells) cellZones[cell.row * geometry.roomWidth + cell.column] = zoneNumber;
+      }
+      const legend: ZoneRequirementSummary[] = result.zoneHandoff.zones.map((zone) => ({
+        id: zone.id, family: zone.family, operationIds: [], materialClasses: [],
+        requiresBsc: false, sharingPolicy: '', confirmedBiosafetyLevel: 0,
+        minimumAreaCells: zone.cells.length, targetAreaCells: zone.cells.length,
+      }));
+      setZoning({ roomWidth: geometry.roomWidth, roomHeight: geometry.roomHeight, cellZones, legend });
+      setLayers((current) => ({ ...current, zoning: true }));
+
+      const benchResult = result.benchResult;
+      if (benchResult.solveStatus !== 'SATISFIED' || benchResult.validation.state !== 'VALID') {
+        setBackendNotice(null);
+        setMessage(result.totalZones > 0 ? `Carved ${result.totalZones} zone(s), but none of them had room for a bench.` : 'The room has no room for even one zone.');
+        return;
+      }
+
+      const zoneNameById = new Map(result.zoneHandoff.zones.map((z) => [z.id, z.family] as const));
+      const benchFixtures = sandboxFixturesFromBenchPlacement(benchResult.benches, benchResult.placementGrid.cellSizeInches, zoneNameById);
+      updateLayout((current) => ({
+        ...current,
+        fixtures: [...current.fixtures.filter((f) => !f.instanceId.startsWith(AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX)), ...benchFixtures],
+      }));
+      setLayers((current) => ({ ...current, equipment: true }));
+      setBackendNotice(null);
+      setMessage(`Placed ${benchFixtures.length} bench(es) across ${result.totalZones} zone(s) — the room's own maximum, not a target count.`);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setBackendNotice({ kind: 'error', text: `Could not maximize zones and benches: ${detail}` });
+    }
+  }
+
   async function refreshCatalogs() { try { await Promise.all([refetchStations(), refetchEquipment()]); setMessage('Stations and equipment refreshed from MongoDB.'); } catch { setMessage('Could not refresh the MongoDB catalog. Check the Cirrus API connection.'); } }
   // Wall-mounted kinds snap flush to whichever room edge the click landed
   // nearest (wallRectFootprint/snapToNearestWall handle the geometry);
@@ -911,7 +989,7 @@ export function LayoutSandboxPage() {
     <div className="ls-control-deck">
     <div className="ls-category-selector" aria-label="Placement categories">{CATEGORY_ORDER.map((category, index) => <button key={category} className={`ls-category-chip ${categoryMode[category]}`} onClick={() => openCategoryChip(category)}><i className={`ls-category-dot ${categoryMode[category]}`} />{index + 1}. {CATEGORY_LABELS[category]}</button>)}</div>
     <div className="ls-layer-tools">{placingKind && <span className="ls-derived-note">Click the room to place a {placingKind in VENTILATION_PLACEMENT_LABELS ? VENTILATION_PLACEMENT_LABELS[placingKind as VentilationPlacementKind] : placingKind.replace(/_/g, ' ')} — Esc to cancel</span>}{layers.circulation && !placingKind && <span className="ls-derived-note">Derived from unassigned space</span>}</div>
-    <div className="ls-backend-actions"><button disabled={sendingToSeedGenerator} onClick={() => void sendToSeedGenerator()}>{sendingToSeedGenerator ? 'Saving approved seed…' : 'Use in seed generator'}</button><button disabled={zoningLoading || !canRunZoning} title={canRunZoning ? undefined : 'Add at least one operation with a complete material context first'} onClick={() => void runZoneRequirements()}>{zoningLoading ? 'Zoning…' : 'Zone with MiniZinc'}</button><button disabled={benchPlacementLoading || !canRunZoning} title={canRunZoning ? 'Zones and bench counts are both derived automatically from the selected operations' : 'Add at least one operation with a complete material context first'} onClick={() => void runBenchPlacement()}>{benchPlacementLoading ? 'Zoning + placing benches…' : 'Zone + place benches'}</button><button disabled={savingZoningPlan || !canSavePlan} title={canSavePlan ? undefined : 'Add at least one operation with a complete material context first'} onClick={() => void saveCurrentPlan()}>{savingZoningPlan ? 'Saving plan…' : currentPlanId ? 'Save plan (overwrite)' : 'Save plan'}</button></div>
+    <div className="ls-backend-actions"><button disabled={sendingToSeedGenerator} onClick={() => void sendToSeedGenerator()}>{sendingToSeedGenerator ? 'Saving approved seed…' : 'Use in seed generator'}</button><button disabled={zoningLoading || !canRunZoning} title={canRunZoning ? undefined : 'Add at least one operation with a complete material context first'} onClick={() => void runZoneRequirements()}>{zoningLoading ? 'Zoning…' : 'Zone with MiniZinc'}</button><button disabled={benchPlacementLoading || !canRunZoning} title={canRunZoning ? 'Zones and bench counts are both derived automatically from the selected operations' : 'Add at least one operation with a complete material context first'} onClick={() => void runBenchPlacement()}>{benchPlacementLoading ? 'Zoning + placing benches…' : 'Zone + place benches'}</button><button disabled={maximizingLoading} title="No operations needed — carves as many zones as the room's own drawn shape fits, and packs as many benches into each as it can hold. Can take several minutes for larger rooms." onClick={() => void runMaximizeZonesAndBenches()}>{maximizingLoading ? 'Maximizing…' : 'Maximize zones + benches'}</button><button disabled={savingZoningPlan || !canSavePlan} title={canSavePlan ? undefined : 'Add at least one operation with a complete material context first'} onClick={() => void saveCurrentPlan()}>{savingZoningPlan ? 'Saving plan…' : currentPlanId ? 'Save plan (overwrite)' : 'Save plan'}</button></div>
     {backendNotice && <div className={`ls-optimization-notice ${backendNotice.kind}`}><span>{backendNotice.kind === 'progress' ? '⏳' : '⚠'}</span><b>{backendNotice.text}</b>{backendNotice.kind === 'error' && <button onClick={() => setBackendNotice(null)}>×</button>}</div>}
     {zoningBlocked && <div className="ls-violations"><div className="ls-section-title">Zoning blocked — needs review</div>{zoningBlocked.diagnostics.map((d, i) => <div key={`${d.operationId}-${i}`} className="ls-violation-card error"><b>{d.operationId} — {d.disposition}</b><span>{d.reason}</span></div>)}</div>}
     {catalogueDrift && <div className="ls-violations"><div className="ls-section-title">Loaded plan has drifted from the live catalogue</div>{catalogueDrift.map((d) => <div key={d.operationId} className="ls-violation-card warning"><b>{d.operationId}</b><span>{d.currentRevision === null ? 'No longer exists in the live catalogue.' : `Saved against catalogue revision "${d.savedRevision}", catalogue is now "${d.currentRevision}" — review this operation\'s context before zoning.`}</span></div>)}<button onClick={() => setCatalogueDrift(null)}>Dismiss</button></div>}
