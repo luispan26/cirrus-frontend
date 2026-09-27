@@ -3,7 +3,7 @@ import { useMutation } from '@apollo/client/react';
 import { useNavigate } from 'react-router-dom';
 import { MAXIMIZE_ZONES_AND_BENCHES_MUTATION } from '../graphql/operations';
 import { ACCESS_FILL, BENCH_FILL, PlacementGrid, ZONE_COLORS } from '../lib/placement-grid';
-import type { BenchPlacementResult, ZoneHandoff } from '../lib/placement-grid';
+import type { BenchPlacementResult, Cell, ZoneHandoff } from '../lib/placement-grid';
 
 // Minimal, standalone diagnostic page for ZoneBenchMaximizerService: given
 // just a room shell (no target bench count), it repeatedly carves as many
@@ -19,7 +19,14 @@ type MaximizeZonesAndBenchesResult = {
   totalZones: number;
   totalBenches: number;
   zoneHandoff: ZoneHandoff;
-  benchResult: BenchPlacementResult;
+  // The maximizer also splits the floor into aisle (every walkable cell
+  // no bench covers) and equipment-placeable bench tops.
+  benchResult: BenchPlacementResult & {
+    aisleCells: Cell[];
+    equipmentPlaceableCells: Cell[];
+    aisleAreaSqFt: number;
+    equipmentPlaceableAreaSqFt: number;
+  };
 };
 
 function errMsg(e: unknown): string {
@@ -156,6 +163,12 @@ export function ZoneBenchMaximizerTestPage() {
                   <span style={{ fontFamily: 'var(--mono)', fontSize: 11, padding: '3px 10px', borderRadius: 999, background: 'var(--tl)', color: 'var(--td)' }}>
                     {result.totalBenches} bench{result.totalBenches === 1 ? '' : 'es'}
                   </span>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 11, padding: '3px 10px', borderRadius: 999, background: 'var(--tl)', color: 'var(--td)' }}>
+                    {Math.round(result.benchResult.equipmentPlaceableAreaSqFt)} sq ft equipment-placeable
+                  </span>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 11, padding: '3px 10px', borderRadius: 999, background: 'var(--tl)', color: 'var(--td)' }}>
+                    {Math.round(result.benchResult.aisleAreaSqFt)} sq ft aisle
+                  </span>
                 </div>
 
                 <PlacementGrid zoneHandoff={result.zoneHandoff} scale={scale} result={result.benchResult} />
@@ -169,11 +182,11 @@ export function ZoneBenchMaximizerTestPage() {
                   ))}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                     <span style={{ width: 12, height: 12, borderRadius: 3, background: BENCH_FILL, display: 'inline-block' }} />
-                    <span>bench footprint</span>
+                    <span>bench top (equipment placeable)</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                     <span style={{ width: 12, height: 12, borderRadius: 3, background: ACCESS_FILL, display: 'inline-block' }} />
-                    <span>access / aisle</span>
+                    <span>working aisle (all other open floor is aisle too)</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                     <span style={{ width: 12, height: 12, borderRadius: 3, background: '#2b2b2b', display: 'inline-block' }} />

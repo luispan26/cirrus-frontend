@@ -66,6 +66,8 @@ interface MaximizeZonesAndBenchesForSandboxResponse {
       placementGrid: { cellSizeInches: number };
       validation: { state: string; violations: string[]; unroutableBenchIds: string[] | null };
       benches: PlacedBenchEntry[];
+      aisleAreaSqFt: number;
+      equipmentPlaceableAreaSqFt: number;
     };
   };
 }
@@ -791,7 +793,7 @@ export function LayoutSandboxPage() {
       }));
       setLayers((current) => ({ ...current, equipment: true }));
       setBackendNotice(null);
-      setMessage(`Placed ${benchFixtures.length} bench(es) across ${result.totalZones} zone(s) — the room's own maximum, not a target count.`);
+      setMessage(`Placed ${benchFixtures.length} bench(es) across ${result.totalZones} zone(s) — the room's own maximum, not a target count. ${Math.round(benchResult.equipmentPlaceableAreaSqFt)} sq ft of bench top for equipment, ${Math.round(benchResult.aisleAreaSqFt)} sq ft of aisle.`);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       setBackendNotice({ kind: 'error', text: `Could not maximize zones and benches: ${detail}` });

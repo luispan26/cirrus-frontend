@@ -302,6 +302,16 @@ export const MAXIMIZE_ZONES_AND_BENCHES_MUTATION = gql`
           row
           column
         }
+        aisleCells {
+          row
+          column
+        }
+        equipmentPlaceableCells {
+          row
+          column
+        }
+        aisleAreaSqFt
+        equipmentPlaceableAreaSqFt
         benches {
           id
           requirementId
@@ -403,6 +413,16 @@ export const MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION = gql`
           row
           column
         }
+        aisleCells {
+          row
+          column
+        }
+        equipmentPlaceableCells {
+          row
+          column
+        }
+        aisleAreaSqFt
+        equipmentPlaceableAreaSqFt
         benches {
           id
           requirementId
