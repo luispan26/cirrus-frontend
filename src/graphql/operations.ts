@@ -776,6 +776,7 @@ export const VALIDATED_PROTOCOLS_QUERY = gql`
       title
       sourceUrl
       cellType
+      essential
       createdAt
     }
   }
@@ -793,6 +794,17 @@ export const SET_VALIDATED_PROTOCOL_CELL_TYPE_MUTATION = gql`
       id
       protocolId
       cellType
+      essential
+    }
+  }
+`;
+
+export const SET_VALIDATED_PROTOCOL_ESSENTIAL_MUTATION = gql`
+  mutation SetValidatedProtocolEssential($protocolId: ID!, $essential: Boolean!) {
+    setValidatedProtocolEssential(protocolId: $protocolId, essential: $essential) {
+      id
+      protocolId
+      essential
     }
   }
 `;

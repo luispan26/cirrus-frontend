@@ -1,4 +1,4 @@
-export type QuestionType = 'radio' | 'multi' | 'space' | 'budget' | 'checklist' | 'equipment_plan' | 'layout_prefs';
+export type QuestionType = 'radio' | 'protocol_plan' | 'space' | 'budget' | 'checklist' | 'equipment_plan' | 'layout_prefs';
 
 // Mirrors the backend's WallSide (layout-generation/intake-payload.type.ts)
 // — kept in sync by hand, same convention as GENERAL_LAB_LIST_KEY etc. below.
@@ -46,9 +46,11 @@ export type Answers = Record<string, unknown>;
 // basic_lab_equipment (the merged equipment-planning step: add anything you
 // already own or still need, then review the resulting Basic Lab Equipment
 // List — see computeBasicLabEquipment/applyBasicLabEquipmentOverrides below)
-// -> space -> operations (protocol selection, plus expected weekly runs per
-// protocol asked inline — see ProtocolSelectBody in QuestionsPage.tsx) ->
-// budget -> layout_prefs (optional — layout priority sliders plus manual
+// -> space -> operations (the protocol-planning step: essential protocols
+// for the selected biomaterials are pre-selected automatically, add/remove
+// on top of that, plus expected weekly runs per protocol asked inline — see
+// ProtocolPlanBody in QuestionsPage.tsx and computeEssentialProtocolIds
+// below) -> budget -> layout_prefs (optional — layout priority sliders plus manual
 // door/utility placement, all defaulted so a user can skip it entirely; see
 // LayoutPrefsBody in QuestionsPage.tsx and the layout_weights/door/utilities
 // fields on FinalIntakeJson below).
@@ -202,12 +204,59 @@ export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; color: st
   { key: PROTOCOL_SPECIFIC_CATEGORY_KEY, label: 'Protocol Specific Equipment', color: '#B5442E' },
 ];
 
+// The protocol-plan step's (Q5) color-coded category legend — same per-
+// biomaterial colors as BASIC_EQUIPMENT_CATEGORIES above for visual
+// consistency between the two steps, since they group by the same
+// biomaterial vocabulary. 'manual' (a user-added protocol that isn't an
+// essential match for any currently-selected biomaterial) plays the role
+// 'owned'/'needed' play in BASIC_EQUIPMENT_CATEGORIES — listed first since,
+// like those, it needs no action from the user beyond what they already did
+// to add it.
+export const PROTOCOL_PLAN_CATEGORIES: { key: string; label: string; color: string }[] = [
+  { key: 'manual', label: 'Added Manually', color: '#6B7280' },
+  { key: 'general', label: 'General Protocols', color: '#00A3A3' },
+  { key: 'bacteria', label: 'Bacterial', color: '#3D8B3D' },
+  { key: 'yeast', label: 'Yeast', color: '#C9791C' },
+  { key: 'mammalian_adherent', label: 'Mammalian (Adherent)', color: '#7B4FD6' },
+  { key: 'mammalian_suspension', label: 'Mammalian (Suspension)', color: '#D64F9E' },
+];
+
+export interface ValidatedProtocolSummary { protocolId: string; essential: boolean; cellType?: string | null; }
+
+// Which validated protocols should be auto-selected for the protocol-plan
+// step, given the user's current Q2 biomaterials — the protocol-list analog
+// of computeBasicLabEquipment's list-walking above. Deliberately excludes
+// essential=true rows with no cellType rather than treating them as
+// always-on 'general' protocols: the backend's setEssential rejects setting
+// essential without a cellType already set (see
+// ValidatedProtocolsService.setEssential), so this branch only exists as a
+// defensive fallback for stale/directly-edited data, never the expected
+// path. Recomputed fresh every render from current answers.biomaterials —
+// see ComputedProtocolList in QuestionsPage.tsx — so deselecting a
+// biomaterial makes its essential protocols disappear from the selection,
+// same as deselecting one drops its equipment from computeBasicLabEquipment.
+export function computeEssentialProtocolIds(answers: Answers, protocols: ValidatedProtocolSummary[]): { protocolId: string; categoryKey: string }[] {
+  const biomaterials = new Set((answers.biomaterials as string[]) || []);
+  const result: { protocolId: string; categoryKey: string }[] = [];
+  for (const p of protocols) {
+    if (!p.essential || !p.cellType) continue;
+    if (p.cellType === 'general' || biomaterials.has(p.cellType)) {
+      result.push({ protocolId: p.protocolId, categoryKey: p.cellType });
+    }
+  }
+  return result;
+}
+
 export const QS: Question[] = [
   { id: 'biosafety_level', n: 1, t: 'What biosafety level is your labspace compliant with?', h: 'Adds that level\'s required equipment to your Basic Lab Equipment List', type: 'radio', opts: BIOSAFETY_LEVEL_OPTS },
   { id: 'biomaterials', n: 2, t: 'What type of biomaterials would you like to work with?', h: 'Each one adds its own basic equipment set to your Basic Lab Equipment List', type: 'checklist', opts: BIOMATERIAL_OPTS },
   { id: 'basic_lab_equipment', n: 3, t: 'Plan your Basic Lab Equipment', h: 'Add anything you already own or still need, then review the computed Basic Lab Equipment List — adjust quantities or remove anything you don’t need', type: 'equipment_plan' },
   { id: 'space', n: 4, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
-  { id: 'operations', n: 5, t: 'Add additional protocols?', h: 'Check the ones this lab needs and set expected weekly runs for each — duration is pulled from the protocol itself.', type: 'multi', opts: OPERATION_OPTS },
+  {
+    id: 'operations', n: 5, t: 'Plan your Protocols',
+    h: 'Essential protocols for your selected biomaterials are added automatically — add or remove any protocol below, and set expected weekly runs for each.',
+    type: 'protocol_plan', opts: OPERATION_OPTS,
+  },
   { id: 'budget', n: 6, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
   {
     id: 'layout_prefs', n: 7, t: 'Layout preferences', type: 'layout_prefs',
@@ -231,6 +280,7 @@ export const INTAKE_FIELD_KEYS = [
   'basic_lab_equipment_quantity_overrides', 'basic_lab_equipment_removed', 'basic_lab_equipment_final',
   'space_method', 'width_ft', 'height_ft', 'space_floorplan_filename',
   'operations', 'protocol_runs_per_week', 'protocol_operation_by_id',
+  'protocol_essential_removed', 'protocol_manual_ids',
   'budget_desired', 'budget_max', 'budget_scope',
   'layout_priority_throughput', 'layout_priority_walking_distance', 'layout_priority_contamination',
   'door_wall', 'door_offset_ft', 'utility_placements',
@@ -263,8 +313,9 @@ export function resolveOperationId(op: string): string {
 }
 
 // answers.operations holds each selected protocol's own real protocols.io
-// id (always unique — see ProtocolSelectBody's toggleProtocol in
-// QuestionsPage.tsx), not an operation id: two different validated
+// id (always unique — synced from the protocol-plan step's final selection,
+// see ComputedProtocolList in QuestionsPage.tsx), not an operation id: two
+// different validated
 // protocols that both happen to title-match the same catalog Operation
 // (e.g. two distinct BCA assay kits) stay independently selectable rather
 // than collapsing onto one shared checkbox. protocol_operation_by_id maps
@@ -298,8 +349,9 @@ export interface FinalIntakeJson {
   // Design Report's BOM can reuse Q5's color-coded-by-source grouping.
   basic_lab_equipment: { equipment_id: string; name: string; quantity: number; sources: string[] }[];
   operations: string[];
-  // Every protocol the user actually checked in Q5 (ProtocolSelectBody),
-  // by its own real protocols.io id — unlike `operations` above (resolved
+  // Every protocol in Q5's final selection (essential-derived plus
+  // manually-added, minus anything removed — see ComputedProtocolList in
+  // QuestionsPage.tsx), by its own real protocols.io id — unlike `operations` above (resolved
   // catalog Operation ids, deduped), this is the raw, undeduped selection,
   // so two different validated protocols that both match the same Operation
   // still both appear. Titles/sourceUrls aren't known here (this file has no

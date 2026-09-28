@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { useQuery, useMutation } from '@apollo/client/react';
 import { useNavigate } from 'react-router-dom';
-import { VALIDATED_PROTOCOLS_QUERY, REMOVE_VALIDATED_PROTOCOL_MUTATION, SET_VALIDATED_PROTOCOL_CELL_TYPE_MUTATION } from '../graphql/operations';
+import {
+  VALIDATED_PROTOCOLS_QUERY, REMOVE_VALIDATED_PROTOCOL_MUTATION,
+  SET_VALIDATED_PROTOCOL_CELL_TYPE_MUTATION, SET_VALIDATED_PROTOCOL_ESSENTIAL_MUTATION,
+} from '../graphql/operations';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { CELL_TYPE_OPTS } from '../lib/questions';
 
-interface ValidatedProtocolRow { id: string; protocolId: string; title: string; sourceUrl: string; cellType?: string | null; createdAt?: string; }
+interface ValidatedProtocolRow { id: string; protocolId: string; title: string; sourceUrl: string; cellType?: string | null; essential: boolean; createdAt?: string; }
 
 // Same vocabulary as the intake questionnaire's Q2 ("What type of
 // biomaterials would you like to work with?" — BIOMATERIAL_OPTS in
@@ -25,9 +28,11 @@ export function ValidatedProtocolsPage() {
 
   const [removeValidatedProtocol] = useMutation(REMOVE_VALIDATED_PROTOCOL_MUTATION);
   const [setCellType] = useMutation(SET_VALIDATED_PROTOCOL_CELL_TYPE_MUTATION);
+  const [setEssential] = useMutation(SET_VALIDATED_PROTOCOL_ESSENTIAL_MUTATION);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState('');
   const [cellTypeError, setCellTypeError] = useState('');
+  const [essentialError, setEssentialError] = useState('');
 
   async function handleSetCellType(protocolId: string, cellType: string) {
     setCellTypeError('');
@@ -36,6 +41,20 @@ export function ValidatedProtocolsPage() {
       refetch();
     } catch (e) {
       setCellTypeError(errMsg(e));
+    }
+  }
+
+  // The checkbox itself is disabled whenever a row has no cellType (see the
+  // essential <td> below), so this only ever runs with a cellType already
+  // set — the server still enforces the same invariant independently (see
+  // ValidatedProtocolsService.setEssential), this is just the UI-side half.
+  async function handleSetEssential(protocolId: string, essential: boolean) {
+    setEssentialError('');
+    try {
+      await setEssential({ variables: { protocolId, essential } });
+      refetch();
+    } catch (e) {
+      setEssentialError(errMsg(e));
     }
   }
 
@@ -72,6 +91,7 @@ export function ValidatedProtocolsPage() {
         {error && <div style={{ color: '#a33', fontSize: 12, marginBottom: 16 }}>{error.message}</div>}
         {removeError && <div style={{ color: '#a33', fontSize: 12, marginBottom: 16 }}>{removeError}</div>}
         {cellTypeError && <div style={{ color: '#a33', fontSize: 12, marginBottom: 16 }}>{cellTypeError}</div>}
+        {essentialError && <div style={{ color: '#a33', fontSize: 12, marginBottom: 16 }}>{essentialError}</div>}
         {!loading && protocols.length === 0 && (
           <div style={{ fontSize: 13, color: 'var(--mid)' }}>
             No protocols have been validated yet — assign equipment to at least one step and click Validate on the Protocols page.
@@ -92,6 +112,7 @@ export function ValidatedProtocolsPage() {
                   <th style={{ padding: '6px 6px 6px 0', textAlign: 'left', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Title</th>
                   <th style={{ padding: 6, textAlign: 'left', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Protocol ID</th>
                   <th style={{ padding: 6, textAlign: 'left', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Cell Type</th>
+                  <th style={{ padding: 6, textAlign: 'left', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Essential</th>
                   <th style={{ padding: 6, textAlign: 'left', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Validated</th>
                   <th style={{ padding: 6 }} />
                 </tr>
@@ -112,6 +133,15 @@ export function ValidatedProtocolsPage() {
                         value={row.cellType ?? ''}
                         onChange={(v) => handleSetCellType(row.protocolId, v)}
                         placeholder="Unassigned"
+                      />
+                    </td>
+                    <td style={{ padding: 6 }}>
+                      <input
+                        type="checkbox"
+                        checked={row.essential}
+                        disabled={!row.cellType}
+                        title={row.cellType ? undefined : 'Set a cell type before marking essential'}
+                        onChange={(e) => handleSetEssential(row.protocolId, e.target.checked)}
                       />
                     </td>
                     <td style={{ padding: 6, color: 'var(--mid)' }}>{row.createdAt ? new Date(row.createdAt).toLocaleDateString() : '—'}</td>
