@@ -3,15 +3,16 @@ import { useQuery, useMutation } from '@apollo/client/react';
 import { useNavigate } from 'react-router-dom';
 import { VALIDATED_PROTOCOLS_QUERY, REMOVE_VALIDATED_PROTOCOL_MUTATION, SET_VALIDATED_PROTOCOL_CELL_TYPE_MUTATION } from '../graphql/operations';
 import { SearchableSelect } from '../components/SearchableSelect';
-import { BIOMATERIAL_OPTS } from '../lib/questions';
+import { CELL_TYPE_OPTS } from '../lib/questions';
 
 interface ValidatedProtocolRow { id: string; protocolId: string; title: string; sourceUrl: string; cellType?: string | null; createdAt?: string; }
 
 // Same vocabulary as the intake questionnaire's Q2 ("What type of
 // biomaterials would you like to work with?" — BIOMATERIAL_OPTS in
-// lib/questions.ts), imported rather than duplicated so this never drifts
+// lib/questions.ts) plus a 'general' option for protocols not tied to any
+// one biomaterial — imported rather than duplicated so this never drifts
 // out of sync with that question's option list.
-const CELL_TYPE_OPTIONS = [{ value: '', label: 'Unassigned' }, ...BIOMATERIAL_OPTS.map((o) => ({ value: o.v, label: o.l }))];
+const CELL_TYPE_OPTIONS = [{ value: '', label: 'Unassigned' }, ...CELL_TYPE_OPTS.map((o) => ({ value: o.v, label: o.l }))];
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : 'Something went wrong.';

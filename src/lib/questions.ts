@@ -131,6 +131,17 @@ export const BIOMATERIAL_OPTS: QuestionOption[] = [
   { v: 'mice', l: 'Mice' },
 ];
 
+// ValidatedProtocolsPage's cellType dropdown vocabulary — BIOMATERIAL_OPTS
+// plus 'general' for protocols that aren't tied to any one biomaterial (gel
+// electrophoresis, Nanodrop/Qubit quantification, BCA assay, etc. — the same
+// technique works on a bacterial, yeast, or mammalian lysate). Deliberately
+// NOT added to BIOMATERIAL_OPTS itself: Q2's biomaterial checklist already
+// has an unconditional General Lab Equipment List added regardless of what's
+// checked (see GENERAL_LAB_LIST_KEY below), so a checkable "General"
+// biomaterial there wouldn't map to anything and would just be a no-op
+// checkbox.
+export const CELL_TYPE_OPTS: QuestionOption[] = [...BIOMATERIAL_OPTS, { v: 'general', l: 'General' }];
+
 // Prompt 1's eight fixed equipment membership list keys (see the backend's
 // src/equipment-lists/equipment-list.service.ts LIST_DEFINITIONS) that the
 // Basic Lab Equipment List computation below draws from. Kept in sync by
