@@ -8,7 +8,7 @@ export function GuidedFlowIntro({ onDismiss }: { onDismiss: () => void }) {
       <div className="ls-placement-question ls-placement-intro">
         <div className="ls-placement-question-header">Building this room</div>
         <p className="ls-placement-question-text">
-          Cirrus will ask you four quick questions — infrastructure, fixtures, stations &amp; equipment, and zone requirements.
+          Cirrus will ask you two quick questions — infrastructure and fixtures.
           For each one, mark what you already know the placement of. Anything you leave unmarked is derived: Cirrus calculates and generates those placements for you automatically, so you never have to place everything by hand.
         </p>
         <p className="ls-placement-question-text">

@@ -17,6 +17,9 @@
 // from placed objects — the rasterization itself was never actually
 // exercised until a real plumbing_point was placed in the live UI.
 import { describe, expect, test } from 'vitest';
+// These rules don't depend on the grid size: the checks below count fixture
+// positions and cells in whole feet, so they run on a 1 ft grid.
+const ONE_FOOT_ROOM = { widthFt: 40, heightFt: 30, gridFt: 1 };
 import {
   AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX,
   EMPTY_SANDBOX_LAYOUT,
@@ -26,7 +29,11 @@ import {
   fixtureFootprint,
   sandboxFixturesFromBenchPlacement,
   parseSandboxLayout,
+  polygonBounds,
+  resizeRoom,
   validateSandboxLayout,
+  withGridFt,
+  SANDBOX_GRID_FT,
   type SandboxFixture,
   type PlacedBenchGeometry,
   type SandboxBaseObject,
@@ -250,9 +257,9 @@ describe('sandboxFixturesFromBenchPlacement', () => {
 // pair (two 2.5ft benches on a 6" grid) is never a false "overlap".
 describe('validateSandboxLayout — aisle and door clearance only', () => {
   const bench = (instanceId: string, x: number, y: number, orientation: SandboxFixture['orientation']): SandboxFixture => ({
-    instanceId, kind: 'bench', name: instanceId, x, y, widthFt: 6, depthFt: 2.5, orientation, clearance: { frontFt: 5, backFt: 0, sideFt: 0 }, stations: [],
+    instanceId, kind: 'bench', name: instanceId, x, y, widthFt: 6, depthFt: 2.5, orientation, clearance: { frontFt: 5, backFt: 0, sideFt: 0 },
   });
-  const layoutWith = (fixtures: SandboxFixture[], baseObjects: SandboxBaseObject[] = []): SandboxLayout => ({ ...structuredClone(EMPTY_SANDBOX_LAYOUT), fixtures, baseObjects });
+  const layoutWith = (fixtures: SandboxFixture[], baseObjects: SandboxBaseObject[] = []): SandboxLayout => ({ ...structuredClone(EMPTY_SANDBOX_LAYOUT), room: ONE_FOOT_ROOM, fixtures, baseObjects });
   const northDoor: SandboxBaseObject = { id: 'door-1', kind: 'door', name: 'Door', footprint: { points: [{ x: 12, y: 0 }, { x: 15, y: 0 }, { x: 15, y: 0.5 }, { x: 12, y: 0.5 }] } };
 
   test('a back-to-back pair facing opposite ways, each with a clear 5ft aisle, is valid', () => {
@@ -307,8 +314,8 @@ describe('sandboxFixturesFromBenchPlacement — facing side', () => {
 describe('parseSandboxLayout — fixture positions', () => {
   test('keeps half-foot positions exactly, so a reloaded back-to-back pair stays touching', () => {
     const pair: SandboxFixture[] = [
-      { instanceId: 'a', kind: 'bench', name: 'a', x: 5, y: 10, widthFt: 6, depthFt: 2.5, orientation: 90, clearance: { frontFt: 5, backFt: 0, sideFt: 0 }, stations: [] },
-      { instanceId: 'b', kind: 'bench', name: 'b', x: 7.5, y: 10, widthFt: 6, depthFt: 2.5, orientation: 270, clearance: { frontFt: 5, backFt: 0, sideFt: 0 }, stations: [] },
+      { instanceId: 'a', kind: 'bench', name: 'a', x: 5, y: 10, widthFt: 6, depthFt: 2.5, orientation: 90, clearance: { frontFt: 5, backFt: 0, sideFt: 0 } },
+      { instanceId: 'b', kind: 'bench', name: 'b', x: 7.5, y: 10, widthFt: 6, depthFt: 2.5, orientation: 270, clearance: { frontFt: 5, backFt: 0, sideFt: 0 } },
     ];
     const parsed = parseSandboxLayout(JSON.parse(JSON.stringify({ ...EMPTY_SANDBOX_LAYOUT, fixtures: pair })));
     expect(parsed?.fixtures.map((f) => [f.x, f.y])).toEqual([[5, 10], [7.5, 10]]);
@@ -316,10 +323,10 @@ describe('parseSandboxLayout — fixture positions', () => {
 });
 
 describe('buildBenchPlacementGeometryInput — fixtures are no-placement areas', () => {
-  const fixture = (instanceId: string, kind: SandboxFixture['kind'], x: number, y: number, widthFt: number, depthFt: number): SandboxFixture => ({ instanceId, kind, name: instanceId, x, y, widthFt, depthFt, orientation: 0, stations: [] });
+  const fixture = (instanceId: string, kind: SandboxFixture['kind'], x: number, y: number, widthFt: number, depthFt: number): SandboxFixture => ({ instanceId, kind, name: instanceId, x, y, widthFt, depthFt, orientation: 0 });
 
   test('a placed fixture blocks exactly the cells its footprint touches, with no clearance added', () => {
-    const layout: SandboxLayout = { ...structuredClone(EMPTY_SANDBOX_LAYOUT), fixtures: [fixture('hood', 'laminarHood', 10, 20, 4, 2.5)] };
+    const layout: SandboxLayout = { ...structuredClone(EMPTY_SANDBOX_LAYOUT), room: ONE_FOOT_ROOM, fixtures: [fixture('hood', 'laminarHood', 10, 20, 4, 2.5)] };
     const geometry = buildBenchPlacementGeometryInput(layout);
     const expected: number[] = [];
     for (let y = 20; y <= 22; y++) for (let x = 10; x <= 13; x++) expected.push(y * 40 + x); // 4 x 2.5ft -> 4 x 3 cells
@@ -336,7 +343,80 @@ describe('architecture needs no clearance', () => {
   test('a window on the wall blocks no floor; a column blocks only its own footprint', () => {
     const window: SandboxBaseObject = { id: 'w', kind: 'window', name: 'Window', footprint: { points: [{ x: 5.8, y: 0 }, { x: 8.8, y: 0 }, { x: 8.8, y: 0.3 }, { x: 5.8, y: 0.3 }] } };
     const column: SandboxBaseObject = { id: 'c', kind: 'column', name: 'Column', footprint: { points: [{ x: 10, y: 10 }, { x: 11, y: 10 }, { x: 11, y: 11 }, { x: 10, y: 11 }] } };
-    const geometry = buildBenchPlacementGeometryInput({ ...structuredClone(EMPTY_SANDBOX_LAYOUT), baseObjects: [window, column] });
+    const geometry = buildBenchPlacementGeometryInput({ ...structuredClone(EMPTY_SANDBOX_LAYOUT), room: ONE_FOOT_ROOM, baseObjects: [window, column] });
     expect(geometry.blockedCells).toEqual([10 * 40 + 10]);
+  });
+});
+
+describe('resizeRoom — things along a wall stay on it, nothing is resized', () => {
+  const rect = (id: string, kind: SandboxBaseObject['kind'], left: number, top: number, right: number, bottom: number): SandboxBaseObject => ({
+    id, kind, name: id, footprint: { points: [{ x: left, y: top }, { x: right, y: top }, { x: right, y: bottom }, { x: left, y: bottom }] },
+  });
+  const layout: SandboxLayout = {
+    ...structuredClone(EMPTY_SANDBOX_LAYOUT),
+    room: { widthFt: 40, heightFt: 30, gridFt: 1 },
+    baseObjects: [
+      rect('door-n', 'door', 8, 0, 11, 0.5),
+      rect('door-s', 'door', 26, 29.5, 29, 30),
+      rect('door-e', 'door', 39.5, 20, 40, 23),
+      rect('window-w', 'window', 0, 5, 0.3, 8),
+      rect('column-mid', 'column', 20, 15, 21, 16),
+      rect('column-se', 'column', 38, 28, 40, 30),
+    ],
+    fixtures: [{ instanceId: 'hood', kind: 'laminarHood', name: 'Hood', x: 36, y: 10, widthFt: 4, depthFt: 2, orientation: 0 }],
+  };
+  const bounds = (l: SandboxLayout, id: string) => polygonBounds(l.baseObjects.find((o) => o.id === id)!.footprint);
+
+  test('growing the room: east/south things follow their wall, the rest stay put, sizes unchanged', () => {
+    const grown = resizeRoom(layout, { widthFt: 60, heightFt: 50 });
+    expect(bounds(grown, 'door-s')).toEqual({ left: 26, right: 29, top: 49.5, bottom: 50 });
+    expect(bounds(grown, 'door-e')).toEqual({ left: 59.5, right: 60, top: 20, bottom: 23 });
+    expect(bounds(grown, 'door-n')).toEqual({ left: 8, right: 11, top: 0, bottom: 0.5 });
+    expect(bounds(grown, 'window-w')).toEqual({ left: 0, right: 0.3, top: 5, bottom: 8 });
+    expect(bounds(grown, 'column-mid')).toEqual({ left: 20, right: 21, top: 15, bottom: 16 });
+    expect(bounds(grown, 'column-se')).toEqual({ left: 58, right: 60, top: 48, bottom: 50 });
+    expect(grown.fixtures[0]).toMatchObject({ x: 56, y: 10, widthFt: 4, depthFt: 2 });
+  });
+
+  test('shrinking the room: things along a shorter wall slide back inside it', () => {
+    const shrunk = resizeRoom(layout, { widthFt: 20, heightFt: 22 });
+    expect(bounds(shrunk, 'door-s')).toEqual({ left: 17, right: 20, top: 21.5, bottom: 22 });
+    expect(bounds(shrunk, 'door-e')).toEqual({ left: 19.5, right: 20, top: 19, bottom: 22 });
+    expect(bounds(shrunk, 'column-se')).toEqual({ left: 18, right: 20, top: 20, bottom: 22 });
+  });
+});
+describe('6" sandbox grid', () => {
+  const bench = (instanceId: string, x: number, y: number): SandboxFixture => ({ instanceId, kind: 'bench', name: instanceId, x, y, widthFt: 6, depthFt: 2.5, orientation: 0, clearance: { frontFt: 4, backFt: 0, sideFt: 0 } });
+
+  test('new layouts use a 6" grid', () => {
+    expect(EMPTY_SANDBOX_LAYOUT.room.gridFt).toBe(SANDBOX_GRID_FT);
+    expect(SANDBOX_GRID_FT).toBe(0.5);
+  });
+
+  test('a saved 1 ft layout moves onto the 6" grid without moving anything in the room', () => {
+    const door: SandboxBaseObject = { id: 'd', kind: 'door', name: 'Door', footprint: { points: [{ x: 12, y: 0 }, { x: 15, y: 0 }, { x: 15, y: 0.5 }, { x: 12, y: 0.5 }] } };
+    const old: SandboxLayout = { ...structuredClone(EMPTY_SANDBOX_LAYOUT), room: ONE_FOOT_ROOM, fixtures: [bench('a', 10, 7.5)], baseObjects: [door] };
+    const moved = withGridFt(old, SANDBOX_GRID_FT);
+    expect(moved.room).toEqual({ ...ONE_FOOT_ROOM, gridFt: 0.5 });
+    expect(moved.fixtures.map((f) => [f.x, f.y])).toEqual([[20, 15]]);
+    expect(moved.baseObjects).toEqual(old.baseObjects);
+    expect(withGridFt(moved, SANDBOX_GRID_FT)).toBe(moved);
+    expect(withGridFt(moved, 1).fixtures.map((f) => [f.x, f.y])).toEqual([[10, 7.5]]);
+  });
+
+  test('a 2.5 ft bench covers exactly 5 cells, so its edge lands on a grid line', () => {
+    expect(fixtureFootprint(bench('a', 0, 0), SANDBOX_GRID_FT)).toEqual({ width: 12, height: 5 });
+  });
+
+  test('solver benches come back on the 6" grid', () => {
+    const cells = [{ row: 3, column: 4 }, { row: 7, column: 15 }];
+    const [fixture] = sandboxFixturesFromBenchPlacement([{ id: 'b', zoneId: 'z', rotationDegrees: 0, accessSide: 'south', footprintCells: cells }], 6, new Map(), 4, SANDBOX_GRID_FT);
+    expect([fixture.x, fixture.y]).toEqual([4, 3]);
+  });
+
+  test('resizing a 6" room keeps east-wall things on the east wall', () => {
+    const layout: SandboxLayout = { ...structuredClone(EMPTY_SANDBOX_LAYOUT), fixtures: [bench('east', (40 - 6) / SANDBOX_GRID_FT, 10)] };
+    const resized = resizeRoom(layout, { widthFt: 44, heightFt: 30 });
+    expect(resized.fixtures[0].x * SANDBOX_GRID_FT + 6).toBe(44);
   });
 });

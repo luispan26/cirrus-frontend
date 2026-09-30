@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import { DonutChart } from './DonutChart';
-import { GeneratedLayoutPlan } from './GeneratedLayoutPlan';
+import { GeneratedLayoutPlan, type GeneratedLayout } from './GeneratedLayoutPlan';
 import { BASIC_EQUIPMENT_CATEGORIES } from '../lib/questions';
 
 function cap(s: string): string {
@@ -152,7 +152,9 @@ function computeCostByCategory(bom: any[]): { name: string; value: number; color
     });
 }
 
-export function ReportView({ data }: { data: Record<string, any> }) {
+// reportId (absent for pasted JSON) enables editing the generated plan's
+// zones; onLayoutUpdated receives the re-run generated layout.
+export function ReportView({ data, reportId, onLayoutUpdated }: { data: Record<string, any>; reportId?: string | null; onLayoutUpdated?: (generated: GeneratedLayout) => void }) {
   const bom = asArray(data.bom);
   const staff = asArray(data.staff);
   const recommended = asArray(data.recommended_equipment);
@@ -242,7 +244,7 @@ export function ReportView({ data }: { data: Record<string, any> }) {
         </>
       )}
 
-      <GeneratedLayoutPlan value={data.generated_layout} />
+      <GeneratedLayoutPlan value={data.generated_layout} reportId={reportId} onUpdated={onLayoutUpdated} />
 
       {staff.length > 0 && (
         <>

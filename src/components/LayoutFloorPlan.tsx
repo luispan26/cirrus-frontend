@@ -1,22 +1,17 @@
+import { useMemo } from 'react';
 import { computeDoorSwing, polygonBounds, wallSideOfBounds, type SandboxBaseObject, type SandboxFixture, type SandboxLayout } from '../lib/layout-sandbox';
+import { cellOutlinePath, cellRuns, zoneColor, type LabPlan } from '../lib/lab-plan';
 
-// Teal->magenta gradient rather than a categorical palette — every station
-// gets a deterministic, distinct point along the same two-color gradient
-// used everywhere else in the app (buttons, progress bar, scrollbar), by
-// hashing its stationId to a position along it.
-const GRADIENT_FROM = { r: 0x00, g: 0xd5, b: 0xd5 }; // var(--teal)
-const GRADIENT_TO = { r: 0xff, g: 0x3f, b: 0xa4 }; // var(--pk)
+// Fields a generated bench carries beyond SandboxFixture (see the backend's
+// lab-plan.ts benchFixtures).
+type PlanFixture = SandboxFixture & { planBenchId?: string; zoneId?: string; islandId?: string | null };
 
-export function stationColor(stationId?: string) {
-  if (!stationId) return '#A7A2AD';
-  let hash = 0;
-  for (const character of stationId) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
-  const t = (Math.abs(hash) % 997) / 997;
-  const r = Math.round(GRADIENT_FROM.r + (GRADIENT_TO.r - GRADIENT_FROM.r) * t);
-  const g = Math.round(GRADIENT_FROM.g + (GRADIENT_TO.g - GRADIENT_FROM.g) * t);
-  const b = Math.round(GRADIENT_FROM.b + (GRADIENT_TO.b - GRADIENT_FROM.b) * t);
-  return `rgb(${r}, ${g}, ${b})`;
-}
+const AISLE_FILL = 'rgba(52,98,201,.17)';
+const DOOR_CLEARANCE_FILL = 'rgba(214,79,79,.13)';
+const DOOR_CLEARANCE_EDGE = 'rgba(214,79,79,.75)';
+
+// Fill for a fixture that isn't a zoned bench (e.g. an older report's bench).
+const UNZONED_FILL = '#A7A2AD';
 
 // One glyph per zone (wet_lab / dry_lab / automation / unassigned) rather
 // than per stationId — a finite, meaningful set instead of an arbitrary icon
@@ -109,22 +104,7 @@ function WindowSymbol({ object }: { object: SandboxBaseObject }) {
   return <rect x={bounds.left} y={bounds.top} width={bounds.right - bounds.left} height={bounds.bottom - bounds.top} style={{ fill: PAPER, stroke: INK, strokeWidth: 0.035 }} />;
 }
 
-const INFRA_POINT_LABEL: Record<string, string> = { electrical_point: 'ELEC', plumbing_point: 'PLMB', ventilation_point: 'VENT' };
-const INFRA_POINT_COLOR: Record<string, string> = { electrical_point: '#c98a1f', plumbing_point: '#1f7fc9', ventilation_point: '#3f9c5e' };
-
-function InfraPointSymbol({ object }: { object: SandboxBaseObject }) {
-  const point = object.footprint.points[0];
-  if (!point) return null;
-  const color = INFRA_POINT_COLOR[object.kind] ?? INK_SOFT;
-  const label = INFRA_POINT_LABEL[object.kind] ?? object.name.replace(' connection', '').toUpperCase();
-  return (
-    <g>
-      <circle cx={point.x} cy={point.y} r={0.15} style={{ fill: PAPER, stroke: color, strokeWidth: 0.04 }} />
-      <text x={point.x} y={point.y - 0.24} textAnchor="middle" fontSize={0.22} fontFamily="var(--mono)" fill={color}>{label}</text>
-    </g>
-  );
-}
-
+// Utility points (not drawn: utilities are not part of Cirrus layouts).
 const POINT_KINDS = ['utility_connection', 'electrical_point', 'plumbing_point', 'ventilation_point'];
 const WALL_OPENING_KINDS = ['door', 'window'];
 
@@ -188,6 +168,12 @@ function ScaleBar() {
 // hover) so the two never drift into different visual treatments of the
 // same data — thumbnails just drop the dimensioning/annotation layer since
 // there isn't room to read it at that size.
+//
+// When the layout carries a generated plan (layout.plan), benches are
+// colored by workflow zone and the plan's floor layers are drawn under
+// them: each zone's floor tinted, the aisle object, and door clearances.
+// `zoneOfBench` overrides a bench's zone (unsaved edits on the report), and
+// `onFixtureClick` makes benches clickable.
 export function LayoutFloorPlan({
   layout,
   hoveredId,
@@ -195,6 +181,10 @@ export function LayoutFloorPlan({
   className = 'generated-layout-preview',
   ariaLabel = 'Generated laboratory floor plan',
   detailed,
+  plan,
+  zoneOfBench,
+  onFixtureClick,
+  showPlanLayers = true,
 }: {
   layout: SandboxLayout;
   hoveredId?: string | null;
@@ -202,10 +192,28 @@ export function LayoutFloorPlan({
   className?: string;
   ariaLabel?: string;
   detailed?: boolean;
+  plan?: LabPlan | null;
+  zoneOfBench?: (planBenchId: string) => string | undefined;
+  onFixtureClick?: (fixtureId: string, event: React.MouseEvent) => void;
+  showPlanLayers?: boolean;
 }) {
   const interactive = !!onHoverChange;
   const showDetail = detailed ?? interactive;
   const { room } = layout;
+  const cellFt = (plan?.gridInches ?? 6) / 12;
+  const zoneIds = useMemo(() => plan?.zones.map((z) => z.id) ?? [], [plan]);
+  const zoneNames = useMemo(() => new Map(plan?.zones.map((z) => [z.id, z.name]) ?? []), [plan]);
+  // Unsaved zone edits move benches but not the stored floor territory, so
+  // zone tints are only drawn when nothing has been reassigned.
+  const layers = useMemo(() => (plan && showPlanLayers ? {
+    zones: zoneOfBench ? [] : plan.zones.map((z) => ({ id: z.id, runs: cellRuns(z.cells) })),
+    aisle: cellRuns(plan.aisle.cells),
+    door: cellRuns(plan.doorClearance.cells),
+    // Where an aisle crosses a door clearance the floor is drawn as aisle;
+    // the whole clearance stays outlined on top so it can still be seen.
+    doorOutline: plan.doorClearance.aisleCells?.length ? cellOutlinePath([...plan.doorClearance.cells, ...plan.doorClearance.aisleCells], cellFt) : '',
+  } : null), [plan, showPlanLayers, zoneOfBench, cellFt]);
+  const benchZone = (fixture: PlanFixture) => (fixture.planBenchId ? zoneOfBench?.(fixture.planBenchId) ?? fixture.zoneId : undefined);
   const marginLeft = showDetail ? WALL_T + DIM_GAP + 0.9 : 0;
   const marginBottom = showDetail ? WALL_T + DIM_GAP + 0.8 : 0;
   const marginTop = showDetail ? 2.7 : 0;
@@ -243,29 +251,48 @@ export function LayoutFloorPlan({
 
       <rect x={0} y={0} width={room.widthFt} height={room.heightFt} fill="url(#lfp-grid)" />
 
+      {layers && (
+        <g style={{ pointerEvents: 'none' }}>
+          {layers.zones.map((zone) => (
+            <g key={zone.id} fill={zoneColor(zone.id, zoneIds)} fillOpacity={0.07}>
+              {zone.runs.map((r, i) => <rect key={i} x={r.column * cellFt} y={r.row * cellFt} width={r.width * cellFt + 0.01} height={cellFt + 0.01} />)}
+            </g>
+          ))}
+          <g fill={DOOR_CLEARANCE_FILL}>
+            {layers.door.map((r, i) => <rect key={i} x={r.column * cellFt} y={r.row * cellFt} width={r.width * cellFt + 0.01} height={cellFt + 0.01} />)}
+          </g>
+          <g fill={AISLE_FILL}>
+            {layers.aisle.map((r, i) => <rect key={i} x={r.column * cellFt} y={r.row * cellFt} width={r.width * cellFt + 0.01} height={cellFt + 0.01} />)}
+          </g>
+          {layers.doorOutline && <path d={layers.doorOutline} style={{ fill: 'none', stroke: DOOR_CLEARANCE_EDGE, strokeWidth: 0.06, strokeDasharray: '.25 .15' }} />}
+        </g>
+      )}
+
       {showDetail && layout.baseObjects.filter((o) => !WALL_OPENING_KINDS.includes(o.kind) && !POINT_KINDS.includes(o.kind) && o.footprint.points.length >= 3).map((o) => (
         <polygon key={o.id} points={o.footprint.points.map((p) => `${p.x},${p.y}`).join(' ')} style={{ fill: 'rgba(34,36,47,.06)', stroke: INK_SOFT, strokeWidth: 0.03, strokeDasharray: '.12 .09' }} />
       ))}
-      {showDetail && layout.baseObjects.filter((o) => POINT_KINDS.includes(o.kind) && o.footprint.points[0]).map((o) => <InfraPointSymbol key={o.id} object={o} />)}
 
       <path d={wallPathD} fillRule="evenodd" style={{ fill: 'url(#lfp-hatch)', stroke: INK, strokeWidth: 0.055 }} />
 
       {layout.baseObjects.filter((o) => o.kind === 'window' && o.footprint.points.length).map((window) => <WindowSymbol key={window.id} object={window} />)}
       {layout.baseObjects.filter((o) => o.kind === 'door' && o.footprint.points.length).map((door) => <DoorSymbol key={door.id} object={door} room={room} />)}
 
-      {layout.fixtures.map((fixture) => {
+      {(layout.fixtures as PlanFixture[]).map((fixture) => {
         const size = exactFootprint(fixture);
         const x = fixture.x * layout.room.gridFt;
         const y = fixture.y * layout.room.gridFt;
         const { width, height } = size;
-        const station = fixture.stations[0];
-        const equipmentNames = fixture.stations.flatMap((assignment) => assignment.equipment.map((item) => item.name));
-        const summary = `${station?.name ?? fixture.name}. ${equipmentNames.length ? `Equipment: ${equipmentNames.join(', ')}` : 'No equipment assigned.'}`;
-        const color = stationColor(station?.stationId);
+        const zoneId = benchZone(fixture);
+        const zoneName = zoneId ? zoneNames.get(zoneId) ?? zoneId : null;
+        const summary = zoneName
+          ? `${fixture.name} — ${zoneName} zone.${onFixtureClick ? ' Click to move this bench into the selected zone.' : ''}`
+          : fixture.name;
+        const color = zoneId ? zoneColor(zoneId, zoneIds) : UNZONED_FILL;
         const isHovered = hoveredId === fixture.instanceId;
         const iconSize = Math.min(0.85, Math.min(width, height) * 0.55);
         const canShowLabel = width >= 1.6 && height >= 0.75;
         const fontSize = Math.min(0.4, Math.max(0.22, height * 0.28));
+        const label = zoneName ?? fixture.name;
         return (
           <g
             key={fixture.instanceId}
@@ -276,34 +303,66 @@ export function LayoutFloorPlan({
             onMouseLeave={interactive ? () => onHoverChange!(null) : undefined}
             onFocus={interactive ? () => onHoverChange!(fixture.instanceId) : undefined}
             onBlur={interactive ? () => onHoverChange!(null) : undefined}
+            onClick={onFixtureClick ? (event) => onFixtureClick(fixture.instanceId, event) : undefined}
+            style={onFixtureClick ? { cursor: 'pointer' } : undefined}
           >
             {interactive && <title>{summary}</title>}
             <rect
               x={x} y={y} width={width} height={height}
               filter="url(#benchShadow)"
-              style={{ fill: color, fillOpacity: isHovered ? 0.3 : 0.14, stroke: INK, strokeWidth: isHovered ? 0.11 : 0.055, transition: 'fill-opacity .15s ease, stroke-width .15s ease' }}
+              style={{ fill: color, fillOpacity: isHovered ? (zoneId ? 0.6 : 0.3) : (zoneId ? 0.4 : 0.14), stroke: INK, strokeWidth: isHovered ? 0.11 : 0.055, transition: 'fill-opacity .15s ease, stroke-width .15s ease' }}
             />
             {width > 0.5 && height > 0.5 && (
               <rect x={x + 0.12} y={y + 0.12} width={Math.max(0, width - 0.24)} height={Math.max(0, height - 0.24)} style={{ fill: 'none', stroke: INK_SOFT, strokeWidth: 0.025, pointerEvents: 'none' }} />
             )}
-            {canShowLabel ? (
+            {zoneId ? (
+              // Generated benches: no icon — the zone name, turned
+              // to run along the bench's long side.
+              width >= height ? (
+                <text x={x + width / 2} y={y + height / 2} textAnchor="middle" dominantBaseline="middle" fontSize={fontSize} fontFamily="var(--mono)" fill={INK} style={{ pointerEvents: 'none' }}>
+                  {truncateLabel(label, width - 0.3, fontSize)}
+                </text>
+              ) : (
+                <text x={x + width / 2} y={y + height / 2} textAnchor="middle" dominantBaseline="middle" fontSize={Math.min(0.4, Math.max(0.22, width * 0.28))} fontFamily="var(--mono)" fill={INK} transform={`rotate(-90 ${x + width / 2} ${y + height / 2})`} style={{ pointerEvents: 'none' }}>
+                  {truncateLabel(label, height - 0.3, Math.min(0.4, Math.max(0.22, width * 0.28)))}
+                </text>
+              )
+            ) : canShowLabel ? (
               <>
                 <svg x={x + 0.15} y={y + height / 2 - iconSize / 2} width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }}>
-                  <ZoneIcon zone={station?.zone ?? 'unassigned'} />
+                  <ZoneIcon zone="unassigned" />
                 </svg>
                 <text x={x + 0.15 + iconSize + 0.12} y={y + height / 2} dominantBaseline="middle" fontSize={fontSize} fontFamily="var(--mono)" letterSpacing="0.01em" fill={INK} style={{ pointerEvents: 'none' }}>
-                  {truncateLabel(station?.name ?? fixture.name, width - iconSize - 0.5, fontSize)}
+                  {truncateLabel(label, width - iconSize - 0.5, fontSize)}
                 </text>
               </>
             ) : (
               <svg x={x + width / 2 - iconSize / 2} y={y + height / 2 - iconSize / 2} width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }}>
-                <ZoneIcon zone={station?.zone ?? 'unassigned'} />
+                <ZoneIcon zone="unassigned" />
               </svg>
             )}
           </g>
         );
       })}
 
+      {!zoneOfBench && plan?.initialEquipment?.workAreas?.map((area) => (
+        <rect key={area.id} x={area.xFt} y={area.yFt} width={area.spanXFt} height={area.spanYFt} rx={0.06} fill="none" stroke="#263b46" strokeOpacity={0.55} strokeWidth={0.04} strokeDasharray="0.2 0.12" style={{ pointerEvents: 'none' }}>
+          <title>Pipette work area (working space)</title>
+        </rect>
+      ))}
+      {!zoneOfBench && plan?.initialEquipment?.placements.map((item) => {
+        const spanX = item.spanXFt ?? item.widthFt;
+        const spanY = item.spanYFt ?? item.depthFt;
+        const vertical = spanY > spanX;
+        const cx = item.xFt + spanX / 2;
+        const cy = item.yFt + spanY / 2;
+        return (
+          <g key={item.instanceId} style={{ pointerEvents: 'none' }}>
+            <rect x={item.xFt} y={item.yFt} width={spanX} height={spanY} rx={0.06} fill="#fff" fillOpacity={0.85} stroke="#263b46" strokeWidth={0.05} strokeDasharray={item.placeholderSize ? '0.12 0.08' : undefined} />
+            <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" fontSize={0.18} fill="#263b46" transform={vertical ? `rotate(-90 ${cx} ${cy})` : undefined}>{truncateLabel(item.name, Math.max(spanX, spanY) - 0.1, 0.18)}{item.fixed ? ' *' : ''}</text>
+          </g>
+        );
+      })}
       {showDetail && <WidthDimension room={room} />}
       {showDetail && <HeightDimension room={room} />}
     </svg>

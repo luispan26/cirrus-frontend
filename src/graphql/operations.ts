@@ -23,213 +23,6 @@ export const CONFIRM_FLOOR_PLAN_MUTATION = gql`
   }
 `;
 
-export const GENERATE_ZONES_MUTATION = gql`
-  mutation GenerateZones($input: GenerateZonesInput!) {
-    generateZones(input: $input) {
-      solveStatus
-      validation {
-        state
-        violations
-      }
-      unassignedCells {
-        row
-        column
-      }
-      circulationCells {
-        row
-        column
-      }
-      zones {
-        id
-        family
-        areaCells
-        minimumWidthCells
-        cells {
-          row
-          column
-        }
-        boundingBox {
-          minimumRow
-          maximumRow
-          minimumColumn
-          maximumColumn
-        }
-        boundaryEdges {
-          side
-          cell {
-            row
-            column
-          }
-        }
-        circulationAccessCells {
-          row
-          column
-        }
-        adjacentFeatureIds
-        nearbyUtilities {
-          featureId
-          type
-          distanceCells
-        }
-      }
-    }
-  }
-`;
-
-export const PLACE_BENCHES_MUTATION = gql`
-  mutation PlaceBenches($input: PlaceBenchesInput!) {
-    placeBenches(input: $input) {
-      solveStatus
-      accessConnectivityMode
-      validation {
-        state
-        violations
-        unroutableBenchIds
-        navigableRegionCells {
-          row
-          column
-        }
-      }
-      placementGrid {
-        rows
-        columns
-        cellSizeInches
-        sourceCellSizeInches
-        scaleFactor
-      }
-      remainingZoneCells {
-        row
-        column
-      }
-      remainingPlaceableCells {
-        row
-        column
-      }
-      benches {
-        id
-        requirementId
-        zoneId
-        origin {
-          row
-          column
-        }
-        rotationDegrees
-        accessSide
-        footprintCells {
-          row
-          column
-        }
-        accessCells {
-          row
-          column
-        }
-      }
-    }
-  }
-`;
-
-export const GENERATE_ZONES_AND_PLACE_BENCHES_MUTATION = gql`
-  mutation GenerateZonesAndPlaceBenches($input: GenerateZonesAndPlaceBenchesInput!) {
-    generateZonesAndPlaceBenches(input: $input) {
-      zoneResult {
-        solveStatus
-        validation {
-          state
-          violations
-        }
-        unassignedCells {
-          row
-          column
-        }
-        circulationCells {
-          row
-          column
-        }
-        zones {
-          id
-          family
-          areaCells
-          minimumWidthCells
-          cells {
-            row
-            column
-          }
-          boundingBox {
-            minimumRow
-            maximumRow
-            minimumColumn
-            maximumColumn
-          }
-          boundaryEdges {
-            side
-            cell {
-              row
-              column
-            }
-          }
-          circulationAccessCells {
-            row
-            column
-          }
-          adjacentFeatureIds
-          nearbyUtilities {
-            featureId
-            type
-            distanceCells
-          }
-        }
-      }
-      benchResult {
-        solveStatus
-        accessConnectivityMode
-        validation {
-          state
-          violations
-          unroutableBenchIds
-          navigableRegionCells {
-            row
-            column
-          }
-        }
-        placementGrid {
-          rows
-          columns
-          cellSizeInches
-          sourceCellSizeInches
-          scaleFactor
-        }
-        remainingZoneCells {
-          row
-          column
-        }
-        remainingPlaceableCells {
-          row
-          column
-        }
-        benches {
-          id
-          requirementId
-          zoneId
-          origin {
-            row
-            column
-          }
-          rotationDegrees
-          accessSide
-          footprintCells {
-            row
-            column
-          }
-          accessCells {
-            row
-            column
-          }
-        }
-      }
-    }
-  }
-`;
-
 export const MAXIMIZE_ZONES_AND_BENCHES_MUTATION = gql`
   mutation MaximizeZonesAndBenches($input: MaximizeZonesAndBenchesInput!) {
     maximizeZonesAndBenches(input: $input) {
@@ -312,6 +105,9 @@ export const MAXIMIZE_ZONES_AND_BENCHES_MUTATION = gql`
         }
         aisleAreaSqFt
         equipmentPlaceableAreaSqFt
+        unusedAreaSqFt
+        islands { id orientation benchIds }
+        arrangement { orientation workingAisleFt crossAisleFt maxBenchesPerIslandSide mode mainWall sameDirection wallBenches }
         benches {
           id
           requirementId
@@ -423,6 +219,9 @@ export const MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION = gql`
         }
         aisleAreaSqFt
         equipmentPlaceableAreaSqFt
+        unusedAreaSqFt
+        islands { id orientation benchIds }
+        arrangement { orientation workingAisleFt crossAisleFt maxBenchesPerIslandSide mode mainWall sameDirection wallBenches }
         benches {
           id
           requirementId
@@ -443,15 +242,6 @@ export const MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION = gql`
           }
         }
       }
-    }
-  }
-`;
-
-export const FEASIBILITY_CHECK_QUERY = gql`
-  query FeasibilityCheck($input: JSON!) {
-    feasibilityCheck(input: $input) {
-      ok
-      issues { field message }
     }
   }
 `;
@@ -497,6 +287,32 @@ export const GENERATE_REPORT_MUTATION = gql`
     generateReport(sessionId: $sessionId) {
       id
       status
+    }
+  }
+`;
+
+// Before generating: does the room hold the benches the equipment needs?
+// Takes the intake JSON as the questionnaire would submit it.
+export const LAYOUT_CAPACITY_CHECK_QUERY = gql`
+  query LayoutCapacityCheck($intake: JSON!) {
+    layoutCapacityCheck(intake: $intake) {
+      benches
+      benchAreaSqFt
+      benchNeedSqFt
+      shortfallSqFt
+      roomTooSmall
+      zones { id name benchNeedSqFt benchAreaSqFt }
+    }
+  }
+`;
+
+// Zone and layout-setting edits from the report's floor plan; returns the
+// report with its re-run generated layout.
+export const UPDATE_REPORT_LAYOUT_MUTATION = gql`
+  mutation UpdateReportLayout($reportId: ID!, $edit: LayoutEditInput!) {
+    updateReportLayout(reportId: $reportId, edit: $edit) {
+      id
+      data
     }
   }
 `;
@@ -601,9 +417,6 @@ export const PROTOCOLS_IO_PROTOCOL_QUERY = gql`
           number
           text
           durationSeconds
-          station
-          stationColor
-          stationLocation
           files { name url }
           notes
           images { url legend width height }
@@ -615,36 +428,10 @@ export const PROTOCOLS_IO_PROTOCOL_QUERY = gql`
   }
 `;
 
-export const STATIONS_QUERY = gql`
-  query Stations {
-    stations { stationId name category zone typicalSqft positions }
-  }
-`;
-
-export const DAMP_OPERATIONS_QUERY = gql`
-  query DampOperations {
-    operations { operationId name stationIds equipment approxCostUsd estimatedTimeHours spatialKind baseOperationId executionPlatform catalogueSource catalogueRevision }
-  }
-`;
-
-export const UPDATE_STATION_MUTATION = gql`
-  mutation UpdateStation($stationId: String!, $input: UpdateStationInput!) {
-    updateStation(stationId: $stationId, input: $input) {
-      stationId name category zone typicalSqft positions
-    }
-  }
-`;
-
-export const DELETE_STATION_MUTATION = gql`
-  mutation DeleteStation($stationId: String!) {
-    deleteStation(stationId: $stationId)
-  }
-`;
-
 export const EQUIPMENT_LIST_QUERY = gql`
   query EquipmentList {
     equipmentList {
-      equipmentId name costUsd widthFt depthFt heightFt stationId utilityType utilityRequirements mounting
+      equipmentId name costUsd widthFt depthFt heightFt utilityType utilityRequirements mounting
       needsDimensions canvasDeleted canvasTags tags allTags
     }
   }
@@ -657,12 +444,6 @@ export const EQUIPMENT_COUNT_QUERY = gql`
     equipmentList {
       equipmentId
     }
-  }
-`;
-
-export const INVENTORY_ITEMS_QUERY = gql`
-  query InventoryItems {
-    inventoryItems { inventoryId name stockNumber stationId }
   }
 `;
 
@@ -690,249 +471,9 @@ export const LAYOUT_SANDBOX_CAPABILITIES_QUERY = gql`
   }
 `;
 
-// Kept as a regression fixture (cirrus-backend/scripts hits it directly via
-// Docker-side GraphQL calls) — no longer called from the sandbox UI, which
-// uses SOLVE_ZONE_REQUIREMENTS_MUTATION so zones come from the operations
-// actually selected, not an even-split heuristic.
-export const SOLVE_TOY_ZONING_MUTATION = gql`
-  mutation SolveToyZoning($input: ToyZoningInput!) {
-    solveToyZoning(input: $input) {
-      cellZones
-      zones
-      status
-      score
-    }
-  }
-`;
-
-export const SOLVE_ZONE_REQUIREMENTS_MUTATION = gql`
-  mutation SolveZoneRequirements($input: SolveZoneRequirementsInput!) {
-    solveZoneRequirements(input: $input) {
-      status
-      solveStatus
-      cellZones
-      blockingDiagnostics {
-        operationId
-        disposition
-        reason
-      }
-      insufficientDataDiagnostics {
-        operationIds
-        reason
-      }
-      zoneRequirements {
-        id
-        family
-        operationIds
-        materialClasses
-        requiresBsc
-        sharingPolicy
-        confirmedBiosafetyLevel
-        minimumAreaCells
-        targetAreaCells
-      }
-    }
-  }
-`;
-
-// The bench-placement counterpart to SOLVE_ZONE_REQUIREMENTS_MUTATION —
-// same room geometry + operationContexts, plus benchRequirements
-// referencing the zone ids that selection compiles to (call
-// solveZoneRequirements first to see them). zoneResult carries the real
-// per-zone cell lists (not a flat cellZones re-derivation), and
-// benchResult.benches is in the placement subgrid's own coordinates —
-// see layout-sandbox.ts's sandboxFixturesFromBenchPlacement for the
-// conversion back to the sandbox's (x, y) feet.
-export const PLACE_BENCHES_FOR_SANDBOX_MUTATION = gql`
-  mutation PlaceBenchesForSandbox($input: SandboxPlaceBenchesInput!) {
-    placeBenchesForSandbox(input: $input) {
-      status
-      blockingDiagnostics {
-        operationId
-        disposition
-        reason
-      }
-      insufficientDataDiagnostics {
-        operationIds
-        reason
-      }
-      zoneRequirements {
-        id
-        family
-        operationIds
-        materialClasses
-        requiresBsc
-        sharingPolicy
-        confirmedBiosafetyLevel
-        minimumAreaCells
-        targetAreaCells
-      }
-      zoneResult {
-        solveStatus
-        validation {
-          state
-          violations
-        }
-        zones {
-          id
-          cells {
-            row
-            column
-          }
-        }
-      }
-      benchResult {
-        solveStatus
-        placementGrid {
-          cellSizeInches
-        }
-        validation {
-          state
-          violations
-          unroutableBenchIds
-        }
-        benches {
-          id
-          requirementId
-          zoneId
-          origin {
-            row
-            column
-          }
-          rotationDegrees
-          accessSide
-          footprintCells {
-            row
-            column
-          }
-        }
-      }
-    }
-  }
-`;
-
-// A saved plan's operation entries carry both the zone-policy context the
-// user entered AND a snapshot of what the catalogue said about that
-// operation at save time — see cirrus-backend's zoning-plans/zoning-plan.schema.ts
-// for why the snapshot exists (it's what lets zoningPlanCatalogueDrift below
-// detect a re-seed/import changing an operationId's meaning after the fact).
-const PLANNED_OPERATION_SNAPSHOT_FIELDS = `
-  key
-  operationId
-  operationNameSnapshot
-  spatialKindSnapshot
-  equipmentSnapshot
-  catalogueSource
-  catalogueRevision
-  materialClass
-  confirmedBiosafetyLevel
-  aerosolPotential
-  amplificationStage
-`;
-
-// Engine-state snapshot — see cirrus-backend's lab-program/engine-versions.ts
-// and zoning/toy-zoning.model.ts. gridSizeFeet is client-supplied (part of
-// SaveZoningPlanInput, like roomWidthFt/roomHeightFt); the three version
-// fields are stamped server-side and only ever read back, never sent.
-const PLAN_VERSION_FIELDS = `
-  gridSizeFeet
-  zoneCompilerVersion
-  miniZincModelVersion
-  areaCalculationVersion
-`;
-
-export const SAVE_ZONING_PLAN_MUTATION = gql`
-  mutation SaveZoningPlan($input: SaveZoningPlanInput!) {
-    saveZoningPlan(input: $input) {
-      planId
-      name
-      roomWidthFt
-      roomHeightFt
-      operations { ${PLANNED_OPERATION_SNAPSHOT_FIELDS} }
-      ${PLAN_VERSION_FIELDS}
-      createdAt
-      updatedAt
-    }
-  }
-`;
-
-export const ZONING_PLANS_QUERY = gql`
-  query ZoningPlans {
-    zoningPlans { planId name roomWidthFt roomHeightFt updatedAt }
-  }
-`;
-
-export const ZONING_PLAN_QUERY = gql`
-  query ZoningPlan($planId: ID!) {
-    zoningPlan(planId: $planId) {
-      planId
-      name
-      roomWidthFt
-      roomHeightFt
-      operations { ${PLANNED_OPERATION_SNAPSHOT_FIELDS} }
-      ${PLAN_VERSION_FIELDS}
-      updatedAt
-    }
-  }
-`;
-
-export const ZONING_PLAN_CATALOGUE_DRIFT_QUERY = gql`
-  query ZoningPlanCatalogueDrift($planId: ID!) {
-    zoningPlanCatalogueDrift(planId: $planId) { operationId savedRevision currentRevision }
-  }
-`;
-
-export const DELETE_ZONING_PLAN_MUTATION = gql`
-  mutation DeleteZoningPlan($planId: ID!) {
-    deleteZoningPlan(planId: $planId)
-  }
-`;
-
-export const START_LAYOUT_OPTIMIZATION_MUTATION = gql`
-  mutation StartLayoutOptimization($input: StartLayoutOptimizationInput!) {
-    startLayoutOptimization(input: $input) {
-      runId status algorithmVersion baselineRevision result
-    }
-  }
-`;
-
-export const REVIEW_LAYOUT_CANDIDATE_MUTATION = gql`
-  mutation ReviewLayoutCandidate($input: ReviewLayoutCandidateInput!) {
-    reviewLayoutCandidate(input: $input) { seedId sourceRunId candidateIndex status strategy }
-  }
-`;
-
-export const APPROVED_LAYOUT_SEEDS_QUERY = gql`
-  query ApprovedLayoutSeeds {
-    layoutSeeds(status: "approved") { seedId sourceRunId candidateIndex status strategy layout metrics createdAt updatedAt }
-  }
-`;
-
-export const APPROVE_SANDBOX_LAYOUT_MUTATION = gql`
-  mutation ApproveSandboxLayout($layout: JSON!) {
-    approveSandboxLayout(layout: $layout) { seedId sourceRunId candidateIndex status strategy }
-  }
-`;
-
-export const DELETE_LAYOUT_SEED_MUTATION = gql`
-  mutation DeleteLayoutSeed($seedId: ID!) { deleteLayoutSeed(seedId: $seedId) }
-`;
-
 export const CREATE_INVENTORY_ITEM_MUTATION = gql`
   mutation CreateInventoryItem($input: CreateInventoryItemInput!) {
     createInventoryItem(input: $input) { inventoryId }
-  }
-`;
-
-export const ASSIGN_EQUIPMENT_TO_STATION_MUTATION = gql`
-  mutation AssignEquipmentToStation($equipmentId: String!, $stationId: String) {
-    assignEquipmentToStation(equipmentId: $equipmentId, stationId: $stationId) { equipmentId stationId }
-  }
-`;
-
-export const ASSIGN_INVENTORY_ITEM_TO_STATION_MUTATION = gql`
-  mutation AssignInventoryItemToStation($inventoryId: String!, $stationId: String) {
-    assignInventoryItemToStation(inventoryId: $inventoryId, stationId: $stationId) { inventoryId stationId }
   }
 `;
 
@@ -1081,11 +622,5 @@ export const TRIGGER_CANVAS_SYNC_MUTATION = gql`
       equipmentSynced
       protocolsSynced
     }
-  }
-`;
-
-export const CREATE_STATION_MUTATION = gql`
-  mutation CreateStation($input: CreateStationInput!) {
-    createStation(input: $input) { stationId }
   }
 `;

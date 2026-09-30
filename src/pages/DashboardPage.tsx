@@ -1,11 +1,12 @@
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@apollo/client/react';
 import { useAuth } from '../context/AuthContext';
-import { IconHistory, IconLayers, IconGear, IconLogout } from '../components/Icons';
+import { IconHistory, IconGear, IconLogout, IconBadgeCheck } from '../components/Icons';
 import {
   MY_REPORTS_QUERY, EQUIPMENT_COUNT_QUERY, VALIDATED_PROTOCOLS_QUERY, REPORTS_COUNT_QUERY, USERS_COUNT_QUERY,
 } from '../graphql/operations';
 import { parseSandboxLayout } from '../lib/layout-sandbox';
+import { readLabPlan } from '../lib/lab-plan';
 import { resetSessionId } from '../lib/session';
 import { LabAssetBench } from '../components/LabAssets';
 import { LayoutFloorPlan } from '../components/LayoutFloorPlan';
@@ -13,8 +14,8 @@ import { Logo } from '../components/Logo';
 
 const NAV_ITEMS = [
   { label: 'Design history', path: '/history', icon: IconHistory },
-  { label: 'Saved layouts', path: '/layout-candidates', icon: IconLayers },
   { label: 'Settings', path: '/settings', icon: IconGear },
+  { label: 'Disclaimer', path: '/disclaimer', icon: IconBadgeCheck },
 ];
 
 interface ReportSummary {
@@ -33,7 +34,7 @@ function cap(s: string | undefined): string {
 function LayoutThumbnail({ reportData, label }: { reportData: Record<string, any> | null; label: string }) {
   const layout = reportData?.generated_layout?.data ? parseSandboxLayout(reportData.generated_layout.data) : null;
   if (!layout) return null;
-  return <LayoutFloorPlan layout={layout} ariaLabel={label} />;
+  return <LayoutFloorPlan layout={layout} plan={readLabPlan(reportData?.generated_layout?.data)} ariaLabel={label} />;
 }
 
 export function DashboardPage() {
@@ -167,7 +168,7 @@ export function DashboardPage() {
             <div className="dash-widget-head">
               <span>Last lab design</span>
               {latestReport && (
-                <button className="dash-widget-link" onClick={() => navigate('/report', { state: { reportData, sessionId: latestReport.sessionId } })}>
+                <button className="dash-widget-link" onClick={() => navigate('/report', { state: { reportData, sessionId: latestReport.sessionId, reportId: latestReport.id } })}>
                   View report →
                 </button>
               )}

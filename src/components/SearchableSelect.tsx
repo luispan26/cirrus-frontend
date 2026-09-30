@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 export interface SearchableSelectOption {
@@ -49,12 +50,14 @@ function SearchableSelectCombobox({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const selected = options.find((o) => o.value === value);
 
   useEffect(() => {
     function onOutsideClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node) && !menuRef.current?.contains(e.target as Node)) {
         setOpen(false);
         setQuery('');
       }
@@ -62,6 +65,22 @@ function SearchableSelectCombobox({
     document.addEventListener('mousedown', onOutsideClick);
     return () => document.removeEventListener('mousedown', onOutsideClick);
   }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const position = () => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const below = window.innerHeight - rect.bottom - 12;
+      const above = rect.top - 12;
+      const upwards = below < 200 && above > below;
+      setMenuStyle({ position: 'fixed', left: Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8)), width: Math.min(rect.width, window.innerWidth - 16), maxHeight: Math.max(80, Math.min(300, upwards ? above : below)), ...(upwards ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }) });
+    };
+    position();
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    return () => { window.removeEventListener('resize', position); window.removeEventListener('scroll', position, true); };
+  }, [open]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -104,18 +123,19 @@ function SearchableSelectCombobox({
           }
         }}
       />
-      {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20, maxHeight: 240, overflowY: 'auto', background: 'var(--white)', border: '1px solid var(--br)', borderRadius: 8, marginTop: 4, boxShadow: 'var(--shadow-sm)' }}>
-          {filtered.length === 0 && <div style={{ padding: '8px 12px', fontSize: 13, color: 'var(--mid)' }}>No matches.</div>}
+      {open && createPortal(
+        <div ref={menuRef} role="listbox" style={{ ...menuStyle, zIndex: 10000, overflowY: 'auto', background: 'var(--white)', border: '1px solid var(--br)', borderRadius: 8, boxShadow: 'var(--shadow-sm)' }}>
+          {filtered.length === 0 && <div style={{ padding: '8px 12px', fontSize: 16, color: 'var(--mid)' }}>No matches.</div>}
           {filtered.map((o) => (
             <div
               key={o.value}
+              role="option" aria-selected={o.value === value} aria-disabled={o.disabled}
               // mousedown (not click) so this fires before the input blurs /
               // the outside-click handler closes the dropdown.
               onMouseDown={(e) => { e.preventDefault(); selectOption(o); }}
               style={{
                 padding: '8px 12px',
-                fontSize: 13,
+                fontSize: 16,
                 cursor: o.disabled ? 'not-allowed' : 'pointer',
                 opacity: o.disabled ? 0.5 : 1,
                 background: o.value === value ? 'var(--tl)' : 'transparent',
@@ -124,7 +144,7 @@ function SearchableSelectCombobox({
               {o.label}
             </div>
           ))}
-        </div>
+        </div>, document.body
       )}
     </div>
   );

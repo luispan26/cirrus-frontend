@@ -2,16 +2,14 @@ import { useMemo, useState } from 'react';
 import { useQuery, useMutation } from '@apollo/client/react';
 import { useNavigate } from 'react-router-dom';
 import {
-  STATIONS_QUERY, EQUIPMENT_LIST_QUERY,
+  EQUIPMENT_LIST_QUERY,
   CREATE_EQUIPMENT_MUTATION,
-  ASSIGN_EQUIPMENT_TO_STATION_MUTATION,
   DELETE_EQUIPMENT_MUTATION, UPDATE_EQUIPMENT_MUTATION,
 } from '../graphql/operations';
 import { SearchableSelect } from '../components/SearchableSelect';
 
-interface Station { stationId: string; name: string; }
 interface EquipmentRow {
-  equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null;
+  equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number;
   needsDimensions: boolean; canvasDeleted: boolean;
   // canvasTags: sync-owned, replaced wholesale from Canvas on every sync.
   // tags: human-entered, never touched by the sync. allTags: the deduped
@@ -25,25 +23,21 @@ function errMsg(e: unknown): string {
 
 export function InventoryPage() {
   const navigate = useNavigate();
-  const { data: stationsData } = useQuery<{ stations: Station[] }>(STATIONS_QUERY);
-  const stations = stationsData?.stations ?? [];
-  const stationOptions = stations.map((s) => ({ value: s.stationId, label: s.name }));
 
   const { data: equipmentData, refetch: refetchEquipment, loading: eqLoading, error: eqError } =
     useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
 
   const [createEquipment] = useMutation(CREATE_EQUIPMENT_MUTATION);
-  const [assignEquipment] = useMutation(ASSIGN_EQUIPMENT_TO_STATION_MUTATION);
   const [deleteEquipment] = useMutation(DELETE_EQUIPMENT_MUTATION);
   const [updateEquipment] = useMutation(UPDATE_EQUIPMENT_MUTATION);
 
-  const [eqForm, setEqForm] = useState({ equipmentId: '', name: '', costUsd: '', widthFt: '', depthFt: '', heightFt: '', stationId: '' });
+  const [eqForm, setEqForm] = useState({ equipmentId: '', name: '', costUsd: '', widthFt: '', depthFt: '', heightFt: '' });
   const [eqFormError, setEqFormError] = useState('');
   const [rowError, setRowError] = useState<{ equipmentId: string; message: string } | null>(null);
 
   async function handleCreateEquipment() {
     setEqFormError('');
-    const { equipmentId, name, costUsd, widthFt, depthFt, heightFt, stationId } = eqForm;
+    const { equipmentId, name, costUsd, widthFt, depthFt, heightFt } = eqForm;
     if (!equipmentId.trim() || !name.trim() || !costUsd || !widthFt || !depthFt || !heightFt) {
       setEqFormError('ID, name, cost, and all three dimensions are required.');
       return;
@@ -54,11 +48,10 @@ export function InventoryPage() {
           input: {
             equipmentId: equipmentId.trim(), name: name.trim(),
             costUsd: parseFloat(costUsd), widthFt: parseFloat(widthFt), depthFt: parseFloat(depthFt), heightFt: parseFloat(heightFt),
-            stationId: stationId || null,
           },
         },
       });
-      setEqForm({ equipmentId: '', name: '', costUsd: '', widthFt: '', depthFt: '', heightFt: '', stationId: '' });
+      setEqForm({ equipmentId: '', name: '', costUsd: '', widthFt: '', depthFt: '', heightFt: '' });
       refetchEquipment();
     } catch (e) {
       setEqFormError(errMsg(e));
@@ -67,10 +60,6 @@ export function InventoryPage() {
 
   async function handleDeleteEquipment(id: string) {
     await deleteEquipment({ variables: { equipmentId: id } });
-    refetchEquipment();
-  }
-  async function handleReassignEquipment(id: string, stationId: string) {
-    await assignEquipment({ variables: { equipmentId: id, stationId: stationId || null } });
     refetchEquipment();
   }
 
@@ -137,13 +126,6 @@ export function InventoryPage() {
           <input className="field-input" style={{ width: 100 }} placeholder="Width (ft)" type="number" value={eqForm.widthFt} onChange={(e) => setEqForm({ ...eqForm, widthFt: e.target.value })} />
           <input className="field-input" style={{ width: 100 }} placeholder="Depth (ft)" type="number" value={eqForm.depthFt} onChange={(e) => setEqForm({ ...eqForm, depthFt: e.target.value })} />
           <input className="field-input" style={{ width: 100 }} placeholder="Height (ft)" type="number" value={eqForm.heightFt} onChange={(e) => setEqForm({ ...eqForm, heightFt: e.target.value })} />
-          <SearchableSelect
-            style={{ width: 200 }}
-            options={[{ value: '', label: 'No station (unassigned)' }, ...stationOptions]}
-            value={eqForm.stationId}
-            onChange={(v) => setEqForm({ ...eqForm, stationId: v })}
-            placeholder="No station (unassigned)"
-          />
           <button className="btn-teal" onClick={handleCreateEquipment}>+ Add equipment</button>
         </div>
         {eqFormError && <div style={{ color: '#a33', fontSize: 12, marginBottom: 12 }}>{eqFormError}</div>}
@@ -155,7 +137,6 @@ export function InventoryPage() {
             <col />
             <col style={{ width: 120 }} />
             <col style={{ width: 230 }} />
-            <col style={{ width: 200 }} />
             <col style={{ width: 220 }} />
             <col style={{ width: 110 }} />
           </colgroup>
@@ -165,7 +146,6 @@ export function InventoryPage() {
               <th style={{ padding: '6px 10px' }}>Name</th>
               <th style={{ padding: '6px 10px' }}>Cost</th>
               <th style={{ padding: '6px 10px' }}>Dimensions (ft)</th>
-              <th style={{ padding: '6px 10px' }}>Station</th>
               <th style={{ padding: '6px 10px' }}>Tags</th>
               <th style={{ padding: '6px 10px' }}></th>
             </tr>
@@ -235,15 +215,6 @@ export function InventoryPage() {
                         onBlur={(e) => handleUpdateField(eq, 'heightFt', e.target.value)}
                       />
                     </div>
-                  </td>
-                  <td style={{ padding: '6px 10px' }}>
-                    <SearchableSelect
-                      style={{ width: '100%' }}
-                      options={[{ value: '', label: 'Unassigned' }, ...stationOptions]}
-                      value={eq.stationId ?? ''}
-                      onChange={(v) => handleReassignEquipment(eq.equipmentId, v)}
-                      placeholder="Unassigned"
-                    />
                   </td>
                   <td style={{ padding: '6px 10px', ...(isUntagged ? placeholderCellStyle : {}) }}>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: eq.allTags.length > 0 ? 6 : 0 }}>

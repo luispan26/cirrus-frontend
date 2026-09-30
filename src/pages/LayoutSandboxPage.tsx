@@ -1,59 +1,31 @@
+import { BenchArrangement, DEFAULT_ARRANGEMENT } from '../components/sandbox/BenchArrangement';
+import { readLabPlan } from '../lib/lab-plan';
+import type { Answers } from '../lib/questions';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useLazyQuery, useMutation, useQuery } from '@apollo/client/react';
+import { useMutation, useQuery } from '@apollo/client/react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { APPROVE_SANDBOX_LAYOUT_MUTATION, DAMP_OPERATIONS_QUERY, DELETE_ZONING_PLAN_MUTATION, EQUIPMENT_LIST_QUERY, LAYOUT_SANDBOX_CAPABILITIES_QUERY, MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION, PLACE_BENCHES_FOR_SANDBOX_MUTATION, SAVE_ZONING_PLAN_MUTATION, SOLVE_ZONE_REQUIREMENTS_MUTATION, STATIONS_QUERY, ZONING_PLANS_QUERY, ZONING_PLAN_CATALOGUE_DRIFT_QUERY, ZONING_PLAN_QUERY } from '../graphql/operations';
-import { ZONE_FAMILY_COLORS, ZONE_FAMILY_LABELS, fromPlannedOperationSnapshot, isPlannedOperationComplete, isZoneable, toOperationContextInput, toPlannedOperationSnapshot, type PlannedOperation, type PlannedOperationSnapshot } from '../lib/zone-requirements';
-import { AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX, BENCH_DEPTH_FT, BENCH_SURFACE_AREA_SQFT, BENCH_WIDTH_FT, EMPTY_SANDBOX_LAYOUT, buildBenchPlacementGeometryInput, buildLayoutGeometryInput, canPlaceBaseObject, canPlaceFixture, centeredRectFootprint, computePlacementAvailability, evaluateUtilityReachability, fixtureFootprint, fixtureRectFt, offsetAlongWall, parseSandboxLayout, pointOnWall, polygonBounds, reanchorWallMountedObjects, sandboxFixturesFromBenchPlacement, snapToNearestWall, validateSandboxLayout, wallRectFootprint, wallSideOfBounds, type FixtureClearance, type FixtureKind, type FixtureOrientation, type MountingSurface, type SandboxBaseObject, type SandboxEquipmentAssignment, type SandboxFixture, type SandboxLayer, type SandboxLayout, type SandboxPolygon, type SandboxStationAssignment, type WallSide } from '../lib/layout-sandbox';
+import { LAYOUT_SANDBOX_CAPABILITIES_QUERY, MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION } from '../graphql/operations';
+import { isAutoPlacedBench, BENCH_DEPTH_FT, BENCH_WIDTH_FT, EMPTY_SANDBOX_LAYOUT, buildBenchPlacementGeometryInput, canPlaceBaseObject, canPlaceFixture, centeredRectFootprint, computePlacementAvailability, fixtureFootprint, fixtureRectFt, offsetAlongWall, parseSandboxLayout, pointOnWall, polygonBounds, resizeRoom, SANDBOX_GRID_FT, sandboxFixturesFromBenchPlacement, validateSandboxLayout, wallRectFootprint, wallSideOfBounds, withGridFt, type FixtureClearance, type FixtureKind, type FixtureOrientation, type SandboxBaseObject, type SandboxFixture, type SandboxLayer, type SandboxLayout, type SandboxPolygon, type WallSide } from '../lib/layout-sandbox';
 import { Logo } from '../components/Logo';
 import { CanvasLayers } from '../components/sandbox/CanvasLayers';
-import { EquipmentPanel } from '../components/sandbox/EquipmentPanel';
 import { FixtureDetailsPanel } from '../components/sandbox/FixtureDetailsPanel';
 import { FixturePalette } from '../components/sandbox/FixturePalette';
 import { InfraPalette } from '../components/sandbox/InfraPalette';
-import { SavedPlansPanel } from '../components/sandbox/SavedPlansPanel';
-import { StationPalette } from '../components/sandbox/StationPalette';
-import { ZoneRequirementsPanel } from '../components/sandbox/ZoneRequirementsPanel';
-import { DEFAULT_CLEARANCE, FIXTURE_DEFAULTS, INFRA_PALETTE, VENTILATION_PLACEMENT_LABELS, type PlaceableBaseKind, type VentilationPlacementKind } from '../components/sandbox/constants';
-import { benchEquipmentArea, benchFill, equipmentArea } from '../components/sandbox/helpers';
-import type { EquipmentCatalogItem, OperationCatalogueItem, StationCatalogItem, ZoneRequirementSummary, ZoningOverlay, ZoningPlanSummary } from '../components/sandbox/types';
+import { DEFAULT_CLEARANCE, FIXTURE_DEFAULTS, INFRA_PALETTE, ZONE_FAMILY_COLORS, ZONE_FAMILY_LABELS, type PlaceableBaseKind } from '../components/sandbox/constants';
+import type { ZoneRequirementSummary, ZoningOverlay } from '../components/sandbox/types';
 import { PlacementQuestionBox, type PlacementSubgroup } from '../components/sandbox/PlacementQuestionBox';
 import { GuidedFlowIntro } from '../components/sandbox/GuidedFlowIntro';
 import { CATEGORY_CTA_VERB, CATEGORY_LABELS, CATEGORY_ORDER, FIXTURE_SUBGROUP_KINDS, emptyCategoryModeState, emptySubSelectionState, firstUnanswered, paletteVisible, seedCategoryModesFrom, subgroupVisible, type CategoryModeState, type PlacementCategory, type SubSelectionState } from '../components/sandbox/guidedFlow';
 import { SANDBOX_LAYOUT_STORAGE_KEY } from '../lib/session';
 
-interface DampOperationsResponse { operations: OperationCatalogueItem[]; }
-
-interface ZoningPlanFull extends ZoningPlanSummary { operations: PlannedOperationSnapshot[]; gridSizeFeet: number; zoneCompilerVersion: string; miniZincModelVersion: string; areaCalculationVersion: string; }
-interface ZoningPlansResponse { zoningPlans: ZoningPlanSummary[]; }
-interface ZoningPlanResponse { zoningPlan: ZoningPlanFull; }
-interface SaveZoningPlanResponse { saveZoningPlan: ZoningPlanFull; }
-interface CatalogueDriftEntry { operationId: string; savedRevision: string; currentRevision: string | null; }
-interface ZoningPlanCatalogueDriftResponse { zoningPlanCatalogueDrift: CatalogueDriftEntry[]; }
-interface ApproveSandboxLayoutResponse { approveSandboxLayout: { seedId: string } }
 interface LayoutCapabilities { schemaVersion: number; layers: string[]; fixtureKinds: string[]; collections: string[]; }
-
-interface PolicyDiagnosticEntry { operationId: string; disposition: string; reason: string; }
-interface InsufficientDataEntry { operationIds: string[]; reason: string; }
-interface SolveZoneRequirementsResponse {
-  solveZoneRequirements: {
-    status: string;
-    solveStatus: string | null;
-    cellZones: number[];
-    blockingDiagnostics: PolicyDiagnosticEntry[];
-    insufficientDataDiagnostics: InsufficientDataEntry[];
-    zoneRequirements: ZoneRequirementSummary[];
-  };
-}
 
 interface PlacedBenchEntry { id: string; requirementId: string; zoneId: string; origin: { row: number; column: number }; rotationDegrees: number; accessSide?: string | null; footprintCells: { row: number; column: number }[]; }
 
-// maximizeZonesAndBenchesForSandbox has no notion of equipment/operations —
-// its zones only ever carry id/family, never the full ZoneRequirementSummary
-// shape solveZoneRequirements produces (operationIds, materialClasses,
-// biosafety, etc.). runMaximizeZonesAndBenches synthesizes placeholder
-// ZoneRequirementSummary entries for the zoning overlay's legend, which only
-// ever reads .family (see CanvasLayers.tsx and this page's own legend strip).
+// maximizeZonesAndBenchesForSandbox's zones carry id/family only — the
+// zoning overlay's legend reads .family (see CanvasLayers.tsx and this
+// page's own legend strip).
 interface MaximizeZonesAndBenchesForSandboxResponse {
   maximizeZonesAndBenchesForSandbox: {
     totalZones: number;
@@ -68,27 +40,10 @@ interface MaximizeZonesAndBenchesForSandboxResponse {
       benches: PlacedBenchEntry[];
       aisleAreaSqFt: number;
       equipmentPlaceableAreaSqFt: number;
+      unusedAreaSqFt: number;
+      islands: { id: string; orientation: number; benchIds: string[] }[];
+      arrangement: { orientation: number | null; workingAisleFt: number; crossAisleFt: number };
     };
-  };
-}
-
-interface PlaceBenchesForSandboxResponse {
-  placeBenchesForSandbox: {
-    status: string;
-    blockingDiagnostics: PolicyDiagnosticEntry[];
-    insufficientDataDiagnostics: InsufficientDataEntry[];
-    zoneRequirements: ZoneRequirementSummary[];
-    zoneResult: {
-      solveStatus: string | null;
-      validation: { state: string; violations: string[] };
-      zones: Array<{ id: string; cells: { row: number; column: number }[] }>;
-    } | null;
-    benchResult: {
-      solveStatus: string | null;
-      placementGrid: { cellSizeInches: number };
-      validation: { state: string; violations: string[]; unroutableBenchIds: string[] | null };
-      benches: PlacedBenchEntry[];
-    } | null;
   };
 }
 
@@ -100,6 +55,7 @@ interface PlaceBenchesForSandboxResponse {
 // only the fallback for "I didn't pass anything specific, resume whatever I
 // was last working on."
 interface PersistedSandboxState {
+  arrangement?: Answers;
   layout: SandboxLayout;
   categoryMode: CategoryModeState;
   subSelection: SubSelectionState;
@@ -109,12 +65,14 @@ function readPersistedState(): PersistedSandboxState | null {
   try {
     const raw = localStorage.getItem(SANDBOX_LAYOUT_STORAGE_KEY);
     if (!raw) return null;
-    const data = JSON.parse(raw) as { layout?: unknown; categoryMode?: CategoryModeState; subSelection?: SubSelectionState; activeCategory?: PlacementCategory | null } | null;
+    const data = JSON.parse(raw) as { layout?: unknown; arrangement?: Answers; categoryMode?: CategoryModeState; subSelection?: SubSelectionState; activeCategory?: PlacementCategory | null } | null;
     // Falls back to treating the whole payload as a bare layout — the
     // pre-guided-flow-persistence format, before this wrapped it with
     // categoryMode/subSelection/activeCategory.
-    const layout = parseSandboxLayout(data?.layout) ?? parseSandboxLayout(data);
-    if (!layout) return null;
+    const saved = parseSandboxLayout(data?.layout) ?? parseSandboxLayout(data);
+    if (!saved) return null;
+    // Layouts saved on the old 1 ft grid move onto the 6" grid.
+    const layout = withGridFt(saved, SANDBOX_GRID_FT);
     // Older saves (before categoryMode/subSelection were persisted) only
     // have a layout — re-derive the answers from its content, same as any
     // other freshly-loaded layout, rather than losing it entirely.
@@ -122,6 +80,7 @@ function readPersistedState(): PersistedSandboxState | null {
     const categoryMode = data?.categoryMode ?? seeded.modes;
     return {
       layout,
+      arrangement: data?.arrangement,
       categoryMode,
       subSelection: data?.subSelection ?? seeded.subSelection,
       activeCategory: data?.activeCategory ?? (CATEGORY_ORDER.find((category) => categoryMode[category] === 'manual') ?? null),
@@ -149,27 +108,29 @@ export function LayoutSandboxPage() {
   const dragState = useRef<{ id: string; offsetX: number; offsetY: number; x: number; y: number } | null>(null);
   const paletteDragFrame = useRef<number | null>(null);
   const paletteDragState = useRef<{ kind: FixtureKind; widthFt: number; depthFt: number; x: number; y: number; onCanvas: boolean } | null>(null);
-  const overlayDrag = useRef<{ id: string; clientX: number; clientY: number } | null>(null);
+  // Room-object drags are computed from where the drag started plus the
+  // pointer's total travel, so a refused or wall-clamped frame never leaves
+  // the object lagging behind the cursor.
+  const overlayDrag = useRef<{ id: string; startX: number; startY: number; origin: SandboxBaseObject } | null>(null);
+  // Box selection: drag a box over empty floor to pick up every fixture and
+  // room object it touches, then drag any of them to move them together or
+  // press Delete to remove them all. Doors and windows (and wall-mounted
+  // points) can be picked up and deleted but stay put in a group move.
+  const [group, setGroup] = useState<{ fixtures: string[]; objects: string[] } | null>(null);
+  const [marquee, setMarquee] = useState<{ left: number; top: number; right: number; bottom: number } | null>(null);
+  const marqueeStart = useRef<{ x: number; y: number } | null>(null);
+  const suppressCanvasClick = useRef(false);
+  const groupDrag = useRef<{ startX: number; startY: number; fixtures: SandboxFixture[]; objects: SandboxBaseObject[] } | null>(null);
   // Resumes whatever was last edited here (see readPersistedState) unless a
   // specific layout is handed in explicitly via router state (e.g. "open
   // this candidate in the sandbox" or "edit this report's layout"), which
   // the mount effect below loads on top of this and takes priority.
+  const [arrangement, setArrangement] = useState<Answers>(() => ({ ...DEFAULT_ARRANGEMENT, ...initialPersistedState().arrangement }));
   const [layout, setLayout] = useState<SandboxLayout>(() => initialPersistedState().layout);
   // The nine-tab layer toggle is gone (WS-8b guided flow replaces it) — every
   // layer always renders now, so nothing placed is ever silently hidden.
-  const [layers, setLayers] = useState<Record<SandboxLayer, boolean>>({ base: true, stations: true, equipment: true, circulation: true, electrical: true, plumbing: true, ventilation: true, validation: true, zoning: true });
+  const [layers, setLayers] = useState<Record<SandboxLayer, boolean>>({ base: true, equipment: true, circulation: true, electrical: true, plumbing: true, ventilation: true, validation: true, zoning: true });
   const [zoning, setZoning] = useState<ZoningOverlay | null>(null);
-  const [zoningBlocked, setZoningBlocked] = useState<{ diagnostics: PolicyDiagnosticEntry[] } | null>(null);
-  const [plannedOperations, setPlannedOperations] = useState<PlannedOperation[]>([]);
-  const [operationDraft, setOperationDraft] = useState<PlannedOperation | null>(null);
-  const [operationSearch, setOperationSearch] = useState('');
-  // Set once a plan is saved or loaded — a further "Save plan" overwrites
-  // this same plan in place instead of creating a new one. Cleared whenever
-  // the planned-operations list changes by hand (add/remove), so a plan
-  // loaded and then edited saves as what it now is, not silently
-  // overwriting the plan it started from under a stale identity.
-  const [currentPlanId, setCurrentPlanId] = useState<string | null>(null);
-  const [catalogueDrift, setCatalogueDrift] = useState<CatalogueDriftEntry[] | null>(null);
   const [dragPreview, setDragPreview] = useState<{ id: string; x: number; y: number } | null>(null);
   const [paletteDragPos, setPaletteDragPos] = useState<{ kind: FixtureKind; widthFt: number; depthFt: number; x: number; y: number; onCanvas: boolean } | null>(null);
   const [placementPreview, setPlacementPreview] = useState<{ widthFt: number; depthFt: number; orientation: FixtureOrientation; excludeInstanceId?: string } | null>(null);
@@ -177,7 +138,6 @@ export function LayoutSandboxPage() {
   const [placingKind, setPlacingKind] = useState<PlaceableBaseKind | null>(null);
   const [backendNotice, setBackendNotice] = useState<{ kind: 'progress' | 'error'; text: string } | null>(null);
   const [selectedFixtureId, setSelectedFixtureId] = useState<string | null>(null);
-  const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
   const [newKind, setNewKind] = useState<FixtureKind>('bench');
   const [newWidth, setNewWidth] = useState(6);
   const [newDepth, setNewDepth] = useState(2.5);
@@ -205,43 +165,14 @@ export function LayoutSandboxPage() {
     const resumed = initialPersistedState().layout;
     return resumed.fixtures.length === 0 && resumed.baseObjects.length === 0;
   });
-  const { data: stationData, loading: stationsLoading, error: stationsError, refetch: refetchStations } = useQuery<{ stations: StationCatalogItem[] }>(STATIONS_QUERY, { fetchPolicy: 'cache-and-network' });
-  const { data: equipmentData, loading: equipmentLoading, error: equipmentError, refetch: refetchEquipment } = useQuery<{ equipmentList: EquipmentCatalogItem[] }>(EQUIPMENT_LIST_QUERY, { fetchPolicy: 'cache-and-network' });
   const { data: capabilityData } = useQuery<{ layoutSandboxCapabilities: LayoutCapabilities }>(LAYOUT_SANDBOX_CAPABILITIES_QUERY, { fetchPolicy: 'cache-and-network' });
-  const { data: operationsData, loading: operationsLoading, error: operationsError } = useQuery<DampOperationsResponse>(DAMP_OPERATIONS_QUERY, { fetchPolicy: 'cache-and-network' });
-  const [approveSandboxLayout, { loading: sendingToSeedGenerator }] = useMutation<ApproveSandboxLayoutResponse>(APPROVE_SANDBOX_LAYOUT_MUTATION);
-  const [solveZoneRequirements, { loading: zoningLoading }] = useMutation<SolveZoneRequirementsResponse>(SOLVE_ZONE_REQUIREMENTS_MUTATION);
-  const [placeBenchesForSandbox, { loading: benchPlacementLoading }] = useMutation<PlaceBenchesForSandboxResponse>(PLACE_BENCHES_FOR_SANDBOX_MUTATION);
   const [maximizeZonesAndBenchesForSandbox, { loading: maximizingLoading }] = useMutation<MaximizeZonesAndBenchesForSandboxResponse>(MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION);
-  const { data: zoningPlansData, loading: zoningPlansLoading, error: zoningPlansError, refetch: refetchZoningPlans } = useQuery<ZoningPlansResponse>(ZONING_PLANS_QUERY, { fetchPolicy: 'cache-and-network' });
-  const [saveZoningPlan, { loading: savingZoningPlan }] = useMutation<SaveZoningPlanResponse>(SAVE_ZONING_PLAN_MUTATION);
-  const [deleteZoningPlan] = useMutation(DELETE_ZONING_PLAN_MUTATION);
-  const [loadZoningPlan, { loading: loadingZoningPlan }] = useLazyQuery<ZoningPlanResponse>(ZONING_PLAN_QUERY, { fetchPolicy: 'network-only' });
-  const [checkCatalogueDrift] = useLazyQuery<ZoningPlanCatalogueDriftResponse>(ZONING_PLAN_CATALOGUE_DRIFT_QUERY, { fetchPolicy: 'network-only' });
-  const savedZoningPlans = zoningPlansData?.zoningPlans ?? [];
-  const stationCatalog = stationData?.stations ?? [];
-  const dampOperations = operationsData?.operations ?? [];
-  const filteredOperations = useMemo(() => {
-    const q = operationSearch.trim().toLowerCase();
-    if (!q) return dampOperations;
-    return dampOperations.filter((o) => o.name.toLowerCase().includes(q) || o.operationId.toLowerCase().includes(q) || o.equipment.some((e) => e.toLowerCase().includes(q)));
-  }, [dampOperations, operationSearch]);
-  const equipmentCatalog = equipmentData?.equipmentList ?? [];
-  const catalogError = stationsError || equipmentError;
   const columns = Math.max(1, Math.ceil(layout.room.widthFt / layout.room.gridFt));
   const rows = Math.max(1, Math.ceil(layout.room.heightFt / layout.room.gridFt));
   const selectedFixture = layout.fixtures.find((f) => f.instanceId === selectedFixtureId) || null;
   const selectedBaseObject = selectedOverlay ? layout.baseObjects.find((object) => object.id === selectedOverlay) ?? null : null;
-  const selectedStation = selectedFixture?.stations.find((s) => s.instanceId === selectedStationId) || null;
-  const visibleEquipment = selectedStation ? equipmentCatalog.filter((e) => !e.stationId || e.stationId === selectedStation.stationId) : equipmentCatalog;
-  const selectedBenchCapacity = selectedFixture?.kind === 'bench' ? BENCH_SURFACE_AREA_SQFT : 0;
-  const selectedBenchUsedArea = selectedFixture?.kind === 'bench' ? benchEquipmentArea(selectedFixture) : 0;
-  const assignedEquipment = new Set(layout.fixtures.flatMap((f) => f.stations.flatMap((s) => s.equipment.map((e) => e.equipmentId))));
   const utilization = useMemo(() => Math.round(layout.fixtures.reduce((sum, f) => { const size = fixtureFootprint(f, layout.room.gridFt); return sum + size.width * size.height; }, 0) / (columns * rows) * 100), [layout, columns, rows]);
   const violations = useMemo(() => validateSandboxLayout(layout), [layout]);
-  // Scoped to the selected station's equipment when one is picked, otherwise
-  // all of the selected bench's stations pooled together.
-  const utilityCheck = useMemo(() => selectedFixture && selectedFixture.kind === 'bench' ? evaluateUtilityReachability(selectedFixture, layout.baseObjects, layout.room.gridFt, selectedStation ?? undefined) : null, [selectedFixture, selectedStation, layout.baseObjects, layout.room.gridFt]);
   // Only computed while a fixture is actively being picked up or dragged —
   // the whole room's green/red availability for that exact footprint, not
   // just a single cell under the cursor, so the user can see every open
@@ -257,12 +188,18 @@ export function LayoutSandboxPage() {
   // change here, including ones made after an explicit router-state load,
   // becomes the new "last layout".
   useEffect(() => {
-    try { localStorage.setItem(SANDBOX_LAYOUT_STORAGE_KEY, JSON.stringify({ layout, categoryMode, subSelection, activeCategory })); } catch { /* private browsing, quota, etc — resuming is a convenience, not a guarantee */ }
-  }, [layout, categoryMode, subSelection, activeCategory]);
+    try { localStorage.setItem(SANDBOX_LAYOUT_STORAGE_KEY, JSON.stringify({ layout, arrangement, categoryMode, subSelection, activeCategory })); } catch { /* private browsing, quota, etc — resuming is a convenience, not a guarantee */ }
+  }, [layout, arrangement, categoryMode, subSelection, activeCategory]);
   useEffect(() => {
-    const state = location.state as { loadLayout?: unknown } | null;
+    const state = location.state as { loadLayout?: unknown; arrangement?: Answers } | null;
+    if (state?.arrangement) setArrangement({ ...DEFAULT_ARRANGEMENT, ...state.arrangement });
+    else {
+      const options = readLabPlan(state?.loadLayout)?.options;
+      if (options) setArrangement({ layout_mode: options.mode, layout_main_wall: options.mainWall ?? 'S', layout_same_direction: options.sameDirection, layout_wall_benches: options.wallBenches });
+    }
     if (!state?.loadLayout) return;
-    const parsed = parseSandboxLayout(state.loadLayout);
+    const loaded = parseSandboxLayout(state.loadLayout);
+    const parsed = loaded && withGridFt(loaded, SANDBOX_GRID_FT);
     if (parsed) { setLayout(parsed); applySeededCategoryModes(parsed); }
     navigate(location.pathname, { replace: true, state: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -270,7 +207,7 @@ export function LayoutSandboxPage() {
   useEffect(() => {
     const capabilities = capabilityData?.layoutSandboxCapabilities;
     if (!capabilities) return;
-    const editorLayers: SandboxLayer[] = ['base', 'stations', 'equipment', 'circulation', 'electrical', 'plumbing', 'ventilation', 'validation'];
+    const editorLayers: SandboxLayer[] = ['base', 'equipment', 'circulation', 'electrical', 'plumbing', 'ventilation', 'validation'];
     const editorCollections = ['fixtures', 'baseObjects', 'electricalEndpoints', 'electricalCircuits'];
     const unsupported = [
       ...capabilities.layers.filter((value) => !editorLayers.includes(value as SandboxLayer)),
@@ -284,10 +221,11 @@ export function LayoutSandboxPage() {
     function onKeydown(event: KeyboardEvent) {
       if (event.key === 'Escape' && placingKind) { setPlacingKind(null); setMessage('Placement cancelled.'); return; }
       if (event.key === 'Escape' && openQuestion) { setOpenQuestion(null); return; }
-      if (event.key !== 'Backspace') return;
+      if (event.key === 'Escape' && group) { clearGroup(); return; }
+      if (event.key !== 'Backspace' && event.key !== 'Delete') return;
       const target = event.target as HTMLElement | null;
       if (target?.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
-      if (!selectedOverlay && !selectedStationId && !selectedFixtureId) return;
+      if (!group && !selectedOverlay && !selectedFixtureId) return;
       event.preventDefault(); deleteSelection();
     }
     window.addEventListener('keydown', onKeydown);
@@ -318,8 +256,7 @@ export function LayoutSandboxPage() {
     setSubSelection((current) => ({ ...current, [category]: Object.fromEntries(keys.map((key) => [key, true])) }));
   }
   // Commits the current subSelection for one category's question box.
-  // "Manually place" keeps whatever's currently selected as-is (or, for the
-  // grid-less stations/zoning boxes, just means "yes") and closes the box —
+  // "Manually place" keeps whatever's currently selected as-is and closes the box —
   // there's something to go place, so the next box only opens once the user
   // explicitly clicks "Place <next category>" (or a category chip), never
   // automatically. "Derive from unassigned space" clears every subgroup back
@@ -347,22 +284,17 @@ export function LayoutSandboxPage() {
   function openCategoryChip(category: PlacementCategory) {
     setOpenQuestion(category);
   }
-  // Stations and zoning intentionally return no subgroups — their question
-  // box is a plain manual-or-derive choice with no item grid (see
-  // hasSubgroupGrid); the full station list / zone requirements panel only
-  // ever shows up in the sidebar, once that category is active and manual.
   function subgroupsFor(category: PlacementCategory): PlacementSubgroup[] {
     if (category === 'infrastructure') return INFRA_PALETTE.map((group) => ({ key: group.layer, label: group.title, hoverItems: group.items.map((item) => item.label) }));
-    if (category === 'fixtures') return FIXTURE_SUBGROUP_KINDS.map((kind) => ({ key: kind, label: FIXTURE_DEFAULTS[kind].name }));
-    return [];
+    return FIXTURE_SUBGROUP_KINDS.map((kind) => ({ key: kind, label: FIXTURE_DEFAULTS[kind].name }));
   }
   function updateLayout(fn: (previous: SandboxLayout) => SandboxLayout) { setLayout((previous) => ({ ...fn(previous), updatedAt: new Date().toISOString() })); }
   function setKind(kind: FixtureKind) { const d = FIXTURE_DEFAULTS[kind]; setNewKind(kind); setNewWidth(d.widthFt); setNewDepth(d.depthFt); if (kind === 'bench' || kind === 'laminarHood') setNewClearance({ ...DEFAULT_CLEARANCE[kind] }); }
   function createFixture(x: number, y: number) {
     const d = FIXTURE_DEFAULTS[newKind];
-    const fixture: SandboxFixture = { instanceId: `${newKind}-${Date.now()}`, kind: newKind, name: d.name, x, y, widthFt: newKind === 'bench' ? BENCH_WIDTH_FT : Math.max(.5, newWidth), depthFt: newKind === 'bench' ? BENCH_DEPTH_FT : Math.max(.5, newDepth), orientation: 0, clearance: newKind === 'bench' || newKind === 'laminarHood' ? { ...newClearance } : undefined, stations: [] };
+    const fixture: SandboxFixture = { instanceId: `${newKind}-${Date.now()}`, kind: newKind, name: d.name, x, y, widthFt: newKind === 'bench' ? BENCH_WIDTH_FT : Math.max(.5, newWidth), depthFt: newKind === 'bench' ? BENCH_DEPTH_FT : Math.max(.5, newDepth), orientation: 0, clearance: newKind === 'bench' || newKind === 'laminarHood' ? { ...newClearance } : undefined };
     if (!canPlaceFixture(fixture, layout.fixtures, layout.baseObjects, layout.room.gridFt)) return setMessage('That fixture overlaps another fixture or object.');
-    updateLayout((p) => ({ ...p, fixtures: [...p.fixtures, fixture] })); setSelectedFixtureId(fixture.instanceId); setSelectedStationId(null); setMessage(`${fixture.name} placed.`);
+    updateLayout((p) => ({ ...p, fixtures: [...p.fixtures, fixture] })); setSelectedFixtureId(fixture.instanceId); setMessage(`${fixture.name} placed.`);
   }
   function moveFixture(id: string, x: number, y: number) {
     const fixture = layout.fixtures.find((f) => f.instanceId === id); if (!fixture) return;
@@ -373,21 +305,27 @@ export function LayoutSandboxPage() {
   function startFixtureMove(event: React.PointerEvent<HTMLDivElement>, fixture: SandboxFixture) {
     if (event.button !== 0) return;
     event.preventDefault(); event.stopPropagation(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
+    if (group?.fixtures.includes(fixture.instanceId)) { startGroupDrag(event); return; }
+    setGroup(null);
     const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return;
     const pointerX = (event.clientX - rect.left) / rect.width * columns;
     const pointerY = (event.clientY - rect.top) / rect.height * rows;
     dragState.current = { id: fixture.instanceId, offsetX: pointerX - fixture.x, offsetY: pointerY - fixture.y, x: fixture.x, y: fixture.y };
-    setSelectedOverlay(null); setSelectedFixtureId(fixture.instanceId); setSelectedStationId(null); setDragPreview({ id: fixture.instanceId, x: fixture.x, y: fixture.y });
+    setSelectedOverlay(null); setSelectedFixtureId(fixture.instanceId); setDragPreview({ id: fixture.instanceId, x: fixture.x, y: fixture.y });
     setPlacementPreview({ widthFt: fixture.widthFt, depthFt: fixture.depthFt, orientation: fixture.orientation, excludeInstanceId: fixture.instanceId });
   }
   function previewFixtureMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (groupDrag.current) { moveGroup(event); return; }
     const drag = dragState.current; const rect = canvasRef.current?.getBoundingClientRect(); if (!drag || !rect) return;
-    drag.x = Math.min(columns - 1, Math.max(0, Math.floor((event.clientX - rect.left) / rect.width * columns - drag.offsetX)));
-    drag.y = Math.min(rows - 1, Math.max(0, Math.floor((event.clientY - rect.top) / rect.height * rows - drag.offsetY)));
+    // Nearest cell to where the grab point now is (flooring made the
+    // fixture trail the pointer by up to a cell).
+    drag.x = Math.min(columns - 1, Math.max(0, Math.round((event.clientX - rect.left) / rect.width * columns - drag.offsetX)));
+    drag.y = Math.min(rows - 1, Math.max(0, Math.round((event.clientY - rect.top) / rect.height * rows - drag.offsetY)));
     if (dragFrame.current !== null) return;
     dragFrame.current = requestAnimationFrame(() => { dragFrame.current = null; const current = dragState.current; if (current) setDragPreview({ id: current.id, x: current.x, y: current.y }); });
   }
   function finishFixtureMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (groupDrag.current) { finishGroupDrag(event); return; }
     const drag = dragState.current; if (!drag) return;
     event.currentTarget.releasePointerCapture(event.pointerId); dragState.current = null;
     if (dragFrame.current !== null) { cancelAnimationFrame(dragFrame.current); dragFrame.current = null; }
@@ -398,6 +336,16 @@ export function LayoutSandboxPage() {
     const direction = delta[event.key]; if (!direction) return;
     event.preventDefault(); event.stopPropagation(); moveFixture(fixture.instanceId, fixture.x + direction[0], fixture.y + direction[1]);
   }
+  // The grid cell a palette item dropped here would start at: centred on
+  // the pointer (not hanging off it by its top-left corner), kept inside
+  // the room.
+  function paletteCell(event: React.PointerEvent<HTMLDivElement>, rect: DOMRect, widthFt: number, depthFt: number) {
+    const spanX = Math.max(1, Math.ceil(widthFt / layout.room.gridFt));
+    const spanY = Math.max(1, Math.ceil(depthFt / layout.room.gridFt));
+    const x = Math.round((event.clientX - rect.left) / rect.width * columns - spanX / 2);
+    const y = Math.round((event.clientY - rect.top) / rect.height * rows - spanY / 2);
+    return { x: Math.min(Math.max(0, columns - spanX), Math.max(0, x)), y: Math.min(Math.max(0, rows - spanY), Math.max(0, y)) };
+  }
   function startPaletteDrag(event: React.PointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
@@ -405,8 +353,7 @@ export function LayoutSandboxPage() {
     const depthFt = newKind === 'bench' ? BENCH_DEPTH_FT : Math.max(.5, newDepth);
     const rect = canvasRef.current?.getBoundingClientRect();
     const onCanvas = !!rect && event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
-    const x = rect ? Math.min(columns - 1, Math.max(0, Math.floor((event.clientX - rect.left) / rect.width * columns))) : 0;
-    const y = rect ? Math.min(rows - 1, Math.max(0, Math.floor((event.clientY - rect.top) / rect.height * rows))) : 0;
+    const { x, y } = rect ? paletteCell(event, rect, widthFt, depthFt) : { x: 0, y: 0 };
     const next = { kind: newKind, widthFt, depthFt, x, y, onCanvas };
     paletteDragState.current = next; setPaletteDragPos(next);
     setPlacementPreview({ widthFt, depthFt, orientation: 0 });
@@ -414,8 +361,7 @@ export function LayoutSandboxPage() {
   function movePaletteDrag(event: React.PointerEvent<HTMLDivElement>) {
     const drag = paletteDragState.current; const rect = canvasRef.current?.getBoundingClientRect(); if (!drag || !rect) return;
     drag.onCanvas = event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
-    drag.x = Math.min(columns - 1, Math.max(0, Math.floor((event.clientX - rect.left) / rect.width * columns)));
-    drag.y = Math.min(rows - 1, Math.max(0, Math.floor((event.clientY - rect.top) / rect.height * rows)));
+    Object.assign(drag, paletteCell(event, rect, drag.widthFt, drag.depthFt));
     if (paletteDragFrame.current !== null) return;
     paletteDragFrame.current = requestAnimationFrame(() => { paletteDragFrame.current = null; const current = paletteDragState.current; if (current) setPaletteDragPos({ ...current }); });
   }
@@ -431,24 +377,6 @@ export function LayoutSandboxPage() {
     if (paletteDragFrame.current !== null) { cancelAnimationFrame(paletteDragFrame.current); paletteDragFrame.current = null; }
     setPaletteDragPos(null); setPlacementPreview(null);
   }
-  function assignStation(stationId: string) {
-    if (!selectedFixture || selectedFixture.kind !== 'bench') return setMessage('Select a bench before assigning a station.');
-    const catalog = stationCatalog.find((s) => s.stationId === stationId); if (!catalog) return;
-    const station: SandboxStationAssignment = { instanceId: `${stationId}-${Date.now()}`, stationId, name: catalog.name, zone: catalog.zone || 'unassigned', equipment: [], accessFaces: ['front'], operatingClearances: [], serviceClearances: [] };
-    updateLayout((p) => ({ ...p, fixtures: p.fixtures.map((f) => f.instanceId === selectedFixture.instanceId ? { ...f, stations: [...f.stations, station] } : f) })); setSelectedStationId(station.instanceId); setMessage(`${station.name} assigned to ${selectedFixture.name}.`);
-  }
-  function assignEquipment(equipmentId: string) {
-    if (!selectedStation || !selectedFixture) return setMessage('Select an assigned station first.');
-    if (assignedEquipment.has(equipmentId)) return setMessage('That equipment is already assigned.');
-    const e = equipmentCatalog.find((item) => item.equipmentId === equipmentId); if (!e) return;
-    const nextArea = selectedBenchUsedArea + equipmentArea(e);
-    if (selectedFixture.kind !== 'bench' || nextArea > selectedBenchCapacity + Number.EPSILON) return setMessage(`${e.name} does not fit. This bench has ${Math.max(0, selectedBenchCapacity - selectedBenchUsedArea).toFixed(2)} sq ft available.`);
-    const assignment: SandboxEquipmentAssignment = { equipmentId, name: e.name, widthFt: e.widthFt, depthFt: e.depthFt, heightFt: e.heightFt, utilityRequirements: e.utilityRequirements, mounting: e.mounting };
-    updateLayout((p) => ({ ...p, fixtures: p.fixtures.map((f) => f.instanceId !== selectedFixture.instanceId ? f : { ...f, stations: f.stations.map((s) => s.instanceId === selectedStation.instanceId ? { ...s, equipment: [...s.equipment, assignment] } : s) }) })); setMessage(`${e.name} assigned to ${selectedStation.name}.`);
-  }
-  function removeAssignedEquipment(equipmentId: string) {
-    updateLayout((p) => ({ ...p, fixtures: p.fixtures.map((f) => f.instanceId !== selectedFixtureId ? f : { ...f, stations: f.stations.map((s) => s.instanceId === selectedStationId ? { ...s, equipment: s.equipment.filter((x) => x.equipmentId !== equipmentId) } : s) }) }));
-  }
   function rotateSelected() { if (!selectedFixture) return; const rotated: SandboxFixture = { ...selectedFixture, orientation: ((selectedFixture.orientation + 90) % 360) as SandboxFixture['orientation'] }; if (!canPlaceFixture(rotated, layout.fixtures, layout.baseObjects, layout.room.gridFt)) return setMessage('Rotating this fixture would overlap another fixture or object.'); updateLayout((p) => ({ ...p, fixtures: p.fixtures.map((f) => f.instanceId === rotated.instanceId ? rotated : f) })); setMessage(`${rotated.name} rotated to ${rotated.orientation}°.`); }
   function updateSelectedClearance(field: keyof FixtureClearance, value: number) {
     if (!selectedFixture || (selectedFixture.kind !== 'bench' && selectedFixture.kind !== 'laminarHood')) return;
@@ -458,18 +386,18 @@ export function LayoutSandboxPage() {
     updateLayout((p) => ({ ...p, fixtures: p.fixtures.map((f) => f.instanceId === changed.instanceId ? changed : f) }));
     setMessage('Bench clearance updated.');
   }
-  function removeSelected() { if (!selectedFixture) return; updateLayout((p) => ({ ...p, fixtures: p.fixtures.filter((f) => f.instanceId !== selectedFixture.instanceId) })); setSelectedFixtureId(null); setSelectedStationId(null); setMessage('Fixture removed.'); }
-  // Hands the room size, and the exit door's placement if one was set, back
-  // to the intake wizard's "space"/"layout_prefs" questions (QuestionsPage.tsx)
-  // via router state — a one-shot hand-off. Only the door crosses over here:
-  // fixtures/equipment placed in the sandbox still don't (see space.method's
-  // doc comment in questions.ts), and neither do utility hookups yet — a
-  // sandbox utility point's kind (electrical/plumbing/ventilation) has no
-  // reliable mapping onto the free-form utilityType string real equipment
-  // catalog rows carry (findUncoveredEquipment on the backend does exact
-  // string matching against it), so a guessed mapping could silently mark an
-  // equipment need as "covered" by the wrong hookup.
+  function removeSelected() { if (!selectedFixture) return; updateLayout((p) => ({ ...p, fixtures: p.fixtures.filter((f) => f.instanceId !== selectedFixture.instanceId) })); setSelectedFixtureId(null); setMessage('Fixture removed.'); }
+  // Hands the room back to the intake wizard (QuestionsPage.tsx) via router
+  // state — a one-shot hand-off: its size, the exit door (still used when no
+  // sandbox room is available), and the whole room — every door, column,
+  // no-placement area and fixture already in it, both as drawn (layout) and
+  // as the grid cells the generator plans on (geometry, the same input the
+  // sandbox's own bench placement uses). Benches placed automatically are
+  // left out: generation replaces them.
   function useInIntake() {
+    const keptFixtures = layout.fixtures.filter((fixture) => !isAutoPlacedBench(fixture));
+    const roomLayout = { ...layout, fixtures: keptFixtures };
+    const geometry = { ...buildBenchPlacementGeometryInput(layout), cellSizeInches: Math.round(layout.room.gridFt * 12) };
     const exitDoor = layout.baseObjects.find((object) => object.kind === 'door' && object.door?.isExit && object.footprint.points.length > 0);
     let door: { wall: 'N' | 'S' | 'E' | 'W'; offsetFt: number } | undefined;
     if (exitDoor) {
@@ -484,281 +412,19 @@ export function LayoutSandboxPage() {
       const SANDBOX_WALL_TO_INTAKE: Record<WallSide, 'N' | 'S' | 'E' | 'W'> = { top: 'N', bottom: 'S', left: 'W', right: 'E' };
       door = { wall: SANDBOX_WALL_TO_INTAKE[side], offsetFt: Math.round(offsetAlongWall(side, center) * 100) / 100 };
     }
-    navigate('/questions', { state: { spaceFromSandbox: { width_ft: layout.room.widthFt, height_ft: layout.room.heightFt, door } } });
+    navigate('/questions', { state: { spaceFromSandbox: { width_ft: layout.room.widthFt, height_ft: layout.room.heightFt, door, layout: roomLayout, geometry, arrangement } } });
   }
-  async function sendToSeedGenerator() {
-    setBackendNotice({ kind: 'progress', text: 'Adding this design to the approved seed library…' });
-    try {
-      const response = await approveSandboxLayout({ variables: { layout } });
-      if (!response.data?.approveSandboxLayout?.seedId) throw new Error('The server did not return an approved seed');
-      setBackendNotice(null);
-      navigate('/layout-candidates', { state: { sourceLayout: layout } });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      setBackendNotice({ kind: 'error', text: `Could not add this design to the approved seed library: ${detail}` });
-      setMessage('The design was kept in the sandbox. Fix the save error and try again.');
-    }
-  }
-  // Sandbox -> operation contexts -> zone-policy -> lab-program ->
-  // MiniZinc -> zone overlay (see cirrus-backend's src/zone-policy,
-  // src/lab-program, src/zoning). Only the room shell (baseObjects — walls,
-  // doors, columns, plumbing points) goes in, no fixtures: zoning happens
-  // before benches are placed. Areas/equipment/utilities come from the
-  // actual selected operations via OPERATION_LAYOUT_PROFILES, not a
-  // heuristic split.
-  function addPlannedOperation() {
-    if (!operationDraft || !isPlannedOperationComplete(operationDraft)) return;
-    setPlannedOperations((current) => [...current, operationDraft]);
-    setOperationDraft(null);
-    setOperationSearch('');
-    setCurrentPlanId(null);
-  }
-  function removePlannedOperation(key: string) {
-    setPlannedOperations((current) => current.filter((op) => op.key !== key));
-    setCurrentPlanId(null);
-  }
-  const canRunZoning = plannedOperations.length > 0 && plannedOperations.every(isPlannedOperationComplete);
-  const canSavePlan = canRunZoning;
-
-  // Saves the room's dimensions + every planned operation (each carrying a
-  // catalogue snapshot, see toPlannedOperationSnapshot) as a reloadable
-  // plan — layout.name doubles as the plan's own name, the same field
-  // "Use in seed generator" already reads, rather than asking for a second
-  // name nobody would keep in sync. Passing currentPlanId overwrites the
-  // plan currently loaded/just-saved in place; omitting it (null) creates a
-  // new one.
-  async function saveCurrentPlan() {
-    if (!canSavePlan) {
-      setMessage('Add at least one operation with a complete material context before saving a plan.');
-      return;
-    }
-    setBackendNotice({ kind: 'progress', text: 'Saving zoning plan…' });
-    try {
-      const response = await saveZoningPlan({
-        variables: {
-          input: {
-            planId: currentPlanId ?? undefined,
-            name: layout.name.trim() || 'Untitled plan',
-            roomWidthFt: layout.room.widthFt,
-            roomHeightFt: layout.room.heightFt,
-            operations: plannedOperations.map(toPlannedOperationSnapshot),
-            gridSizeFeet: layout.room.gridFt,
-          },
-        },
-      });
-      const saved = response.data?.saveZoningPlan;
-      if (!saved) throw new Error('The server did not return a saved plan');
-      setCurrentPlanId(saved.planId);
-      setBackendNotice(null);
-      setMessage(`Plan "${saved.name}" saved.`);
-      void refetchZoningPlans();
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      setBackendNotice({ kind: 'error', text: `Could not save this plan: ${detail}` });
-    }
-  }
-
-  // Loads a saved plan's room dims + planned operations back in — never
-  // touches fixtures/baseObjects (zone requirements are deliberately not
-  // tied to fixture placement, same as the rest of this section). Also
-  // checks the loaded plan's catalogue snapshots against the live
-  // catalogue right away: a re-seed or the eventual full protocols.io
-  // import can change what one of its operationIds means since it was
-  // saved, and that should be a visible warning the moment the plan comes
-  // back in, not something the user only discovers if zoning behaves
-  // unexpectedly.
-  async function loadPlan(planId: string) {
-    setBackendNotice({ kind: 'progress', text: 'Loading plan…' });
-    try {
-      const [planResponse, driftResponse] = await Promise.all([
-        loadZoningPlan({ variables: { planId } }),
-        checkCatalogueDrift({ variables: { planId } }),
-      ]);
-      const plan = planResponse.data?.zoningPlan;
-      if (!plan) throw new Error('The server did not return that plan');
-      updateLayout((current) => ({ ...current, name: plan.name, room: { ...current.room, widthFt: plan.roomWidthFt, heightFt: plan.roomHeightFt } }));
-      setPlannedOperations(plan.operations.map(fromPlannedOperationSnapshot));
-      setCurrentPlanId(plan.planId);
-      setOperationDraft(null);
-      setZoning(null);
-      setZoningBlocked(null);
-      // A loaded plan never touches fixtures/baseObjects/stations, so only
-      // zoning is pre-answered here — the other three categories keep
-      // whatever the room's own content already seeded them to.
-      setCategoryMode((current) => ({ ...current, zoning: 'manual' }));
-      setActiveCategory('zoning');
-      setOpenQuestion((current) => current === 'zoning' ? null : current);
-      const drift = driftResponse.data?.zoningPlanCatalogueDrift ?? [];
-      setCatalogueDrift(drift.length > 0 ? drift : null);
-      setBackendNotice(null);
-      setMessage(`Plan "${plan.name}" loaded.${drift.length > 0 ? ` ${drift.length} operation(s) have drifted from the live catalogue — see the warning below.` : ''}`);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      setBackendNotice({ kind: 'error', text: `Could not load that plan: ${detail}` });
-    }
-  }
-
-  async function deletePlan(planId: string) {
-    try {
-      await deleteZoningPlan({ variables: { planId } });
-      if (currentPlanId === planId) setCurrentPlanId(null);
-      void refetchZoningPlans();
-      setMessage('Plan deleted.');
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      setBackendNotice({ kind: 'error', text: `Could not delete that plan: ${detail}` });
-    }
-  }
-
-  async function runZoneRequirements() {
-    if (!canRunZoning) {
-      setMessage('Add at least one operation with a complete material context before zoning.');
-      return;
-    }
-    const geometry = buildLayoutGeometryInput(layout);
-    setBackendNotice({ kind: 'progress', text: 'Compiling zone requirements and solving with MiniZinc…' });
-    try {
-      // NonSpatialService operations (e.g. a third-party sequencing
-      // send-out) stay in the planned-operations workflow list but never go
-      // into the zoning request — they have no physical footprint to place.
-      // The backend compiler excludes them too; this just keeps the request
-      // itself honest about what it's actually asking to place.
-      const response = await solveZoneRequirements({
-        variables: { input: { ...geometry, operationContexts: plannedOperations.filter(isZoneable).map(toOperationContextInput) } },
-      });
-      const result = response.data?.solveZoneRequirements;
-      if (!result) throw new Error('The server did not return a zoning result');
-
-      if (result.status === 'blocked') {
-        // Existing overlay is preserved on purpose — a blocked re-run
-        // (e.g. after adding one more operation) shouldn't erase the last
-        // legal layout the user was looking at.
-        setZoningBlocked({ diagnostics: result.blockingDiagnostics });
-        setBackendNotice({ kind: 'error', text: `${result.blockingDiagnostics.length} operation(s) need review before zoning can run — see the diagnostics below.` });
-        return;
-      }
-
-      setZoningBlocked(null);
-      if (result.solveStatus !== 'SATISFIED') {
-        setBackendNotice({ kind: 'error', text: `MiniZinc could not find a legal zone assignment (${result.solveStatus}). Try a bigger room, fewer obstacles, or fewer/smaller operations.` });
-        return;
-      }
-
-      setZoning({ roomWidth: geometry.roomWidth, roomHeight: geometry.roomHeight, cellZones: result.cellZones, legend: result.zoneRequirements });
-      setLayers((current) => ({ ...current, zoning: true }));
-      setBackendNotice(null);
-      const insufficient = result.insufficientDataDiagnostics;
-      setMessage(
-        insufficient.length > 0
-          ? `Zoned — but ${insufficient.length} operation(s) had no layout profile and were left out: ${insufficient.flatMap((d) => d.operationIds).join(', ')}.`
-          : 'MiniZinc produced a zone assignment from the selected operations — see the zoning layer.',
-      );
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      setBackendNotice({ kind: 'error', text: `Could not solve zoning: ${detail}` });
-    }
-  }
-
-  // The full equipment/throughput/workflow -> zones -> benches chain in one
-  // call (see cirrus-backend's ZoneBenchPipelineService.placeBenchesForSandbox)
-  // — bench counts/dimensions are derived automatically from each zone's own
-  // peak bench demand, never entered by hand. Refreshes the zoning overlay
-  // from THIS solve (not whatever a separate, earlier "Zone with MiniZinc"
-  // run produced) so the zone shapes shown always match the benches placed
-  // into them, and replaces only this feature's own previously auto-placed
-  // benches on re-run — never a person's hand-placed one (see
-  // AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX's own comment).
-  async function runBenchPlacement() {
-    if (!canRunZoning) {
-      setMessage('Add at least one operation with a complete material context before placing benches.');
-      return;
-    }
-    const geometry = buildBenchPlacementGeometryInput(layout);
-    setBackendNotice({ kind: 'progress', text: 'Compiling zone requirements, zoning, and placing benches…' });
-    try {
-      const response = await placeBenchesForSandbox({
-        variables: { input: { ...geometry, operationContexts: plannedOperations.filter(isZoneable).map(toOperationContextInput) } },
-      });
-      const result = response.data?.placeBenchesForSandbox;
-      if (!result) throw new Error('The server did not return a bench placement result');
-
-      if (result.status === 'blocked') {
-        setZoningBlocked({ diagnostics: result.blockingDiagnostics });
-        setBackendNotice({ kind: 'error', text: `${result.blockingDiagnostics.length} operation(s) need review before bench placement can run — see the diagnostics below.` });
-        return;
-      }
-      setZoningBlocked(null);
-
-      const zoneResult = result.zoneResult;
-      if (!zoneResult) {
-        setBackendNotice(null);
-        setMessage('No zones or benches to place from the selected operations.');
-        return;
-      }
-      if (zoneResult.solveStatus !== 'SATISFIED' || zoneResult.validation.state !== 'VALID') {
-        setBackendNotice({ kind: 'error', text: `MiniZinc could not find a legal zone assignment (${zoneResult.solveStatus}). Try a bigger room, fewer obstacles, or fewer/smaller operations.` });
-        return;
-      }
-
-      const zoneNumberById = new Map(result.zoneRequirements.map((z, i) => [z.id, i + 1] as const));
-      const cellZones = new Array(geometry.roomWidth * geometry.roomHeight).fill(0);
-      for (const zone of zoneResult.zones) {
-        const zoneNumber = zoneNumberById.get(zone.id);
-        if (!zoneNumber) continue;
-        for (const cell of zone.cells) cellZones[cell.row * geometry.roomWidth + cell.column] = zoneNumber;
-      }
-      setZoning({ roomWidth: geometry.roomWidth, roomHeight: geometry.roomHeight, cellZones, legend: result.zoneRequirements });
-      setLayers((current) => ({ ...current, zoning: true }));
-
-      const benchResult = result.benchResult;
-      if (!benchResult) {
-        setBackendNotice(null);
-        setMessage('Zoned — but none of these zones need a bench.');
-        return;
-      }
-      if (benchResult.solveStatus !== 'SATISFIED' || benchResult.validation.state !== 'VALID') {
-        setBackendNotice({ kind: 'error', text: `Zoned, but bench placement did not succeed (${benchResult.solveStatus}). ${benchResult.validation.violations[0] ?? ''}`.trim() });
-        return;
-      }
-
-      const zoneNameById = new Map(result.zoneRequirements.map((z) => [z.id, z.family] as const));
-      // benchRequirementsFromZoneRequirements (backend) never sets
-      // workingAisleWidthInches — every bench here was solved against
-      // BenchRequirementInput's own 36" default.
-      const benchFixtures = sandboxFixturesFromBenchPlacement(benchResult.benches, benchResult.placementGrid.cellSizeInches, zoneNameById, 3);
-      updateLayout((current) => ({
-        ...current,
-        fixtures: [...current.fixtures.filter((f) => !f.instanceId.startsWith(AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX)), ...benchFixtures],
-      }));
-      setLayers((current) => ({ ...current, equipment: true }));
-      setBackendNotice(null);
-      setMessage(`Placed ${benchFixtures.length} bench(es) across ${zoneResult.zones.length} zone(s) from the selected operations.`);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      setBackendNotice({ kind: 'error', text: `Could not place benches: ${detail}` });
-    }
-  }
-
-  // The equipment-agnostic counterpart to runBenchPlacement: no operations
-  // needed at all (canRunZoning gates the other two buttons; this one
-  // never checks it) — carves as many zones as the room's own drawn shape
-  // fits and packs as many benches into each as it can hold. Overwrites the
-  // zoning overlay and auto-placed benches the same way runBenchPlacement
-  // does, so switching between the two buttons always reflects only the
-  // most recent solve, never a stale mix of both.
+  // Fills the room with as many benches as fit (no operations needed) and
+  // shows the zones they were carved into. Replaces only benches a previous
+  // fit placed, never a hand-placed one.
   async function runMaximizeZonesAndBenches() {
     // Fixtures already in the room are no-placement areas (see
     // buildBenchPlacementGeometryInput).
     const geometry = buildBenchPlacementGeometryInput(layout);
-    // Matches MaximizeZonesAndBenchesForSandboxInput.workingAisleFt's own
-    // backend default — kept explicit here (rather than omitting the field
-    // and letting the server default it) so this value is also what gets
-    // written back onto each placed fixture's own clearance below.
-    const workingAisleFt = 5;
-    setBackendNotice({ kind: 'progress', text: 'Maximizing zones and benches — this takes a few minutes for a typical room.' });
+    setBackendNotice({ kind: 'progress', text: 'Fitting benches…' });
     try {
       const response = await maximizeZonesAndBenchesForSandbox({
-        variables: { input: { roomWidth: geometry.roomWidth, roomHeight: geometry.roomHeight, blockedCells: geometry.blockedCells, entranceCells: geometry.entranceCells, sinkCells: geometry.sinkCells, workingAisleFt } },
+        variables: { input: { roomWidth: geometry.roomWidth, roomHeight: geometry.roomHeight, blockedCells: geometry.blockedCells, entranceCells: geometry.entranceCells, sinkCells: geometry.sinkCells, cellSizeInches: Math.round(layout.room.gridFt * 12), options: { mode: arrangement.layout_mode, mainWall: arrangement.layout_main_wall, sameDirection: arrangement.layout_same_direction, wallBenches: arrangement.layout_wall_benches } } },
       });
       const result = response.data?.maximizeZonesAndBenchesForSandbox;
       if (!result) throw new Error('The server did not return a result');
@@ -781,26 +447,26 @@ export function LayoutSandboxPage() {
       const benchResult = result.benchResult;
       if (benchResult.solveStatus !== 'SATISFIED' || benchResult.validation.state !== 'VALID') {
         setBackendNotice(null);
-        setMessage(result.totalZones > 0 ? `Carved ${result.totalZones} zone(s), but none of them had room for a bench.` : 'The room has no room for even one zone.');
+        setMessage('No bench fits this room with the required door clearances and working aisles.');
         return;
       }
 
       const zoneNameById = new Map(result.zoneHandoff.zones.map((z) => [z.id, z.family] as const));
-      const benchFixtures = sandboxFixturesFromBenchPlacement(benchResult.benches, benchResult.placementGrid.cellSizeInches, zoneNameById, workingAisleFt);
+      const workingAisleFt = benchResult.arrangement.workingAisleFt;
+      const benchFixtures = sandboxFixturesFromBenchPlacement(benchResult.benches, benchResult.placementGrid.cellSizeInches, zoneNameById, workingAisleFt, layout.room.gridFt);
       updateLayout((current) => ({
         ...current,
-        fixtures: [...current.fixtures.filter((f) => !f.instanceId.startsWith(AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX)), ...benchFixtures],
+        fixtures: [...current.fixtures.filter((f) => !isAutoPlacedBench(f)), ...benchFixtures],
       }));
       setLayers((current) => ({ ...current, equipment: true }));
       setBackendNotice(null);
-      setMessage(`Placed ${benchFixtures.length} bench(es) across ${result.totalZones} zone(s) — the room's own maximum, not a target count. ${Math.round(benchResult.equipmentPlaceableAreaSqFt)} sq ft of bench top for equipment, ${Math.round(benchResult.aisleAreaSqFt)} sq ft of aisle.`);
+      setMessage(`Placed ${benchFixtures.length} bench(es) in ${benchResult.islands.length} island(s) — the room's own maximum, not a target count. ${workingAisleFt} ft working aisles, ${benchResult.arrangement.crossAisleFt} ft cross-aisles. ${Math.round(benchResult.equipmentPlaceableAreaSqFt)} sq ft of bench top, ${Math.round(benchResult.aisleAreaSqFt)} sq ft of aisle, ${Math.round(benchResult.unusedAreaSqFt)} sq ft unused.`);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       setBackendNotice({ kind: 'error', text: `Could not maximize zones and benches: ${detail}` });
     }
   }
 
-  async function refreshCatalogs() { try { await Promise.all([refetchStations(), refetchEquipment()]); setMessage('Stations and equipment refreshed from MongoDB.'); } catch { setMessage('Could not refresh the MongoDB catalog. Check the Cirrus API connection.'); } }
   // Wall-mounted kinds snap flush to whichever room edge the click landed
   // nearest (wallRectFootprint/snapToNearestWall handle the geometry);
   // column and restricted_region place freely, centered on the click.
@@ -811,38 +477,17 @@ export function LayoutSandboxPage() {
     if (kind === 'door' || kind === 'window') {
       const { footprint } = wallRectFootprint(point, room, 3, kind === 'door' ? .5 : .3);
       object = { id: `${kind}-${Date.now()}`, kind, name: kind === 'door' ? 'Door' : 'Window', footprint, door: kind === 'door' ? { clearWidthIn: 36, isExit: true } : undefined };
-    } else if (kind === 'electrical_point' || kind === 'plumbing_point') {
-      const { point: snapped, side } = snapToNearestWall(point, room);
-      const name = kind === 'electrical_point' ? 'Electrical point' : 'Plumbing point';
-      object = {
-        id: `${kind}-${Date.now()}`, kind, name, footprint: { points: [snapped] },
-        electrical: kind === 'electrical_point' ? { voltage: 120, amperage: 20, phase: 'single', receptacleCount: 1, dedicated: false, emergencyPower: false } : undefined,
-        plumbing: kind === 'plumbing_point' ? { coldWater: true, hotWater: false, drain: true, diWater: false, processWaste: false } : undefined,
-        utility: { mountingSurface: 'wall', wallId: side, offsetFt: offsetAlongWall(side, snapped), connectionRadiusFt: 3, maxConnections: 1, status: 'proposed' },
-      };
-    } else if (kind === 'hvac_supply' || kind === 'hvac_return' || kind === 'general_exhaust' || kind === 'local_exhaust_connection') {
-      // Ceiling diffusers only ever place freely — a supply/return/general
-      // exhaust register isn't pinned to a wall. Local exhaust connection is
-      // wall-mounted by default, so it snaps like electrical/plumbing points.
-      const mountingSurface: MountingSurface = kind === 'local_exhaust_connection' ? 'wall' : 'ceiling';
-      const snap = mountingSurface === 'wall' ? snapToNearestWall(point, room) : { point, side: undefined as WallSide | undefined };
-      object = {
-        id: `${kind}-${Date.now()}`, kind: 'ventilation_point', name: VENTILATION_PLACEMENT_LABELS[kind], footprint: { points: [snap.point] },
-        ventilation: { category: kind, ducted: true },
-        utility: { mountingSurface, wallId: snap.side, offsetFt: snap.side ? offsetAlongWall(snap.side, snap.point) : undefined, connectionRadiusFt: 3, maxConnections: 1, status: 'proposed' },
-      };
     } else {
       const footprint = centeredRectFootprint(point, 2, 2);
       object = { id: `${kind}-${Date.now()}`, kind, name: kind === 'restricted_region' ? 'Restricted region' : 'Column', footprint };
     }
     updateLayout((current) => ({ ...current, baseObjects: [...current.baseObjects, object] }));
-    setSelectedFixtureId(null); setSelectedStationId(null); setSelectedOverlay(object.id); setPlacingKind(null);
+    setSelectedFixtureId(null); setSelectedOverlay(object.id); setPlacingKind(null);
     setMessage(`${object.name} placed.`);
   }
   // Turns on the kind's layer before entering placement mode — otherwise a
-  // freshly-placed electrical/plumbing/ventilation point would immediately
-  // vanish (CanvasLayers only renders a baseObject when its layer is
-  // visible), which looked like placement silently failing.
+  // freshly-placed object would immediately vanish (CanvasLayers only
+  // renders a baseObject when its layer is visible).
   function beginPlacing(kind: PlaceableBaseKind, layer: SandboxLayer) {
     setLayers((current) => ({ ...current, [layer]: true }));
     setPlacingKind((current) => current === kind ? null : kind);
@@ -855,19 +500,22 @@ export function LayoutSandboxPage() {
     placeBaseObjectAt(placingKind, x, y);
   }
   function startOverlayMove(id: string, event: React.PointerEvent<SVGElement>) {
-    event.preventDefault(); event.stopPropagation(); setSelectedFixtureId(null); setSelectedStationId(null); setSelectedOverlay(id);
+    event.preventDefault(); event.stopPropagation(); setSelectedFixtureId(null); setSelectedOverlay(id);
     event.currentTarget.setPointerCapture(event.pointerId);
-    overlayDrag.current = { id, clientX: event.clientX, clientY: event.clientY };
+    if (group?.objects.includes(id)) { setSelectedOverlay(null); startGroupDrag(event); return; }
+    setGroup(null);
+    const origin = layout.baseObjects.find((object) => object.id === id);
+    overlayDrag.current = origin ? { id, startX: event.clientX, startY: event.clientY, origin } : null;
   }
   function moveOverlay(event: React.PointerEvent<SVGSVGElement>) {
+    if (groupDrag.current) { moveGroup(event); return; }
     const drag = overlayDrag.current; const rect = canvasRef.current?.getBoundingClientRect(); if (!drag || !rect) return;
-    const dx = (event.clientX - drag.clientX) / rect.width * layout.room.widthFt;
-    const dy = (event.clientY - drag.clientY) / rect.height * layout.room.heightFt;
-    if (Math.abs(dx) < .01 && Math.abs(dy) < .01) return;
-    drag.clientX = event.clientX; drag.clientY = event.clientY;
+    const dx = (event.clientX - drag.startX) / rect.width * layout.room.widthFt;
+    const dy = (event.clientY - drag.startY) / rect.height * layout.room.heightFt;
     let blocked = false;
-    updateLayout((current) => ({ ...current, baseObjects: current.baseObjects.map((object) => {
-      if (object.id !== drag.id) return object;
+    updateLayout((current) => ({ ...current, baseObjects: current.baseObjects.map((placed) => {
+      if (placed.id !== drag.id) return placed;
+      const object = drag.origin;
       let candidate: SandboxBaseObject;
       // Wall-mounted utility points slide along their own wall — the drag's
       // component perpendicular to the wall is ignored rather than used to
@@ -911,16 +559,106 @@ export function LayoutSandboxPage() {
       // move (hold the object at its last valid position) rather than the
       // whole drag, so a blocked drag resumes moving the moment the pointer
       // reaches a valid spot again.
-      if (!canPlaceBaseObject(candidate, current.fixtures, current.baseObjects, current.room.gridFt)) { blocked = true; return object; }
+      if (!canPlaceBaseObject(candidate, current.fixtures, current.baseObjects, current.room.gridFt)) { blocked = true; return placed; }
       return candidate;
     }) }));
     if (blocked) setMessage('That move would overlap another fixture or object.');
   }
   function finishOverlayMove(event: React.PointerEvent<SVGSVGElement>) {
+    if (groupDrag.current) { finishGroupDrag(event); return; }
     if (!overlayDrag.current) return; overlayDrag.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     setMessage('Layer object moved.');
   }
+  // Pointer position in feet on the canvas.
+  function pointerFt(event: { clientX: number; clientY: number }) {
+    const rect = canvasRef.current?.getBoundingClientRect(); if (!rect) return null;
+    return { x: (event.clientX - rect.left) / rect.width * columns * layout.room.gridFt, y: (event.clientY - rect.top) / rect.height * rows * layout.room.gridFt };
+  }
+  // Doors, windows and wall-mounted points belong to their wall: a group
+  // move leaves them where they are.
+  const movesWithGroup = (object: SandboxBaseObject) => object.kind !== 'door' && object.kind !== 'window' && object.utility?.mountingSurface !== 'wall' && object.footprint.points.length > 0;
+  function startMarquee(event: React.PointerEvent<HTMLDivElement>) {
+    if (placingKind || event.button !== 0) return;
+    const start = pointerFt(event); if (!start) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    marqueeStart.current = start;
+  }
+  function moveMarquee(event: React.PointerEvent<HTMLDivElement>) {
+    const start = marqueeStart.current; if (!start) return;
+    const at = pointerFt(event); if (!at) return;
+    setMarquee({ left: Math.min(start.x, at.x), top: Math.min(start.y, at.y), right: Math.max(start.x, at.x), bottom: Math.max(start.y, at.y) });
+  }
+  function finishMarquee(event: React.PointerEvent<HTMLDivElement>) {
+    const start = marqueeStart.current; if (!start) return;
+    marqueeStart.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    const at = pointerFt(event);
+    setMarquee(null);
+    // A plain click (no real box) keeps its old meaning: clear the selection.
+    if (!at || (Math.abs(at.x - start.x) < .25 && Math.abs(at.y - start.y) < .25)) return;
+    suppressCanvasClick.current = true;
+    const box = { left: Math.min(start.x, at.x), top: Math.min(start.y, at.y), right: Math.max(start.x, at.x), bottom: Math.max(start.y, at.y) };
+    // Anything the box touches, even partly.
+    const touches = (b: { left: number; top: number; right: number; bottom: number }) => b.left <= box.right && box.left <= b.right && b.top <= box.bottom && box.top <= b.bottom;
+    const fixtures = layout.fixtures.filter((f) => touches(fixtureRectFt(f, layout.room.gridFt))).map((f) => f.instanceId);
+    const objects = layout.baseObjects.filter((o) => o.footprint.points.length > 0 && touches(polygonBounds(o.footprint))).map((o) => o.id);
+   
+    if (fixtures.length + objects.length <= 1) {
+      setGroup(null);
+      setSelectedFixtureId(fixtures[0] ?? null);
+      setSelectedOverlay(objects[0] ?? null);
+      if (fixtures.length + objects.length === 0) setMessage('Nothing in that box.');
+      return;
+    }
+    setSelectedFixtureId(null); setSelectedOverlay(null);
+    setGroup({ fixtures, objects });
+    const stayPut = layout.baseObjects.filter((o) => objects.includes(o.id) && !movesWithGroup(o)).length;
+    setMessage(`${fixtures.length + objects.length} items selected. Drag any of them to move them together, or press Delete to remove them.${stayPut ? ' Doors and windows stay on their walls when the group moves.' : ''}`);
+  }
+  function startGroupDrag(event: React.PointerEvent<Element>) {
+    if (!group) return;
+    groupDrag.current = {
+      startX: event.clientX, startY: event.clientY,
+      fixtures: layout.fixtures.filter((f) => group.fixtures.includes(f.instanceId)),
+      objects: layout.baseObjects.filter((o) => group.objects.includes(o.id) && movesWithGroup(o)),
+    };
+  }
+  // Moves the whole group by the pointer's total travel, in whole grid
+  // cells, kept inside the room; a move that would overlap something
+  // outside the group is refused and the group stays at its last valid spot.
+  function moveGroup(event: React.PointerEvent<Element>) {
+    const drag = groupDrag.current; const rect = canvasRef.current?.getBoundingClientRect(); if (!drag || !rect) return;
+    const grid = layout.room.gridFt;
+    let dx = Math.round((event.clientX - drag.startX) / rect.width * columns) * grid;
+    let dy = Math.round((event.clientY - drag.startY) / rect.height * rows) * grid;
+    const bounds = [...drag.fixtures.map((f) => fixtureRectFt(f, grid)), ...drag.objects.map((o) => polygonBounds(o.footprint))];
+    if (bounds.length === 0) return;
+    dx = Math.min(layout.room.widthFt - Math.max(...bounds.map((b) => b.right)), Math.max(-Math.min(...bounds.map((b) => b.left)), dx));
+    dy = Math.min(layout.room.heightFt - Math.max(...bounds.map((b) => b.bottom)), Math.max(-Math.min(...bounds.map((b) => b.top)), dy));
+    const movedFixtures = drag.fixtures.map((f) => ({ ...f, x: f.x + dx / grid, y: f.y + dy / grid }));
+    const movedObjects = drag.objects.map((o) => ({ ...o, footprint: { points: o.footprint.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) } }));
+    const fixtureIds = new Set(drag.fixtures.map((f) => f.instanceId));
+    const objectIds = new Set(drag.objects.map((o) => o.id));
+    const otherFixtures = layout.fixtures.filter((f) => !fixtureIds.has(f.instanceId));
+    const otherObjects = layout.baseObjects.filter((o) => !objectIds.has(o.id));
+    const valid = movedFixtures.every((f) => canPlaceFixture(f, otherFixtures, otherObjects, grid))
+      && movedObjects.every((o) => canPlaceBaseObject(o, otherFixtures, otherObjects, grid));
+    if (!valid) { setMessage('That move would overlap something outside the selection.'); return; }
+    const fixtureById = new Map(movedFixtures.map((f) => [f.instanceId, f]));
+    const objectById = new Map(movedObjects.map((o) => [o.id, o]));
+    updateLayout((current) => ({
+      ...current,
+      fixtures: current.fixtures.map((f) => fixtureById.get(f.instanceId) ?? f),
+      baseObjects: current.baseObjects.map((o) => objectById.get(o.id) ?? o),
+    }));
+  }
+  function finishGroupDrag(event: React.PointerEvent<Element>) {
+    groupDrag.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    setMessage(`${(group?.fixtures.length ?? 0) + (group?.objects.length ?? 0)} selected items moved together.`);
+  }
+  function clearGroup() { setGroup(null); setMarquee(null); }
   function updateSelectedBaseObject(fn: (object: SandboxBaseObject) => SandboxBaseObject) {
     if (!selectedOverlay) return;
     updateLayout((current) => ({ ...current, baseObjects: current.baseObjects.map((object) => object.id === selectedOverlay ? fn(object) : object) }));
@@ -940,13 +678,14 @@ export function LayoutSandboxPage() {
     setMessage('Layer object resized.');
   }
   function deleteSelection() {
+    if (group) {
+      const fixtures = new Set(group.fixtures), objects = new Set(group.objects);
+      updateLayout((current) => ({ ...current, fixtures: current.fixtures.filter((f) => !fixtures.has(f.instanceId)), baseObjects: current.baseObjects.filter((o) => !objects.has(o.id)) }));
+      setGroup(null); setMessage(`${fixtures.size + objects.size} selected items deleted.`); return;
+    }
     if (selectedOverlay) {
       updateLayout((current) => ({ ...current, baseObjects: current.baseObjects.filter((object) => object.id !== selectedOverlay) }));
       setSelectedOverlay(null); setMessage('Selected layer object deleted.'); return;
-    }
-    if (selectedStationId && selectedFixtureId) {
-      updateLayout((current) => ({ ...current, fixtures: current.fixtures.map((fixture) => fixture.instanceId !== selectedFixtureId ? fixture : { ...fixture, stations: fixture.stations.filter((station) => station.instanceId !== selectedStationId) }) }));
-      setSelectedStationId(null); setMessage('Selected station assignment deleted.'); return;
     }
     if (selectedFixtureId) {
       updateLayout((current) => ({ ...current, fixtures: current.fixtures.filter((fixture) => fixture.instanceId !== selectedFixtureId) }));
@@ -958,12 +697,6 @@ export function LayoutSandboxPage() {
     if (fix.type === 'add-exit') { placeBaseObjectAt('door', layout.room.widthFt / 2, layout.room.heightFt); return; }
     updateLayout((current) => {
       if (fix.type === 'set-door-width') return { ...current, baseObjects: current.baseObjects.map((object) => object.id === fix.targetId && object.door ? { ...object, door: { ...object.door, clearWidthIn: fix.value ?? 32 } } : object) };
-      if (fix.type === 'set-access-face') return { ...current, fixtures: current.fixtures.map((fixture) => ({ ...fixture, stations: fixture.stations.map((station) => station.instanceId === fix.targetId ? { ...station, accessFaces: ['front'] } : station) })) };
-      if (fix.type === 'remove-largest-equipment') {
-        const fixture = current.fixtures.find((item) => item.instanceId === fix.targetId); if (!fixture) return current;
-        const largest = fixture.stations.flatMap((station) => station.equipment).sort((a, b) => equipmentArea(b) - equipmentArea(a))[0]; if (!largest) return current;
-        return { ...current, fixtures: current.fixtures.map((item) => item.instanceId !== fixture.instanceId ? item : { ...item, stations: item.stations.map((station) => ({ ...station, equipment: station.equipment.filter((equipment) => equipment.equipmentId !== largest.equipmentId) })) }) };
-      }
       if (fix.type === 'move-fixture') {
         const fixture = current.fixtures.find((item) => item.instanceId === fix.targetId); if (!fixture) return current;
         const spots = Array.from({ length: columns * rows }, (_, index) => ({ x: index % columns, y: Math.floor(index / columns) })).sort((a, b) => Math.abs(a.x - fixture.x) + Math.abs(a.y - fixture.y) - Math.abs(b.x - fixture.x) - Math.abs(b.y - fixture.y));
@@ -983,7 +716,7 @@ export function LayoutSandboxPage() {
     if (layout.baseObjects.some((object) => object.id === id)) setSelectedOverlay(id);
   }
   function exportLayout() { const url = URL.createObjectURL(new Blob([JSON.stringify(layout, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `${layout.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'layout'}.json`; a.click(); URL.revokeObjectURL(url); }
-  async function importLayout(file?: File) { if (!file) return; try { const parsed = parseSandboxLayout(JSON.parse(await file.text())); if (!parsed) throw Error(); setLayout(parsed); setSelectedFixtureId(null); setSelectedStationId(null); applySeededCategoryModes(parsed); setMessage('Layout imported.'); } catch { setMessage('That file is not a valid Cirrus layout. Version 2 and 3 files are supported.'); } }
+  async function importLayout(file?: File) { if (!file) return; try { const imported = parseSandboxLayout(JSON.parse(await file.text())); if (!imported) throw Error(); const parsed = withGridFt(imported, SANDBOX_GRID_FT); setLayout(parsed); setSelectedFixtureId(null); applySeededCategoryModes(parsed); setMessage('Layout imported.'); } catch { setMessage('That file is not a valid Cirrus layout. Version 2 and 3 files are supported.'); } }
 
   // Guided-flow gating — applied only to the left-sidebar palettes below.
   // The canvas render of layout.fixtures and the portaled CanvasLayers are
@@ -992,39 +725,30 @@ export function LayoutSandboxPage() {
   const guidedCategory = firstUnanswered(categoryMode);
   const infraVisibleLayers = new Set(INFRA_PALETTE.map((group) => group.layer).filter((layer) => subgroupVisible('infrastructure', layer, categoryMode.infrastructure, subSelection)));
   const fixtureVisibleKinds = FIXTURE_SUBGROUP_KINDS.filter((kind) => subgroupVisible('fixtures', kind, categoryMode.fixtures, subSelection));
-  // Stations/zoning have no per-item grid (see hasSubgroupGrid) — "manual"
-  // means show everything unfiltered, not a subSelection-filtered subset.
-  const visibleStationCatalog = activeCategory === 'stations' && categoryMode.stations === 'manual' ? stationCatalog : [];
-  const zoningPanelVisible = activeCategory === 'zoning' && categoryMode.zoning === 'manual';
 
-  return <div className={`screen layout-sandbox ${layers.base ? 'show-base' : 'hide-base'} ${layers.stations ? 'show-stations' : 'hide-stations'} ${layers.equipment ? 'show-equipment' : 'hide-equipment'} ${layers.circulation ? 'show-circulation' : 'hide-circulation'}`}>
+  return <div className={`screen layout-sandbox ${layers.base ? 'show-base' : 'hide-base'} ${layers.equipment ? 'show-equipment' : 'hide-equipment'} ${layers.circulation ? 'show-circulation' : 'hide-circulation'}`}>
     <div className="ls-control-deck">
     <div className="ls-category-selector" aria-label="Placement categories">{CATEGORY_ORDER.map((category, index) => <button key={category} className={`ls-category-chip ${categoryMode[category]}`} onClick={() => openCategoryChip(category)}><i className={`ls-category-dot ${categoryMode[category]}`} />{index + 1}. {CATEGORY_LABELS[category]}</button>)}</div>
-    <div className="ls-layer-tools">{placingKind && <span className="ls-derived-note">Click the room to place a {placingKind in VENTILATION_PLACEMENT_LABELS ? VENTILATION_PLACEMENT_LABELS[placingKind as VentilationPlacementKind] : placingKind.replace(/_/g, ' ')} — Esc to cancel</span>}{layers.circulation && !placingKind && <span className="ls-derived-note">Derived from unassigned space</span>}</div>
-    <div className="ls-backend-actions"><button disabled={sendingToSeedGenerator} onClick={() => void sendToSeedGenerator()}>{sendingToSeedGenerator ? 'Saving approved seed…' : 'Use in seed generator'}</button><button disabled={zoningLoading || !canRunZoning} title={canRunZoning ? undefined : 'Add at least one operation with a complete material context first'} onClick={() => void runZoneRequirements()}>{zoningLoading ? 'Zoning…' : 'Zone with MiniZinc'}</button><button disabled={benchPlacementLoading || !canRunZoning} title={canRunZoning ? 'Zones and bench counts are both derived automatically from the selected operations' : 'Add at least one operation with a complete material context first'} onClick={() => void runBenchPlacement()}>{benchPlacementLoading ? 'Zoning + placing benches…' : 'Zone + place benches'}</button><button disabled={maximizingLoading} title="No operations needed — keeps door landings clear, carves the room into zones, and fills each with horizontal or vertical bays where every bench's front aisle stays reachable." onClick={() => void runMaximizeZonesAndBenches()}>{maximizingLoading ? 'Maximizing…' : 'Maximize zones + benches'}</button><button disabled={savingZoningPlan || !canSavePlan} title={canSavePlan ? undefined : 'Add at least one operation with a complete material context first'} onClick={() => void saveCurrentPlan()}>{savingZoningPlan ? 'Saving plan…' : currentPlanId ? 'Save plan (overwrite)' : 'Save plan'}</button></div>
+    <div className="ls-layer-tools">{placingKind && <span className="ls-derived-note">Click the room to place a {placingKind.replace(/_/g, ' ')} — Esc to cancel</span>}{layers.circulation && !placingKind && <span className="ls-derived-note">Derived from unassigned space</span>}</div>
+    <div className="ls-backend-actions"><button disabled={maximizingLoading} title="No operations needed — keeps door landings clear and fills the room with islands of back-to-back benches on one room-wide grid, with straight aisles, where every bench's working aisle stays reachable." onClick={() => void runMaximizeZonesAndBenches()}>{maximizingLoading ? 'Fitting benches…' : 'Fit as many benches as possible'}</button></div>
     {backendNotice && <div className={`ls-optimization-notice ${backendNotice.kind}`}><span>{backendNotice.kind === 'progress' ? '⏳' : '⚠'}</span><b>{backendNotice.text}</b>{backendNotice.kind === 'error' && <button onClick={() => setBackendNotice(null)}>×</button>}</div>}
-    {zoningBlocked && <div className="ls-violations"><div className="ls-section-title">Zoning blocked — needs review</div>{zoningBlocked.diagnostics.map((d, i) => <div key={`${d.operationId}-${i}`} className="ls-violation-card error"><b>{d.operationId} — {d.disposition}</b><span>{d.reason}</span></div>)}</div>}
-    {catalogueDrift && <div className="ls-violations"><div className="ls-section-title">Loaded plan has drifted from the live catalogue</div>{catalogueDrift.map((d) => <div key={d.operationId} className="ls-violation-card warning"><b>{d.operationId}</b><span>{d.currentRevision === null ? 'No longer exists in the live catalogue.' : `Saved against catalogue revision "${d.savedRevision}", catalogue is now "${d.currentRevision}" — review this operation\'s context before zoning.`}</span></div>)}<button onClick={() => setCatalogueDrift(null)}>Dismiss</button></div>}
     {zoning && <div className="ls-derived-note" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '4px 0' }}>{[...new Map(zoning.legend.map((z) => [z.family, z])).values()].map((z) => <span key={z.family} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: ZONE_FAMILY_COLORS[z.family] || '#999' }} />{ZONE_FAMILY_LABELS[z.family] || z.family}</span>)}</div>}
-    {canvasNode && createPortal(<CanvasLayers layout={layout} layers={layers} violations={violations} selected={selectedOverlay} placingKind={placingKind} zoning={zoning} onSelect={startOverlayMove} onPlace={placeOnCanvasClick} onDrag={moveOverlay} onDragEnd={finishOverlayMove} />, canvasNode)}
+    {canvasNode && createPortal(<CanvasLayers layout={layout} layers={layers} violations={violations} selected={selectedOverlay} groupSelected={group?.objects} placingKind={placingKind} zoning={zoning} onSelect={startOverlayMove} onPlace={placeOnCanvasClick} onDrag={moveOverlay} onDragEnd={finishOverlayMove} />, canvasNode)}
     {layers.validation && violations.length > 0 && <div className="ls-violations">{violations.map((violation) => <div key={violation.id} className={`ls-violation-card ${violation.severity}`} onClick={() => selectViolation(violation)}><b>{violation.severity === 'error' ? 'Hard violation' : 'Recommendation'}</b><span>{violation.message}</span>{violation.fix && <button onClick={(event) => { event.stopPropagation(); applySuggestedFix(violation); }}>✨ {violation.fix.label}</button>}</div>)}</div>}
     </div>
-    <div className="qm-topbar"><div className="logo-mark"><Logo height={40} /></div><div><b>Layout sandbox</b><div className="ls-subtitle">Place fixtures, assign stations to benches, then add equipment</div></div><div style={{ flex: 1 }} /><button className="ls-guided-cta" onClick={guidedCategory ? () => openCategoryChip(guidedCategory) : useInIntake}>{guidedCategory ? <>{CATEGORY_CTA_VERB[guidedCategory]} {CATEGORY_LABELS[guidedCategory]} <span aria-hidden="true">→</span></> : 'Use this room in my intake →'}</button><button className="btn-out" onClick={exportLayout}>Export JSON</button><button className="btn-out" onClick={() => fileInput.current?.click()}>Import</button><input ref={fileInput} hidden type="file" accept="application/json" onChange={(e) => importLayout(e.target.files?.[0])} /><button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>← Dashboard</button></div>
+    <div className="qm-topbar"><div className="logo-mark"><Logo height={40} /></div><div><b>Layout sandbox</b><div className="ls-subtitle">Draw the room, place fixtures, then fit benches</div></div><div style={{ flex: 1 }} /><button className="ls-guided-cta" onClick={guidedCategory ? () => openCategoryChip(guidedCategory) : useInIntake}>{guidedCategory ? <>{CATEGORY_CTA_VERB[guidedCategory]} {CATEGORY_LABELS[guidedCategory]} <span aria-hidden="true">→</span></> : 'Use this room in my intake →'}</button><button className="btn-out" onClick={exportLayout}>Export JSON</button><button className="btn-out" onClick={() => fileInput.current?.click()}>Import</button><input ref={fileInput} hidden type="file" accept="application/json" onChange={(e) => importLayout(e.target.files?.[0])} /><button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>← Dashboard</button></div>
     <div className="ls-workspace">
-      <aside className="ls-sidebar"><label className="field-label">Layout name</label><input className="field-input" value={layout.name} onChange={(e) => updateLayout((p) => ({ ...p, name: e.target.value }))} /><div className="ls-room-fields"><label><span className="field-label">Width (ft)</span><input className="field-input" type="number" min="5" value={layout.room.widthFt} onChange={(e) => updateLayout((p) => { const room = { ...p.room, widthFt: Math.max(5, Number(e.target.value)) }; return { ...p, room, baseObjects: reanchorWallMountedObjects(p.baseObjects, room) }; })} /></label><label><span className="field-label">Depth (ft)</span><input className="field-input" type="number" min="5" value={layout.room.heightFt} onChange={(e) => updateLayout((p) => { const room = { ...p.room, heightFt: Math.max(5, Number(e.target.value)) }; return { ...p, room, baseObjects: reanchorWallMountedObjects(p.baseObjects, room) }; })} /></label></div>
+      <aside className="ls-sidebar"><label className="field-label">Layout name</label><input className="field-input" value={layout.name} onChange={(e) => updateLayout((p) => ({ ...p, name: e.target.value }))} /><div className="ls-room-fields"><label><span className="field-label">Width (ft)</span><input className="field-input" type="number" min="5" value={layout.room.widthFt} onChange={(e) => updateLayout((p) => resizeRoom(p, { widthFt: Math.max(5, Number(e.target.value)), heightFt: p.room.heightFt }))} /></label><label><span className="field-label">Depth (ft)</span><input className="field-input" type="number" min="5" value={layout.room.heightFt} onChange={(e) => updateLayout((p) => resizeRoom(p, { widthFt: p.room.widthFt, heightFt: Math.max(5, Number(e.target.value)) }))} /></label></div>
+        <BenchArrangement value={arrangement} onChange={setArrangement} />
         {paletteVisible('infrastructure', activeCategory) && <InfraPalette placingKind={placingKind} beginPlacing={beginPlacing} visibleLayers={infraVisibleLayers} />}
         {paletteVisible('fixtures', activeCategory) && <FixturePalette newKind={newKind} setKind={setKind} newWidth={newWidth} setNewWidth={setNewWidth} newDepth={newDepth} setNewDepth={setNewDepth} newClearance={newClearance} setNewClearance={setNewClearance} startPaletteDrag={startPaletteDrag} movePaletteDrag={movePaletteDrag} finishPaletteDrag={finishPaletteDrag} cancelPaletteDrag={cancelPaletteDrag} visibleKinds={fixtureVisibleKinds} />}
-        {paletteVisible('stations', activeCategory) && <StationPalette stationsLoading={stationsLoading} equipmentLoading={equipmentLoading} catalogError={catalogError} stationsError={stationsError} stationCatalog={visibleStationCatalog} equipmentCount={equipmentCatalog.length} refreshCatalogs={refreshCatalogs} isBenchSelected={selectedFixture?.kind === 'bench'} assignStation={assignStation} />}
-        {zoningPanelVisible && <ZoneRequirementsPanel dampOperations={dampOperations} filteredOperations={filteredOperations} operationsLoading={operationsLoading} operationsError={operationsError} operationSearch={operationSearch} setOperationSearch={setOperationSearch} operationDraft={operationDraft} setOperationDraft={setOperationDraft} addPlannedOperation={addPlannedOperation} plannedOperations={plannedOperations} removePlannedOperation={removePlannedOperation} />}
         {!activeCategory && <p className="ls-help">Answer the placement questions (top right) to start placing things — whatever you leave derived, Cirrus places for you automatically.</p>}
-        <SavedPlansPanel zoningPlansLoading={zoningPlansLoading} zoningPlansError={zoningPlansError} savedZoningPlans={savedZoningPlans} currentPlanId={currentPlanId} loadingZoningPlan={loadingZoningPlan} loadPlan={loadPlan} deletePlan={deletePlan} />
       </aside>
-      <main className="ls-main"><div className="ls-metrics"><span>{layout.room.widthFt} × {layout.room.heightFt} ft room</span><span>{layout.fixtures.filter((f) => f.kind === 'bench').length} benches</span><span>{layout.fixtures.flatMap((f) => f.stations).length} stations</span><span>{assignedEquipment.size} equipment assigned</span><span>{utilization}% occupied</span></div><div className="ls-canvas-wrap"><div ref={canvasRef} className={`ls-canvas ${placingKind ? 'placing' : ''}`} style={{ gridTemplateColumns: `repeat(${columns}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)`, aspectRatio: `${columns} / ${rows}`, '--grid-cols': columns, '--grid-rows': rows } as React.CSSProperties} onClick={() => { if (!placingKind) { setSelectedFixtureId(null); setSelectedStationId(null); } }}>{placementHeatmap && placementHeatmap.flatMap((row, y) => row.map((valid, x) => <div key={`ph-${x}-${y}`} className={`ls-placement-cell ${valid ? 'valid' : 'invalid'}`} style={{ gridColumn: `${x + 1} / span 1`, gridRow: `${y + 1} / span 1` }} />))}{layout.fixtures.map((f) => { const position = dragPreview?.id === f.instanceId ? dragPreview : f; const rect = fixtureRectFt({ ...f, x: position.x, y: position.y }, layout.room.gridFt); const cellFt = layout.room.gridFt; return <div key={f.instanceId} tabIndex={0} role="button" aria-label={`${f.name}. Use arrow keys to move.`} className={`ls-fixture ${f.kind} ${selectedFixtureId === f.instanceId ? 'selected' : ''} ${dragPreview?.id === f.instanceId ? 'dragging' : ''}`} onPointerDown={(e) => startFixtureMove(e, f)} onPointerMove={previewFixtureMove} onPointerUp={finishFixtureMove} onPointerCancel={finishFixtureMove} onKeyDown={(e) => moveFixtureWithKeyboard(e, f)} onClick={(e) => { e.stopPropagation(); setSelectedFixtureId(f.instanceId); setSelectedStationId(null); }} style={{ position: 'absolute', left: `${rect.left / cellFt / columns * 100}%`, top: `${rect.top / cellFt / rows * 100}%`, width: `${(rect.right - rect.left) / cellFt / columns * 100}%`, height: `${(rect.bottom - rect.top) / cellFt / rows * 100}%`, ...(f.kind === 'bench' ? { '--bench-fill': benchFill(f) } as React.CSSProperties : {}) }}><b>{f.name}</b><small>{f.widthFt} × {f.depthFt} ft{f.kind === 'bench' ? ` · ${f.stations.length} stations` : ''}</small></div>; })}{paletteDragPos && paletteDragPos.onCanvas && <div className={`ls-fixture ${paletteDragPos.kind} ls-fixture-ghost`} style={{ gridColumn: `${paletteDragPos.x + 1} / span ${Math.max(1, Math.ceil(paletteDragPos.widthFt / layout.room.gridFt))}`, gridRow: `${paletteDragPos.y + 1} / span ${Math.max(1, Math.ceil(paletteDragPos.depthFt / layout.room.gridFt))}` }}><b>{FIXTURE_DEFAULTS[paletteDragPos.kind].name}</b><small>{paletteDragPos.widthFt} × {paletteDragPos.depthFt} ft</small></div>}</div></div><div className="ls-status">{message}</div></main>
+      <main className="ls-main"><div className="ls-metrics"><span>{layout.room.widthFt} × {layout.room.heightFt} ft room</span><span>{layout.fixtures.filter((f) => f.kind === 'bench').length} benches</span><span>{utilization}% occupied</span></div><div className="ls-canvas-wrap"><div ref={canvasRef} className={`ls-canvas ${placingKind ? 'placing' : ''}`} style={{ gridTemplateColumns: `repeat(${columns}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)`, aspectRatio: `${columns} / ${rows}`, '--grid-cols': columns, '--grid-rows': rows } as React.CSSProperties} onPointerDown={startMarquee} onPointerMove={moveMarquee} onPointerUp={finishMarquee} onPointerCancel={finishMarquee} onClick={() => { if (suppressCanvasClick.current) { suppressCanvasClick.current = false; return; } if (!placingKind) { setSelectedFixtureId(null); clearGroup(); } }}>{placementHeatmap && placementHeatmap.flatMap((row, y) => row.map((valid, x) => <div key={`ph-${x}-${y}`} className={`ls-placement-cell ${valid ? 'valid' : 'invalid'}`} style={{ gridColumn: `${x + 1} / span 1`, gridRow: `${y + 1} / span 1` }} />))}{layout.fixtures.map((f) => { const position = dragPreview?.id === f.instanceId ? dragPreview : f; const rect = fixtureRectFt({ ...f, x: position.x, y: position.y }, layout.room.gridFt); const cellFt = layout.room.gridFt; return <div key={f.instanceId} tabIndex={0} role="button" aria-label={`${f.name}. Use arrow keys to move.`} className={`ls-fixture ${f.kind} ${selectedFixtureId === f.instanceId || group?.fixtures.includes(f.instanceId) ? 'selected' : ''} ${dragPreview?.id === f.instanceId ? 'dragging' : ''}`} onPointerDown={(e) => startFixtureMove(e, f)} onPointerMove={previewFixtureMove} onPointerUp={finishFixtureMove} onPointerCancel={finishFixtureMove} onKeyDown={(e) => moveFixtureWithKeyboard(e, f)} onClick={(e) => { e.stopPropagation(); if (group?.fixtures.includes(f.instanceId)) return; setSelectedFixtureId(f.instanceId); }} style={{ position: 'absolute', left: `${rect.left / cellFt / columns * 100}%`, top: `${rect.top / cellFt / rows * 100}%`, width: `${(rect.right - rect.left) / cellFt / columns * 100}%`, height: `${(rect.bottom - rect.top) / cellFt / rows * 100}%` }}><b>{f.name}</b><small>{f.widthFt} × {f.depthFt} ft</small></div>; })}{paletteDragPos && paletteDragPos.onCanvas && <div className={`ls-fixture ${paletteDragPos.kind} ls-fixture-ghost`} style={{ gridColumn: `${paletteDragPos.x + 1} / span ${Math.max(1, Math.ceil(paletteDragPos.widthFt / layout.room.gridFt))}`, gridRow: `${paletteDragPos.y + 1} / span ${Math.max(1, Math.ceil(paletteDragPos.depthFt / layout.room.gridFt))}` }}><b>{FIXTURE_DEFAULTS[paletteDragPos.kind].name}</b><small>{paletteDragPos.widthFt} × {paletteDragPos.depthFt} ft</small></div>}{marquee && <div className="ls-marquee" style={{ left: `${marquee.left / (columns * layout.room.gridFt) * 100}%`, top: `${marquee.top / (rows * layout.room.gridFt) * 100}%`, width: `${(marquee.right - marquee.left) / (columns * layout.room.gridFt) * 100}%`, height: `${(marquee.bottom - marquee.top) / (rows * layout.room.gridFt) * 100}%` }} />}</div></div>{group && <div className="ls-group-bar"><span>{group.fixtures.length + group.objects.length} items selected</span><button type="button" onClick={deleteSelection}>Delete selected</button><button type="button" onClick={clearGroup}>Clear selection</button></div>}<div className="ls-status">{message}</div></main>
       {showIntro && <GuidedFlowIntro onDismiss={() => { setShowIntro(false); setOpenQuestion(firstUnanswered(categoryMode)); }} />}
       {!showIntro && openQuestion && <PlacementQuestionBox category={openQuestion} index={CATEGORY_ORDER.indexOf(openQuestion) + 1} subgroups={subgroupsFor(openQuestion)} selected={subSelection[openQuestion]} onToggleSubgroup={(key) => toggleSubgroup(openQuestion, key)} onSelectAll={() => selectAllSubgroups(openQuestion)} hoveredSubgroup={hoveredSubgroup} onHoverSubgroup={setHoveredSubgroup} note={openQuestion === 'fixtures' ? 'Any fixtures not placed manually will be derived from unassigned space.' : undefined} onCommit={(mode) => commitCategoryQuestion(openQuestion, mode)} />}
       <aside className="ls-sidebar ls-right">
-        <FixtureDetailsPanel selectedBaseObject={selectedBaseObject} room={layout.room} updateSelectedBaseObject={updateSelectedBaseObject} updateSelectedBaseFootprint={updateSelectedBaseFootprint} deleteSelection={deleteSelection} selectedFixture={selectedFixture} rotateSelected={rotateSelected} removeSelected={removeSelected} updateSelectedClearance={updateSelectedClearance} selectedStationId={selectedStationId} setSelectedStationId={setSelectedStationId} selectedBenchUsedArea={selectedBenchUsedArea} selectedBenchCapacity={selectedBenchCapacity} utilityCheck={utilityCheck} />
-        <EquipmentPanel visibleEquipment={visibleEquipment} assignedEquipment={assignedEquipment} equipmentLoading={equipmentLoading} equipmentError={equipmentError} isBenchSelected={selectedFixture?.kind === 'bench'} selectedBenchUsedArea={selectedBenchUsedArea} selectedBenchCapacity={selectedBenchCapacity} selectedStation={selectedStation} assignEquipment={assignEquipment} onRemoveEquipment={removeAssignedEquipment} />
+        <FixtureDetailsPanel selectedBaseObject={selectedBaseObject} room={layout.room} updateSelectedBaseObject={updateSelectedBaseObject} updateSelectedBaseFootprint={updateSelectedBaseFootprint} deleteSelection={deleteSelection} selectedFixture={selectedFixture} rotateSelected={rotateSelected} removeSelected={removeSelected} updateSelectedClearance={updateSelectedClearance} />
       </aside>
     </div>
   </div>;

@@ -10,14 +10,11 @@ export interface PlacementSubgroup {
 }
 
 // The guided-flow question card for one placement category — a header, the
-// category's question sentence, and (for infrastructure/fixtures only) a
-// grid of selectable subgroup boxes (outlined when unselected, filled when
-// selected for manual placement) the user toggles, then two commit buttons.
-// Stations and zoning have no grid (subgroups is empty): they're a single
-// "do you know this or should Cirrus derive it" choice. Rendered as a
-// full-viewport centered overlay (see .ls-placement-backdrop in index.css)
-// so it reads as a real step in the flow, not a tooltip pinned to the
-// canvas.
+// category's question sentence, and a grid of selectable subgroup boxes
+// (outlined when unselected, filled when selected for manual placement) the
+// user toggles, then two commit buttons. Rendered as a full-viewport
+// centered overlay (see .ls-placement-backdrop in index.css) so it reads as
+// a real step in the flow, not a tooltip pinned to the canvas.
 export function PlacementQuestionBox({
   category, index, subgroups, selected, onToggleSubgroup, onSelectAll, hoveredSubgroup, onHoverSubgroup, note, onCommit,
 }: {

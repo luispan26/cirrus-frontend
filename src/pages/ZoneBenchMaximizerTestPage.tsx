@@ -40,7 +40,10 @@ export function ZoneBenchMaximizerTestPage() {
   const [doorWall, setDoorWall] = useState<WallSide>('S');
   const [doorOffsetFt, setDoorOffsetFt] = useState(13.5);
   const [doorWidthFt, setDoorWidthFt] = useState(3);
-  const [workingAisleFt, setWorkingAisleFt] = useState(5);
+  const [mode, setMode] = useState<'max_fit' | 'main_wall'>('max_fit');
+  const [mainWall, setMainWall] = useState<WallSide>('S');
+  const [sameDirection, setSameDirection] = useState(true);
+  const [wallBenches, setWallBenches] = useState(false);
   const [maximize, { data, loading, error }] = useMutation<{ maximizeZonesAndBenches: MaximizeZonesAndBenchesResult }>(
     MAXIMIZE_ZONES_AND_BENCHES_MUTATION,
   );
@@ -52,7 +55,7 @@ export function ZoneBenchMaximizerTestPage() {
           widthFt,
           heightFt,
           door: { wall: doorWall, offsetFt: doorOffsetFt, widthFt: doorWidthFt },
-          workingAisleFt,
+          options: { mode, mainWall: mode === 'main_wall' ? mainWall : undefined, sameDirection, wallBenches },
         },
       },
     }).catch(() => {
@@ -71,10 +74,10 @@ export function ZoneBenchMaximizerTestPage() {
             ZONE + BENCH MAXIMIZER TEST PAGE
           </div>
           <div style={{ fontSize: 12, color: 'var(--mid)' }}>
-            No target bench count — carves as many zones as the room fits, then packs as many benches into each zone as it can hold. Can take several minutes for larger rooms.
+            No target bench count — fills the room with as many benches as fit, as islands on one room-wide grid with straight aisles.
           </div>
         </div>
-        <button className="btn-out" onClick={() => navigate('/bench-placement-test')}>← Bench placement</button>
+        <button className="btn-out" onClick={() => navigate('/dashboard')}>← Dashboard</button>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px', maxWidth: 1200, margin: '0 auto', width: '100%' }}>
@@ -100,12 +103,26 @@ export function ZoneBenchMaximizerTestPage() {
                 />
               </label>
               <label style={{ fontSize: 12, color: 'var(--mid)', display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
-                Working aisle (ft)
-                <input
-                  type="number" min={0.5} step={0.5} value={workingAisleFt}
-                  onChange={(e) => setWorkingAisleFt(Number(e.target.value) || 5)}
-                  style={{ width: 90, fontFamily: 'var(--mono)', fontSize: 12, padding: '4px 6px', borderRadius: 6, border: '1px solid var(--br)' }}
-                />
+                Arrangement
+                <select value={mode} onChange={(e) => setMode(e.target.value as 'max_fit' | 'main_wall')} style={{ width: 120, fontFamily: 'var(--mono)', fontSize: 12, padding: '4px 6px', borderRadius: 6, border: '1px solid var(--br)' }}>
+                  <option value="max_fit">Max fit</option>
+                  <option value="main_wall">Main wall</option>
+                </select>
+              </label>
+              {mode === 'main_wall' ? (
+                <label style={{ fontSize: 12, color: 'var(--mid)', display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+                  Main wall
+                  <select value={mainWall} onChange={(e) => setMainWall(e.target.value as WallSide)} style={{ width: 90, fontFamily: 'var(--mono)', fontSize: 12, padding: '4px 6px', borderRadius: 6, border: '1px solid var(--br)' }}>
+                    <option value="N">N</option><option value="S">S</option><option value="E">E</option><option value="W">W</option>
+                  </select>
+                </label>
+              ) : (
+                <label style={{ fontSize: 12, color: 'var(--mid)', display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input type="checkbox" checked={sameDirection} onChange={(e) => setSameDirection(e.target.checked)} /> All islands the same direction
+                </label>
+              )}
+              <label style={{ fontSize: 12, color: 'var(--mid)', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="checkbox" checked={wallBenches} onChange={(e) => setWallBenches(e.target.checked)} /> Also wall benches
               </label>
 
               <div className="sec-head" style={{ marginTop: 6 }}>Door <div className="sec-line" /></div>

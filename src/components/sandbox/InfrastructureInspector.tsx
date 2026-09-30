@@ -1,5 +1,4 @@
-import { centeredRectFootprint, offsetAlongWall, polygonBounds, snapToNearestWall, wallRectFootprint, wallSideOfBounds, type MountingSurface, type SandboxBaseObject, type SandboxPolygon, type UtilityStatus } from '../../lib/layout-sandbox';
-import { PLUMBING_FIELD_LABELS, VENTILATION_PLACEMENT_LABELS } from './constants';
+import { centeredRectFootprint, polygonBounds, wallRectFootprint, wallSideOfBounds, type SandboxBaseObject, type SandboxPolygon } from '../../lib/layout-sandbox';
 
 // Re-centers a door/window's footprint on a new width without disturbing
 // which wall it's on or how far it projects into the room — reuses the same
@@ -15,9 +14,8 @@ function resizeWallOpening(object: SandboxBaseObject, room: { widthFt: number; h
 }
 
 // The properties drawer for a selected infrastructure object — door/window
-// share a width field (both are wall openings), the three typed point kinds
-// each show only the minimal fields the user's spec called for (no pipe
-// sizing, no duct CFM, no circuit routing).
+// share a width field (both are wall openings); no-placement zones have a
+// width and depth.
 export function InfrastructureInspector({ object, room, onUpdate, onResize, onDelete }: { object: SandboxBaseObject; room: { widthFt: number; heightFt: number }; onUpdate: (fn: (object: SandboxBaseObject) => SandboxBaseObject) => void; onResize: (footprint: SandboxPolygon) => void; onDelete: () => void }) {
   const bounds = polygonBounds(object.footprint);
   const side = wallSideOfBounds(bounds, room);
@@ -45,76 +43,6 @@ export function InfrastructureInspector({ object, room, onUpdate, onResize, onDe
         <>
           <label><span className="field-label">Clear width (in)</span><input className="field-input" type="number" min="24" value={object.door.clearWidthIn} onChange={(e) => onUpdate((current) => ({ ...current, door: { ...current.door!, clearWidthIn: Number(e.target.value) || 24 } }))} /></label>
           <label className="ls-check"><input type="checkbox" checked={object.door.isExit} onChange={(e) => onUpdate((current) => ({ ...current, door: { ...current.door!, isExit: e.target.checked } }))} /> Is exit</label>
-        </>
-      )}
-      {object.kind === 'electrical_point' && object.electrical && (
-        <>
-          <label><span className="field-label">Voltage</span>
-            <select className="field-input" value={object.electrical.voltage} onChange={(e) => onUpdate((current) => ({ ...current, electrical: { ...current.electrical!, voltage: (e.target.value === 'other' ? 'other' : Number(e.target.value)) as 120 | 208 | 240 | 'other' } }))}>
-              <option value={120}>120V</option><option value={208}>208V</option><option value={240}>240V</option><option value="other">Other</option>
-            </select>
-          </label>
-          {object.electrical.voltage === 'other' && <label><span className="field-label">Voltage (other)</span><input className="field-input" value={object.electrical.voltageOther ?? ''} onChange={(e) => onUpdate((current) => ({ ...current, electrical: { ...current.electrical!, voltageOther: e.target.value } }))} /></label>}
-          <label><span className="field-label">Phase</span>
-            <select className="field-input" value={object.electrical.phase} onChange={(e) => onUpdate((current) => ({ ...current, electrical: { ...current.electrical!, phase: e.target.value as 'single' | 'three' } }))}>
-              <option value="single">Single</option><option value="three">Three</option>
-            </select>
-          </label>
-          <label><span className="field-label">Amperage (A)</span><input className="field-input" type="number" min="0" value={object.electrical.amperage} onChange={(e) => onUpdate((current) => ({ ...current, electrical: { ...current.electrical!, amperage: Math.max(0, Number(e.target.value) || 0) } }))} /></label>
-          <label><span className="field-label">Receptacle count</span><input className="field-input" type="number" min="0" step="1" value={object.electrical.receptacleCount} onChange={(e) => onUpdate((current) => ({ ...current, electrical: { ...current.electrical!, receptacleCount: Math.max(0, Math.round(Number(e.target.value) || 0)) } }))} /></label>
-          <label className="ls-check"><input type="checkbox" checked={object.electrical.dedicated} onChange={(e) => onUpdate((current) => ({ ...current, electrical: { ...current.electrical!, dedicated: e.target.checked } }))} /> Dedicated circuit</label>
-          <label className="ls-check"><input type="checkbox" checked={object.electrical.emergencyPower} onChange={(e) => onUpdate((current) => ({ ...current, electrical: { ...current.electrical!, emergencyPower: e.target.checked } }))} /> Emergency / backup power</label>
-        </>
-      )}
-      {object.kind === 'plumbing_point' && object.plumbing && (
-        <>{(Object.keys(PLUMBING_FIELD_LABELS) as Array<keyof typeof PLUMBING_FIELD_LABELS>).map((field) => (
-          <label className="ls-check" key={field}><input type="checkbox" checked={object.plumbing![field]} onChange={(e) => onUpdate((current) => ({ ...current, plumbing: { ...current.plumbing!, [field]: e.target.checked } }))} /> {PLUMBING_FIELD_LABELS[field]}</label>
-        ))}
-        <label><span className="field-label">Flow (gpm)</span><input className="field-input" type="number" min="0" step=".1" value={object.plumbing.flowGpm ?? ''} onChange={(e) => onUpdate((current) => ({ ...current, plumbing: { ...current.plumbing!, flowGpm: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0) } }))} /></label>
-        </>
-      )}
-      {object.kind === 'ventilation_point' && object.ventilation && (
-        <>
-          <div><span className="field-label">Category</span><div>{VENTILATION_PLACEMENT_LABELS[object.ventilation.category]}</div></div>
-          <label><span className="field-label">Airflow (cfm)</span><input className="field-input" type="number" min="0" value={object.ventilation.cfm ?? ''} onChange={(e) => onUpdate((current) => ({ ...current, ventilation: { ...current.ventilation!, cfm: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value) || 0) } }))} /></label>
-          <label className="ls-check"><input type="checkbox" checked={object.ventilation.ducted} onChange={(e) => onUpdate((current) => ({ ...current, ventilation: { ...current.ventilation!, ducted: e.target.checked } }))} /> Ducted</label>
-        </>
-      )}
-      {object.utility && (
-        <>
-          <label><span className="field-label">Mounting surface</span>
-            <select className="field-input" value={object.utility.mountingSurface} onChange={(e) => {
-              const mountingSurface = e.target.value as MountingSurface;
-              onUpdate((current) => {
-                if (mountingSurface !== 'wall') return { ...current, utility: { ...current.utility!, mountingSurface, wallId: undefined, offsetFt: undefined } };
-                const anchor = current.footprint.points[0]; if (!anchor) return { ...current, utility: { ...current.utility!, mountingSurface } };
-                const { point: snapped, side } = snapToNearestWall(anchor, room);
-                return { ...current, footprint: { points: [snapped] }, utility: { ...current.utility!, mountingSurface, wallId: side, offsetFt: offsetAlongWall(side, snapped) } };
-              });
-            }}>
-              <option value="wall">Wall</option><option value="ceiling">Ceiling</option><option value="floor">Floor</option><option value="bench">Bench</option>
-            </select>
-            {object.utility.mountingSurface === 'wall' && object.utility.wallId && <small>{object.utility.wallId} wall · {(object.utility.offsetFt ?? 0).toFixed(1)} ft from corner · slides along wall only</small>}
-          </label>
-          {/* HVAC supply/return/general exhaust describe a coverage zone (no
-              discrete connection count); local exhaust connection — and
-              electrical/plumbing points — describe an actual connectable
-              service, so they keep both fields. Same underlying field either
-              way, just relabeled. */}
-          {object.kind === 'ventilation_point' && object.ventilation && object.ventilation.category !== 'local_exhaust_connection' ? (
-            <label><span className="field-label">Coverage radius (ft)</span><input className="field-input" type="number" min="0" step=".5" value={object.utility.connectionRadiusFt} onChange={(e) => onUpdate((current) => ({ ...current, utility: { ...current.utility!, connectionRadiusFt: Math.max(0, Number(e.target.value) || 0) } }))} /></label>
-          ) : (
-            <>
-              <label><span className="field-label">Connection radius (ft)</span><input className="field-input" type="number" min="0" step=".5" value={object.utility.connectionRadiusFt} onChange={(e) => onUpdate((current) => ({ ...current, utility: { ...current.utility!, connectionRadiusFt: Math.max(0, Number(e.target.value) || 0) } }))} /></label>
-              <label><span className="field-label">Max connections</span><input className="field-input" type="number" min="1" step="1" value={object.utility.maxConnections} onChange={(e) => onUpdate((current) => ({ ...current, utility: { ...current.utility!, maxConnections: Math.max(1, Math.round(Number(e.target.value) || 1)) } }))} /></label>
-            </>
-          )}
-          <label><span className="field-label">System / circuit ID</span><input className="field-input" value={object.utility.systemId ?? ''} onChange={(e) => onUpdate((current) => ({ ...current, utility: { ...current.utility!, systemId: e.target.value } }))} /></label>
-          <label><span className="field-label">Status</span>
-            <select className="field-input" value={object.utility.status} onChange={(e) => onUpdate((current) => ({ ...current, utility: { ...current.utility!, status: e.target.value as UtilityStatus } }))}>
-              <option value="proposed">Proposed</option><option value="existing">Existing</option>
-            </select>
-          </label>
         </>
       )}
     </div>

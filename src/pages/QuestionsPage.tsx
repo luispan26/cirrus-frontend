@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { selectProtocols } from '../lib/protocol-selection';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useLazyQuery, useQuery } from '@apollo/client/react';
 import { OptionCard } from '../components/OptionCard';
@@ -7,20 +9,19 @@ import { SearchableSelect } from '../components/SearchableSelect';
 import { Logo } from '../components/Logo';
 import { useIntakeSync } from '../hooks/useIntakeSync';
 import {
-  QS, OPERATION_OPTS, DAMPLAB_MATCH_KEYWORDS, shouldSkip, stepIndex, buildFinalIntakeJson, FEASIBILITY_GATE_IDS,
-  computeBasicLabEquipment, applyBasicLabEquipmentOverrides, BASIC_EQUIPMENT_CATEGORIES,
+  QS, OPERATION_OPTS, DAMPLAB_MATCH_KEYWORDS, shouldSkip, stepIndex, buildFinalIntakeJson,
+  computeBasicLabEquipment, applyBasicLabEquipmentOverrides, BASIC_EQUIPMENT_CATEGORIES, LAYOUT_SETTING_DEFAULTS,
   type Answers, type QuestionOption, type WallSide,
 } from '../lib/questions';
 import {
-  FEASIBILITY_CHECK_QUERY, EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, VALIDATED_PROTOCOLS_QUERY, MY_REPORTS_QUERY,
+  EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, VALIDATED_PROTOCOLS_QUERY, MY_REPORTS_QUERY, LAYOUT_CAPACITY_CHECK_QUERY,
 } from '../graphql/operations';
 import { getSessionId } from '../lib/session';
 
-type EquipmentRow = { equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null; utilityType: string | null; allTags: string[] };
+type EquipmentRow = { equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; utilityType: string | null; allTags: string[] };
 type EquipmentListRow = { listKey: string; displayName: string; equipmentIds: string[] };
 
-type FeasibilityIssue = { field: string; message: string };
-type FeasibilityCheckResponse = { feasibilityCheck: { ok: boolean; issues: FeasibilityIssue[] } };
+type CapacityCheck = { benches: number; benchAreaSqFt: number; benchNeedSqFt: number; shortfallSqFt: number; roomTooSmall: boolean; zones: { id: string; name: string; benchNeedSqFt: number; benchAreaSqFt: number }[] };
 
 function validateQuestion(id: string, answers: Answers) {
   if (id === 'biosafety_level' && !answers.biosafety_level) return 'Choose a biosafety level.';
@@ -62,7 +63,7 @@ function questionHint(q: (typeof QS)[number], answers: Answers): string {
   if (q.id === 'budget') {
     return hasEquipment
       ? 'Incremental spend on top of what you already have.'
-      : 'Your full build budget — equipment, and construction if selected below.';
+      : 'Your budget for new equipment.';
   }
   return q.h;
 }
@@ -75,7 +76,8 @@ export function QuestionsPage() {
   const { answers, status, setField, toggleMultiField, completeIntake } = useIntakeSync(() => {
     navigate('/generating');
   });
-  const [runFeasibilityCheck, { loading: checkingFeasibility }] = useLazyQuery<FeasibilityCheckResponse>(FEASIBILITY_CHECK_QUERY, { fetchPolicy: 'network-only' });
+  const [runCapacityCheck, { loading: checkingCapacity }] = useLazyQuery<{ layoutCapacityCheck: CapacityCheck }>(LAYOUT_CAPACITY_CHECK_QUERY, { fetchPolicy: 'network-only' });
+  const [capacityWarning, setCapacityWarning] = useState<CapacityCheck | null>(null);
   // Cirrus's own generated floor plan, threaded through so the space step's
   // sandbox buttons can open on it instead of a blank room. Populated three
   // ways: the round trip below (router state, from the report's "Open in
@@ -94,16 +96,21 @@ export function QuestionsPage() {
   // report's "Edit questionnaire", see ReportPage.tsx).
   useEffect(() => {
     const state = location.state as {
-      spaceFromSandbox?: { width_ft: number; height_ft: number; door?: { wall: WallSide; offsetFt: number } };
+      spaceFromSandbox?: { width_ft: number; height_ft: number; door?: { wall: WallSide; offsetFt: number }; layout?: unknown; geometry?: unknown; arrangement?: Record<string, unknown> };
       startAtQuestionId?: string;
       generatedLayout?: unknown;
     } | null;
     if (!state) return;
     if (state.spaceFromSandbox) {
-      const { width_ft, height_ft, door } = state.spaceFromSandbox;
+      const { width_ft, height_ft, door, layout, geometry, arrangement } = state.spaceFromSandbox;
       setField('width_ft', String(width_ft));
       setField('height_ft', String(height_ft));
       setField('space_method', 'sandbox');
+      for (const [key, value] of Object.entries(arrangement ?? {})) setField(key, value);
+      // The whole room — every door, column, no-placement area and fixture
+      // — so the generator plans the real room, not just its size.
+      setField('space_sandbox_layout', layout ?? null);
+      setField('space_geometry', geometry ?? null);
       // Pre-fills the layout_prefs door question with the exit door the user
       // actually placed in the sandbox, same shape LayoutDoorPicker's manual
       // entry writes (door_wall/door_offset_ft) — so a sandbox-defined room
@@ -159,31 +166,38 @@ export function QuestionsPage() {
   }
 
   async function nextQ() {
-  if (checkingFeasibility) return;
+  if (checkingCapacity) return;
   const error = validateQuestion(q.id, answers);
   if (error) { setValidationError(error); return; }
-  // Cross-field feasibility, not just this field's own shape — checked
-  // against everything answered so far so an incompatibility (budget too
-  // low for the chosen protocols, room too small, etc.) is caught here
-  // rather than surfacing only after the generator runs.
-  if (FEASIBILITY_GATE_IDS.includes(q.id)) {
-    const { data } = await runFeasibilityCheck({ variables: { input: buildFinalIntakeJson(answers) } });
-    const result = data?.feasibilityCheck;
-    if (result && !result.ok) {
-      setValidationError(result.issues[0]?.message || 'This combination of answers is not feasible yet.');
-      return;
-    }
-  }
   setValidationError('');
   const ni = stepIndex(qi, 1, answers);
   if (ni < QS.length) {
     setQi(ni);
-  } else {
-    const finalJson = buildFinalIntakeJson(answers);
-    await completeIntake(finalJson as unknown as Record<string, unknown>);
+    return;
+  }
+  // Before generating: warn, and ask first, if the room can't hold the
+  // benches the equipment needs (generation then shrinks every zone by the
+  // same share).
+  const finalJson = buildFinalIntakeJson(answers);
+  try {
+    const { data } = await runCapacityCheck({ variables: { intake: finalJson } });
+    const capacity = data?.layoutCapacityCheck;
+    if (capacity?.roomTooSmall) {
+      setCapacityWarning(capacity);
+      return;
+    }
+  } catch {
+    // The check is advisory — if it fails, generate anyway; the report
+    // itself warns when the room is too small.
+  }
+  await generate();
+}
+
+  async function generate() {
+    setCapacityWarning(null);
+    await completeIntake(buildFinalIntakeJson(answers) as unknown as Record<string, unknown>);
     navigate('/generating');
   }
-}
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -220,10 +234,28 @@ export function QuestionsPage() {
       <div className="qm-footer">
         <button className="btn-out" style={{ visibility: qi === 0 ? 'hidden' : 'visible' }} onClick={prevQ}>← Back</button>
         <div className="qm-kbd-hint">Press <kbd>Enter</kbd> to continue</div>
-        <button className="btn-teal" onClick={nextQ} disabled={checkingFeasibility}>
-          {checkingFeasibility ? 'Checking…' : isLast ? 'Generate report →' : 'Next →'}
+        <button className="btn-teal" onClick={nextQ} disabled={checkingCapacity}>
+          {checkingCapacity ? 'Checking…' : isLast ? 'Generate report →' : 'Next →'}
         </button>
       </div>
+      {capacityWarning && (
+        <div className="q-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="capacity-title">
+          <div className="q-modal">
+            <h3 id="capacity-title">This room is too small for all your equipment</h3>
+            <p>
+              The benches that fit give <b>{Math.round(capacityWarning.benchAreaSqFt)} sq ft</b> of bench top, but your equipment needs <b>{Math.round(capacityWarning.benchNeedSqFt)} sq ft</b> (short {Math.round(capacityWarning.shortfallSqFt)} sq ft).
+            </p>
+            <ul>
+              {capacityWarning.zones.map((z) => <li key={z.id}>{z.name}: needs {Math.round(z.benchNeedSqFt)} sq ft</li>)}
+            </ul>
+            <p>If you go ahead, every zone is shrunk by the same share. You can also go back and enlarge the room, remove equipment, or lower the working space.</p>
+            <div className="q-modal-actions">
+              <button className="btn-out" onClick={() => setCapacityWarning(null)}>Go back</button>
+              <button className="btn-teal" onClick={generate}>Generate anyway</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -269,7 +301,7 @@ function QuestionBody({
       )}
 
       {q.type === 'space' && <SpaceBody answers={answers} setField={setField} generatedLayout={generatedLayout} />}
-      {q.type === 'budget' && <BudgetBody answers={answers} setField={setField} />}
+      {q.type === 'budget' && <><p className="q-inline-help budget-disclaimer">This budget covers equipment only. It does not include running costs (consumables, staffing, maintenance) or other fixed costs such as rent, construction or utilities.</p><BudgetBody answers={answers} setField={setField} /></>}
       {q.type === 'equipment_plan' && <EquipmentPlanBody answers={answers} setField={setField} />}
       {q.type === 'layout_prefs' && <LayoutPrefsBody answers={answers} setField={setField} />}
     </div>
@@ -315,7 +347,7 @@ function findCatalogMatch(title: string): QuestionOption | undefined {
 // pattern as the Equipment Membership Lists page's "Unassigned" panel —
 // select-then-quantify per row, same as AnalyticalEquipmentBody/the old
 // protocol_demand step (see FinalIntakeJson.demand in questions.ts).
-function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: Answers; toggleMultiField: (k: string, v: string) => void; setField: (k: string, v: unknown) => void }) {
+function ProtocolSelectBody({ answers, setField }: { answers: Answers; toggleMultiField: (k: string, v: string) => void; setField: (k: string, v: unknown) => void }) {
   const { data: validatedData, loading, error } = useQuery<{ validatedProtocols: { protocolId: string; title: string; sourceUrl: string }[] }>(VALIDATED_PROTOCOLS_QUERY);
   const validatedItems = validatedData?.validatedProtocols ?? [];
 
@@ -335,45 +367,28 @@ function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: 
 
   const selected = (answers.operations as string[]) || [];
   const runs = (answers.protocol_runs_per_week as Record<string, number>) || {};
-  const operationByProtocolId = (answers.protocol_operation_by_id as Record<string, string>) || {};
   const [search, setSearch] = useState('');
   const visible = search.trim()
     ? mappedProtocols.filter((p) => p.title.toLowerCase().includes(search.trim().toLowerCase()))
     : mappedProtocols;
   const allVisibleChecked = visible.length > 0 && visible.every((p) => selected.includes(p.value));
 
+  function applySelection(protocols: { value: string; operationId?: string }[], checked: boolean) {
+    const patch = selectProtocols(answers, protocols, checked);
+    for (const [key, value] of Object.entries(patch)) setField(key, value);
+  }
+
   function toggleProtocol(p: { value: string; operationId?: string }) {
-    const wasSelected = selected.includes(p.value);
-    toggleMultiField('operations', p.value);
-    if (wasSelected) {
-      const { [p.value]: _removed, ...rest } = runs;
-      setField('protocol_runs_per_week', rest);
-      if (p.operationId) {
-        const { [p.value]: _removedOp, ...restOps } = operationByProtocolId;
-        setField('protocol_operation_by_id', restOps);
-      }
-    } else {
-      // Selecting a protocol defaults it to 1 run/week — the user can raise
-      // that or uncheck the protocol entirely, but a freshly-checked box
-      // never sits at an empty/zero run count.
-      setField('protocol_runs_per_week', { ...runs, [p.value]: 1 });
-      if (p.operationId) {
-        setField('protocol_operation_by_id', { ...operationByProtocolId, [p.value]: p.operationId });
-      }
-    }
+    applySelection([p], !selected.includes(p.value));
   }
 
   function toggleAllVisible() {
-    for (const p of visible) {
-      if (allVisibleChecked) { if (selected.includes(p.value)) toggleProtocol(p); }
-      else if (!selected.includes(p.value)) toggleProtocol(p);
-    }
+    applySelection(visible, !allVisibleChecked);
   }
 
   function setRuns(opId: string, value: number) {
-    // Floored at 1 while the protocol stays checked — deselecting it
-    // entirely is how a user drops it back out, not dialing runs to 0.
-    setField('protocol_runs_per_week', { ...runs, [opId]: Math.max(1, Math.round(value)) });
+    // Zero runs is valid and remains distinct from deselecting a protocol.
+    setField('protocol_runs_per_week', { ...runs, [opId]: Math.max(0, Math.round(value)) });
   }
 
   if (loading) return <p className="q-inline-help">Loading validated protocols…</p>;
@@ -392,14 +407,14 @@ function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: 
       {mappedProtocols.length > 6 && (
         <input
           className="field-input"
-          style={{ width: '100%', fontSize: 12, marginBottom: 10 }}
+          style={{ width: '100%', fontSize: 16, marginBottom: 10 }}
           placeholder="Search protocols…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
       )}
 
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--mid)', marginBottom: 8, cursor: 'pointer' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 16, color: 'var(--mid)', marginBottom: 8, cursor: 'pointer' }}>
         <input type="checkbox" checked={allVisibleChecked} onChange={toggleAllVisible} />
         Select all {search.trim() ? 'matching' : ''} ({visible.length})
       </label>
@@ -422,15 +437,15 @@ function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: 
           const isSelected = selected.includes(p.value);
           return (
             <div key={p.value} style={{ paddingBottom: 8, borderBottom: '1px solid var(--br)' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 16, cursor: 'pointer' }}>
                 <input type="checkbox" checked={isSelected} onChange={() => toggleProtocol(p)} />
                 <span style={{ fontWeight: 600, color: 'var(--dark)' }}>{p.title}</span>
                 {!p.sized && (
-                  <span title="No Operation definition to size a room against yet — still recorded, just not sized." style={{ fontSize: 11, color: 'var(--mid)', border: '1px solid var(--br)', borderRadius: 4, padding: '1px 5px' }}>
+                  <span title="No Operation definition to size a room against yet — still recorded, just not sized." style={{ fontSize: 16, color: 'var(--mid)', border: '1px solid var(--br)', borderRadius: 4, padding: '1px 5px' }}>
                     not sized yet
                   </span>
                 )}
-                <a href={p.sourceUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 11, color: 'var(--teal)' }}>
+                <a href={p.sourceUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 16, color: 'var(--teal)' }}>
                   View on protocols.io →
                 </a>
               </label>
@@ -439,21 +454,21 @@ function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: 
                   <input
                     className="field-input"
                     type="number"
-                    min={1}
+                    min={0}
                     step={1}
                     style={{ width: 80 }}
                     placeholder="1"
                     value={runs[p.value] ?? 1}
                     onChange={(e) => setRuns(p.value, Number(e.target.value) || 1)}
                   />
-                  <span style={{ fontSize: 12, color: 'var(--mid)' }}>runs/week</span>
+                  <span style={{ fontSize: 16, color: 'var(--mid)' }}>runs/week</span>
                 </div>
               )}
             </div>
           );
         })}
         {visible.length === 0 && (
-          <div style={{ fontSize: 13, color: 'var(--mid)', padding: '6px 0' }}>No protocols match "{search}".</div>
+          <div style={{ fontSize: 16, color: 'var(--mid)', padding: '6px 0' }}>No protocols match "{search}".</div>
         )}
       </div>
     </>
@@ -476,7 +491,7 @@ function SpaceBody({ answers, setField, generatedLayout }: { answers: Answers; s
   // is available (see the generatedLayout plumbing in QuestionsPage) — the
   // sandbox already handles state.loadLayout on mount.
   function openSandbox() {
-    navigate('/layout-sandbox', generatedLayout ? { state: { loadLayout: generatedLayout } } : undefined);
+    navigate('/layout-sandbox', { state: { loadLayout: answers.space_sandbox_layout ?? generatedLayout, arrangement: Object.fromEntries(['layout_mode', 'layout_main_wall', 'layout_same_direction', 'layout_wall_benches'].filter((key) => answers[key] !== undefined && answers[key] !== null).map((key) => [key, answers[key]])) } });
   }
 
   function handleFile(file: File | undefined) {
@@ -580,7 +595,7 @@ function BudgetBody({ answers, setField }: { answers: Answers; setField: (k: str
             type="number"
             placeholder="e.g. 250000"
             value={desiredInput}
-            onChange={(e) => setDesiredInput(e.target.value)}
+            onChange={(e) => { setDesiredInput(e.target.value); setField('budget_desired', e.target.value); }}
             onBlur={() => setField('budget_desired', desiredInput)}
           />
           <div className="preset-row">
@@ -599,14 +614,14 @@ function BudgetBody({ answers, setField }: { answers: Answers; setField: (k: str
             placeholder="e.g. 300000"
             min={desired || undefined}
             value={maxInput}
-            onChange={(e) => setMaxInput(e.target.value)}
+            onChange={(e) => { setMaxInput(e.target.value); setField('budget_max', e.target.value); }}
             onBlur={() => {
               const clamped = desired && maxInput && Number(maxInput) < Number(desired) ? desired : maxInput;
               setMaxInput(clamped);
               setField('budget_max', clamped);
             }}
           />
-          <p className="q-inline-help">The hard ceiling you could go to if it's genuinely needed — sizing targets your desired spend first and only reaches into this range for unmet high-priority needs.</p>
+          <p className="q-inline-help">Equipment above this amount triggers a stronger warning. Your choices are kept; Cirrus does not automatically change the equipment list.</p>
         </div>
       </div>
     </>
@@ -639,12 +654,11 @@ function EquipmentPlanBody({ answers, setField }: { answers: Answers; setField: 
   if (eqError) return <p className="q-validation-error">Couldn’t load the equipment catalog: {eqError.message}</p>;
 
   return (
-    // The picker (search/filter/Owned/Add) plus the computed list together
-    // can run taller than the viewport — .qm-stage's centered-flex scroll
-    // silently clips content taller than the window instead of scrolling to
-    // it (see .qm-stage in index.css), so this step gets its own bounded,
-    // self-scrolling region rather than relying on that outer scroll.
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '64vh', overflowY: 'auto', paddingRight: 6 }}>
+    // No height cap of its own: the card grows to show the picker and the
+    // whole computed list, and the question stage scrolls (.qm-stage /
+    // .q-card in index.css handle cards taller than the window). A capped
+    // inner box here was too cramped to work in.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <EquipmentPicker answers={answers} setField={setField} catalog={catalog} />
       <ComputedEquipmentList answers={answers} setField={setField} lists={lists} catalog={catalog} />
     </div>
@@ -684,6 +698,16 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
   // it's not an intake answer, just how this picker's own list is browsed.
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
   const tagFilteredAddable = selectedTags.size === 0 ? addable : addable.filter((eq) => matchesTagFilter(eq, selectedTags));
+  // Zone the next Owned/Add goes into. Sticky: only the user changing it
+  // changes it — adding equipment or filtering leaves it alone, and it's
+  // remembered for this browser tab if the step is left and reopened.
+  const [addZone, setAddZone] = useState<string>(() => {
+    try { return sessionStorage.getItem(PICKER_ZONE_KEY) ?? 'general'; } catch { return 'general'; }
+  });
+  function chooseAddZone(zone: string) {
+    setAddZone(zone);
+    try { sessionStorage.setItem(PICKER_ZONE_KEY, zone); } catch { /* storage unavailable: keep it for this visit */ }
+  }
 
   // Clears the draft selection once it's no longer a real, still-addable
   // option — needed because the catalog loads asynchronously and each
@@ -704,6 +728,9 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
     } else {
       setField('needed_equipment_meta', { ...neededMeta, [eq.equipmentId]: { name: eq.name, count: 1 } });
     }
+    // The picker's zone becomes this item's zone (still editable per row in
+    // the list below).
+    setField('equipment_zones', { ...((answers.equipment_zones as Record<string, string>) ?? {}), [eq.equipmentId]: addZone });
     setDraftId('');
   }
 
@@ -734,6 +761,9 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
             // draftId.
             options={[{ value: '', label: 'Select equipment…', disabled: true }, ...tagFilteredAddable.map((eq) => ({ value: eq.equipmentId, label: eq.name }))]}
           />
+          <select className="field-input" style={{ width: 'auto' }} aria-label="Zone for the equipment you add" title="Zone (biomaterial) the equipment you add goes into" value={addZone} onChange={(e) => chooseAddZone(e.target.value)}>
+            <option value="general">General</option><option value="microbial">Microbial</option><option value="mammalian">Mammalian</option>
+          </select>
           {/* Owned/Add each commit the selected equipment straight into that
               bucket — no separate Add button, no toggle-then-confirm step.
               "Add" is this bucket's label for needed_equipment_meta (still
@@ -765,6 +795,7 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
 }
 
 const UNTAGGED = 'Untagged';
+const PICKER_ZONE_KEY = 'cirrus.equipmentPicker.zone';
 
 function matchesTagFilter(eq: EquipmentRow, selected: Set<string>): boolean {
   if (eq.allTags.length === 0) return selected.has(UNTAGGED);
@@ -778,17 +809,37 @@ function matchesTagFilter(eq: EquipmentRow, selected: Set<string>): boolean {
 // the selected set — most equipment carries at most one tag, so AND would
 // return empty the moment two tags are checked. Matches SearchableSelect's
 // outside-click-to-close pattern above.
+// The menu is portaled to <body> with fixed positioning (as SearchableSelect
+// does) so the scrolling question stage can't clip it.
 function TagFilterPopover({ catalog, selected, onChange }: { catalog: EquipmentRow[]; selected: Set<string>; onChange: (next: Set<string>) => void }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
 
   useEffect(() => {
     function onOutsideClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+      if (containerRef.current && !containerRef.current.contains(e.target as Node) && !menuRef.current?.contains(e.target as Node)) setOpen(false);
     }
     document.addEventListener('mousedown', onOutsideClick);
     return () => document.removeEventListener('mousedown', onOutsideClick);
   }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const position = () => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const below = window.innerHeight - rect.bottom - 12;
+      const above = rect.top - 12;
+      const upwards = below < 200 && above > below;
+      setMenuStyle({ position: 'fixed', left: Math.max(8, Math.min(rect.left, window.innerWidth - 248)), minWidth: 240, maxHeight: Math.max(80, Math.min(360, upwards ? above : below)), ...(upwards ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }) });
+    };
+    position();
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    return () => { window.removeEventListener('resize', position); window.removeEventListener('scroll', position, true); };
+  }, [open]);
 
   const tagCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -813,8 +864,9 @@ function TagFilterPopover({ catalog, selected, onChange }: { catalog: EquipmentR
       <button type="button" className="btn-out" style={{ padding: '6px 12px' }} onClick={() => setOpen((o) => !o)}>
         {selected.size > 0 ? `Filter (${selected.size})` : 'Filter'}
       </button>
-      {open && (
+      {open && createPortal(
         <div
+          ref={menuRef}
           // The intake flow's document-level keydown listener advances/
           // rewinds the question on Enter/Escape (see QuestionsPage's
           // onKeyDown effect) — without stopping propagation here, checking
@@ -824,25 +876,25 @@ function TagFilterPopover({ catalog, selected, onChange }: { catalog: EquipmentR
             if (e.key === 'Enter') { e.stopPropagation(); }
             else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false); }
           }}
-          style={{ position: 'absolute', top: '100%', left: 0, zIndex: 20, marginTop: 4, minWidth: 200, maxHeight: 260, overflowY: 'auto', background: 'var(--white)', border: '1px solid var(--br)', borderRadius: 8, boxShadow: 'var(--shadow-sm)', padding: 8 }}
+          style={{ ...menuStyle, zIndex: 10000, overflowY: 'auto', background: 'var(--white)', border: '1px solid var(--br)', borderRadius: 8, boxShadow: 'var(--shadow-sm)', padding: 8 }}
         >
           {tagCounts.length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--mid)', padding: '4px 6px' }}>No tags yet.</div>
+            <div style={{ fontSize: 16, color: 'var(--mid)', padding: '4px 6px' }}>No tags yet.</div>
           ) : (
             <>
               {tagCounts.map(([tag, count]) => (
-                <label key={tag} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 6px', cursor: 'pointer' }}>
+                <label key={tag} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 16, padding: '4px 6px', cursor: 'pointer' }}>
                   <input type="checkbox" checked={selected.has(tag)} onChange={() => toggleTag(tag)} />
                   <span style={{ flex: 1 }}>{tag}</span>
                   <span style={{ color: 'var(--mid)' }}>{count}</span>
                 </label>
               ))}
               {selected.size > 0 && (
-                <button type="button" className="btn-out" style={{ marginTop: 6, width: '100%', padding: '4px 0', fontSize: 11 }} onClick={() => onChange(new Set())}>Clear all</button>
+                <button type="button" className="btn-out" style={{ marginTop: 6, width: '100%', padding: '4px 0', fontSize: 16 }} onClick={() => onChange(new Set())}>Clear all</button>
               )}
             </>
           )}
-        </div>
+        </div>, document.body,
       )}
     </div>
   );
@@ -863,12 +915,21 @@ function ComputedEquipmentList({
 }) {
   const computed = computeBasicLabEquipment(answers, lists, catalog);
   const rows = applyBasicLabEquipmentOverrides(computed, answers);
+  const equipmentById = new Map(catalog.map((item) => [item.equipmentId, item]));
+  const estimatedCost = rows.reduce((sum, row) => sum + (row.owned ? 0 : row.quantity * (equipmentById.get(row.equipmentId)?.costUsd ?? 0)), 0);
+  const overMax = Number(answers.budget_max) > 0 && estimatedCost > Number(answers.budget_max);
+  const overDesired = Number(answers.budget_desired) > 0 && estimatedCost > Number(answers.budget_desired);
+  const zoneOverrides = (answers.equipment_zones as Record<string, string>) ?? {};
+  const fixedIds = (answers.equipment_fixed as string[]) ?? [];
   const serialized = JSON.stringify(rows.map((r) => [r.equipmentId, r.quantity, r.sources.join(',')]));
 
   useEffect(() => {
     // sources travels through to the report's BOM (see reports.service.ts's
     // extractBasicLabEquipment) so the Lab Design Report can apply the same
     // color-coded-by-source grouping used here.
+    const currentZones = (answers.equipment_zones as Record<string, string>) ?? {};
+    const defaults = Object.fromEntries(rows.filter((r) => !currentZones[r.equipmentId]).map((r) => [r.equipmentId, 'general']));
+    if (Object.keys(defaults).length) setField('equipment_zones', { ...currentZones, ...defaults });
     setField('basic_lab_equipment_final', rows.map(({ equipmentId, name, quantity, sources }) => ({ equipment_id: equipmentId, name, quantity, sources })));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serialized]);
@@ -931,13 +992,18 @@ function ComputedEquipmentList({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div className={`equipment-budget ${overMax ? 'over-max' : overDesired ? 'over-desired' : ''}`} role="status">
+        <strong>New equipment estimate: {estimatedCost.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}</strong>
+        <p>{overMax ? 'Above your absolute maximum budget. Adjust equipment or revisit your budget.' : overDesired ? 'Above your desired spend, but within your absolute maximum.' : 'Owned equipment is excluded. Estimates use current catalog prices.'}</p>
+        <small>Warnings only; you can continue. Protocol-specific equipment added later may increase the total.</small>
+      </div>
       <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 0 }}>
         Adjust quantities as needed. Items required for your biosafety level can’t be removed, only increased.
         Equipment you already own or still need can be adjusted or removed here too — removing an owned row means you no longer have it, and removing a needed row means you no longer want it; neither means the room doesn’t need it. Each color-coded section below shows which list brought that equipment into this combined list.
       </p>
-      {/* No max-height/scroll of its own — EquipmentPlanBody's wrapper above
-          already bounds and scrolls the whole step (picker + this list)
-          together, so this only needs to lay the rows out. */}
+      {/* No max-height/scroll of its own — the question stage scrolls the
+          whole step (picker + this list) together, so this only needs to
+          lay the rows out. */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       {BASIC_EQUIPMENT_CATEGORIES.map((category) => {
         const categoryRows = rowsByCategory.get(category.key);
@@ -946,24 +1012,24 @@ function ComputedEquipmentList({
           <div key={category.key}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
               <span style={{ width: 10, height: 10, borderRadius: '50%', background: category.color, flexShrink: 0 }} />
-              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.03em', color: category.color, textTransform: 'uppercase' }}>
+              <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: '.03em', color: category.color, textTransform: 'uppercase' }}>
                 {category.label}
               </span>
-              <span style={{ fontSize: 11, color: 'var(--mid)' }}>({categoryRows.length})</span>
+              <span style={{ fontSize: 16, color: 'var(--mid)' }}>({categoryRows.length})</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, borderLeft: `3px solid ${category.color}`, paddingLeft: 12 }}>
               {categoryRows.map((row) => {
                 const otherSources = row.sources.filter((s) => s !== category.key);
                 return (
                   <div key={row.equipmentId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--dark)' }}>
+                    <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--dark)' }}>
                       {row.name}
                       {row.owned ? (
-                        <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(owned)</span>
+                        <span style={{ marginLeft: 6, fontSize: 16, fontWeight: 500, color: 'var(--mid)' }}>(owned)</span>
                       ) : row.needed ? (
-                        <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(needed)</span>
+                        <span style={{ marginLeft: 6, fontSize: 16, fontWeight: 500, color: 'var(--mid)' }}>(needed)</span>
                       ) : row.locked && (
-                        <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--mid)' }}>(required)</span>
+                        <span style={{ marginLeft: 6, fontSize: 16, fontWeight: 500, color: 'var(--mid)' }}>(required)</span>
                       )}
                       {otherSources.map((sourceKey) => {
                         const meta = categoryByKey.get(sourceKey);
@@ -972,7 +1038,7 @@ function ComputedEquipmentList({
                           <span
                             key={sourceKey}
                             title={`Also required by ${meta.label}`}
-                            style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: meta.color, border: `1px solid ${meta.color}`, borderRadius: 10, padding: '1px 7px' }}
+                            style={{ marginLeft: 6, fontSize: 16, fontWeight: 600, color: meta.color, border: `1px solid ${meta.color}`, borderRadius: 10, padding: '1px 7px' }}
                           >
                             + {meta.label}
                           </span>
@@ -980,6 +1046,14 @@ function ComputedEquipmentList({
                       })}
                     </span>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                      {equipmentById.get(row.equipmentId)?.allTags.some((tag) => ['Cold Storage', 'Hood'].includes(tag)) ? <span>Floor item — placed manually, no zone</span> : (
+                        <label className="q-check-row">Zone
+                          <select className="field-input" aria-label={`Zone for ${row.name}`} value={zoneOverrides[row.equipmentId] ?? 'general'} onChange={(e) => setField('equipment_zones', { ...zoneOverrides, [row.equipmentId]: e.target.value })}>
+                            <option value="general">General</option><option value="microbial">Microbial</option><option value="mammalian">Mammalian</option>
+                          </select>
+                        </label>
+                      )}
+                      <label className="q-check-row"><input type="checkbox" checked={fixedIds.includes(row.equipmentId)} onChange={(e) => setField('equipment_fixed', e.target.checked ? [...fixedIds, row.equipmentId] : fixedIds.filter((id) => id !== row.equipmentId))} />Fixed for optimizer</label>
                       {/* A row is never both owned and needed at once —
                           computeBasicLabEquipment splits that case into two
                           separate rows (one here, one in the other
@@ -989,7 +1063,7 @@ function ComputedEquipmentList({
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <div className="stepper">
                             <button type="button" onClick={() => setOwnedQty(row.equipmentId, row.ownedQuantity - 1)}>−</button>
-                            <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.ownedQuantity}</span>
+                            <span className="stepper-val" style={{ fontSize: 16, minWidth: 20 }}>{row.ownedQuantity}</span>
                             <button type="button" onClick={() => setOwnedQty(row.equipmentId, row.ownedQuantity + 1)}>+</button>
                           </div>
                           <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => unown(row.equipmentId)}>Remove</button>
@@ -998,7 +1072,7 @@ function ComputedEquipmentList({
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <div className="stepper">
                             <button type="button" onClick={() => setNeededQty(row.equipmentId, row.neededQuantity - 1)}>−</button>
-                            <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.neededQuantity}</span>
+                            <span className="stepper-val" style={{ fontSize: 16, minWidth: 20 }}>{row.neededQuantity}</span>
                             <button type="button" onClick={() => setNeededQty(row.equipmentId, row.neededQuantity + 1)}>+</button>
                           </div>
                           <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => removeNeeded(row.equipmentId)}>Remove</button>
@@ -1006,21 +1080,21 @@ function ComputedEquipmentList({
                       ) : (row.locked ? (
                         <div className="stepper">
                           <button type="button" onClick={() => setQty(row.equipmentId, row.quantity - 1)}>−</button>
-                          <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.quantity}</span>
+                          <span className="stepper-val" style={{ fontSize: 16, minWidth: 20 }}>{row.quantity}</span>
                           <button type="button" onClick={() => setQty(row.equipmentId, row.quantity + 1)}>+</button>
                         </div>
                       ) : (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <div className="stepper">
                             <button type="button" onClick={() => setQty(row.equipmentId, row.quantity - 1)}>−</button>
-                            <span className="stepper-val" style={{ fontSize: 14, minWidth: 20 }}>{row.quantity}</span>
+                            <span className="stepper-val" style={{ fontSize: 16, minWidth: 20 }}>{row.quantity}</span>
                             <button type="button" onClick={() => setQty(row.equipmentId, row.quantity + 1)}>+</button>
                           </div>
                           <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => remove(row.equipmentId)}>Remove</button>
                         </div>
                       ))}
                       {(row.owned || row.needed) && row.requiredQuantity > row.ownedQuantity + row.neededQuantity && (
-                        <span style={{ fontSize: 10, color: 'var(--mid)' }}>Sized at {row.quantity} — this list needs at least {row.requiredQuantity}</span>
+                        <span style={{ fontSize: 16, color: 'var(--mid)' }}>Sized at {row.quantity} — this list needs at least {row.requiredQuantity}</span>
                       )}
                     </div>
                   </div>
@@ -1042,80 +1116,74 @@ const WALL_OPTIONS: { value: WallSide; label: string }[] = [
   { value: 'W', label: 'West wall' },
 ];
 
-function capitalizeWords(s: string): string {
-  return s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-// The layout_prefs step: layout-priority sliders plus optional manual
-// door/utility placement — the intake side of LayoutGeneratorService's
-// optimization pass and door/utilities fields (see buildLayoutPrefsJson in
-// questions.ts). Every control here is opt-in by construction: each one only
-// ever calls setField from its own onChange, never from a default/prop value
-// on mount, so a user who never touches this step sends nothing and the
-// generator behaves exactly as it did before this step existed.
+// The layout_prefs step: how benches are arranged, keeping zones apart, the
+// equipment optimizer's focus, plus optional manual door placement (see
+// layout_options and buildLayoutPrefsJson in questions.ts). Utilities are
+// not placed — see the Disclaimer page. Every
+// control only calls setField from its own onChange; untouched, the
+// generator uses its defaults.
 function LayoutPrefsBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
   const width = parseFloat((answers.width_ft as string) || '0') || 0;
   const height = parseFloat((answers.height_ft as string) || '0') || 0;
   const hasRoomSize = width > 0 && height > 0;
+  const roomFromSandbox = answers.space_method === 'sandbox' && !!answers.space_geometry;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
-      <LayoutPrioritySliders answers={answers} setField={setField} />
-      <LayoutDoorPicker answers={answers} setField={setField} hasRoomSize={hasRoomSize} width={width} height={height} />
-      <LayoutUtilityPicker answers={answers} setField={setField} hasRoomSize={hasRoomSize} width={width} height={height} />
+      <LayoutGenerationSettings answers={answers} setField={setField} />
+      <LayoutPriorities answers={answers} setField={setField} />
+      {roomFromSandbox
+        ? <p className="q-inline-help" style={{ margin: 0 }}>Doors, columns and no-placement areas come from the room you built in the sandbox.</p>
+        : <LayoutDoorPicker answers={answers} setField={setField} hasRoomSize={hasRoomSize} width={width} height={height} />}
+      <p className="q-inline-help" style={{ margin: 0 }}>Utilities (electrical, plumbing, HVAC) are not placed: Cirrus assumes they can be reconfigured to your planned layout. See the <a href="/disclaimer" target="_blank" rel="noreferrer">Disclaimer</a>.</p>
     </div>
   );
 }
 
-function PrioritySlider({ label, hint, value, onChange }: { label: string; hint: string; value: number | undefined; onChange: (v: number) => void }) {
+// How the generator arranges benches — the same settings the generated
+// layout's own settings panel re-runs with (GeneratedLayoutPlan.tsx).
+function LayoutGenerationSettings({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+  const workingSpacePct = Number(answers.layout_working_space_pct) || LAYOUT_SETTING_DEFAULTS.workingSpacePct;
   return (
-    <div>
-      <label className="field-label">{label}</label>
-      <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 6 }}>{hint}</p>
+    <div className="field-wrap">
+      <p className="q-inline-help">Choose Maximum fit, Main wall, and wall benches in the room sandbox on the Space step.</p>
+      <label className="field-label" style={{ marginTop: 14 }}>Working space on every bench: {workingSpacePct}%</label>
+      <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 6 }}>The share of each bench top kept free for working. Zones are sized so their equipment fills the rest.</p>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ fontSize: 11, color: 'var(--mid)' }}>Low</span>
-        <input
-          type="range" min={0} max={1} step={0.05}
-          value={value ?? 0.5}
-          onChange={(e) => onChange(Number(e.target.value))}
-          style={{ flex: 1 }}
-        />
-        <span style={{ fontSize: 11, color: 'var(--mid)' }}>High</span>
+        <span style={{ fontSize: 16, color: 'var(--mid)' }}>20%</span>
+        <input type="range" min={20} max={50} step={1} value={workingSpacePct} onChange={(e) => setField('layout_working_space_pct', Number(e.target.value))} style={{ flex: 1 }} />
+        <span style={{ fontSize: 16, color: 'var(--mid)' }}>50%</span>
       </div>
     </div>
   );
 }
 
-function LayoutPrioritySliders({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+// Contamination control (an aisle between different zones' benches) and
+// the balance the equipment optimizer will aim for. The balance doesn't
+// change Cirrus's own layout — it's stored in the plan JSON for the
+// optimizer.
+function LayoutPriorities({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+  const separateZones = (answers.layout_separate_zones as boolean | undefined) ?? LAYOUT_SETTING_DEFAULTS.separateZones;
+  const balance = (answers.layout_optimizer_balance as number | undefined) ?? LAYOUT_SETTING_DEFAULTS.optimizerBalance;
   return (
     <div className="field-wrap">
       <label className="field-label">Layout priorities</label>
-      <p className="q-inline-help" style={{ marginTop: 0 }}>
-        Leave these alone for a balanced layout. Moving one re-runs bench placement to favor it.
-      </p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <PrioritySlider
-          label="Throughput"
-          hint="How much to minimize travel time between stations in a workflow."
-          value={answers.layout_priority_throughput as number | undefined}
-          onChange={(v) => setField('layout_priority_throughput', v)}
-        />
-        <PrioritySlider
-          label="Walking distance"
-          hint="How much to minimize overall distance walked between stations."
-          value={answers.layout_priority_walking_distance as number | undefined}
-          onChange={(v) => setField('layout_priority_walking_distance', v)}
-        />
-        <PrioritySlider
-          label="Contamination control"
-          hint="How strongly to keep each zone's equipment clustered together, away from other zones."
-          value={answers.layout_priority_contamination as number | undefined}
-          onChange={(v) => setField('layout_priority_contamination', v)}
-        />
+      <label className="q-check-row" style={{ marginTop: 0 }}>
+        <input type="checkbox" checked={separateZones} onChange={(e) => setField('layout_separate_zones', e.target.checked)} />
+        Contamination control — keep an aisle between different zones
+      </label>
+      <p className="q-inline-help" style={{ marginTop: 4 }}>Benches of different zones never touch; where they would, one is left out to open a walkway.</p>
+      <label className="field-label" style={{ marginTop: 14 }}>Equipment optimizer focus</label>
+      <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 6 }}>Used later when equipment is placed on the benches. Soft constraints will be added later.</p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 16, color: 'var(--mid)', maxWidth: 120 }}>Meet soft constraints</span>
+        <input type="range" min={0} max={1} step={0.05} value={balance} onChange={(e) => setField('layout_optimizer_balance', Number(e.target.value))} style={{ flex: 1 }} />
+        <span style={{ fontSize: 16, color: 'var(--mid)', maxWidth: 120, textAlign: 'right' }}>Minimize walking distance</span>
       </div>
     </div>
   );
 }
+
 
 function LayoutDoorPicker({
   answers, setField, hasRoomSize, width, height,
@@ -1154,7 +1222,7 @@ function LayoutDoorPicker({
                 value={(answers.door_offset_ft as string | number | undefined) ?? ''}
                 onChange={(e) => setField('door_offset_ft', e.target.value)}
               />
-              <span style={{ fontSize: 12, color: 'var(--mid)' }}>ft along a {runLength} ft wall</span>
+              <span style={{ fontSize: 16, color: 'var(--mid)' }}>ft along a {runLength} ft wall</span>
             </div>
           )}
         </>
@@ -1163,78 +1231,3 @@ function LayoutDoorPicker({
   );
 }
 
-// Only surfaces a utility type if it's needed by something already on the
-// finalized Basic Lab Equipment List (Q3's basic_lab_equipment_final) — a
-// selected protocol's own equipment usage (bom/protocol-equipment-list.ts's
-// Protocols Equipment List) is computed server-side from real usage data and
-// isn't visible to this step, so a utility type only that equipment needs
-// won't get a placement control here. It still gets the generator's existing
-// "needs a hookup that wasn't in the request" warning either way — this step
-// only ever adds placements, never removes the fallback.
-function LayoutUtilityPicker({
-  answers, setField, hasRoomSize, width, height,
-}: {
-  answers: Answers; setField: (k: string, v: unknown) => void; hasRoomSize: boolean; width: number; height: number;
-}) {
-  const { data, loading } = useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
-  const catalog = data?.equipmentList ?? [];
-  const finalEquipmentIds = new Set(((answers.basic_lab_equipment_final as { equipment_id: string }[]) || []).map((r) => r.equipment_id));
-
-  const neededTypes = Array.from(new Set(
-    catalog.filter((eq) => eq.utilityType && finalEquipmentIds.has(eq.equipmentId)).map((eq) => eq.utilityType as string),
-  )).sort();
-
-  const placements = (answers.utility_placements as Record<string, { wall: WallSide; offsetFt: number }>) || {};
-
-  function setPlacementWall(type: string, wall: WallSide | '') {
-    if (!wall) {
-      const { [type]: _removed, ...rest } = placements;
-      setField('utility_placements', rest);
-      return;
-    }
-    setField('utility_placements', { ...placements, [type]: { wall, offsetFt: placements[type]?.offsetFt ?? 0 } });
-  }
-  function setPlacementOffset(type: string, offsetFt: number) {
-    const current = placements[type];
-    if (!current) return;
-    setField('utility_placements', { ...placements, [type]: { ...current, offsetFt } });
-  }
-
-  if (loading || !hasRoomSize || neededTypes.length === 0) return null;
-
-  return (
-    <div className="field-wrap" style={{ marginBottom: 0 }}>
-      <label className="field-label">Utility hookups</label>
-      <p className="q-inline-help" style={{ marginTop: 0 }}>
-        Your equipment plan needs these hookups. Place any you already know the location for — anything left "Not specified" still gets placed, just flagged to confirm before build.
-      </p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {neededTypes.map((type) => {
-          const placement = placements[type];
-          const runLength = placement?.wall === 'N' || placement?.wall === 'S' ? width : height;
-          return (
-            <div key={type} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 13, fontWeight: 600, minWidth: 100 }}>{capitalizeWords(type)}</span>
-              <select
-                className="field-input" style={{ width: 160 }}
-                value={placement?.wall ?? ''}
-                onChange={(e) => setPlacementWall(type, e.target.value as WallSide | '')}
-              >
-                <option value="">Not specified</option>
-                {WALL_OPTIONS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
-              </select>
-              {placement && (
-                <input
-                  className="field-input" type="number" style={{ width: 120 }} min={0} max={runLength}
-                  placeholder="Offset (ft)"
-                  value={placement.offsetFt ?? ''}
-                  onChange={(e) => setPlacementOffset(type, Number(e.target.value) || 0)}
-                />
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
