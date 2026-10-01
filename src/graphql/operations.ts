@@ -775,7 +775,7 @@ export const VALIDATED_PROTOCOLS_QUERY = gql`
       protocolId
       title
       sourceUrl
-      cellType
+      cellTypes
       essential
       createdAt
     }
@@ -788,12 +788,12 @@ export const REMOVE_VALIDATED_PROTOCOL_MUTATION = gql`
   }
 `;
 
-export const SET_VALIDATED_PROTOCOL_CELL_TYPE_MUTATION = gql`
-  mutation SetValidatedProtocolCellType($protocolId: ID!, $cellType: String) {
-    setValidatedProtocolCellType(protocolId: $protocolId, cellType: $cellType) {
+export const SET_VALIDATED_PROTOCOL_CELL_TYPES_MUTATION = gql`
+  mutation SetValidatedProtocolCellTypes($protocolId: ID!, $cellTypes: [String!]!) {
+    setValidatedProtocolCellTypes(protocolId: $protocolId, cellTypes: $cellTypes) {
       id
       protocolId
-      cellType
+      cellTypes
       essential
     }
   }

@@ -19,7 +19,7 @@ import { getSessionId } from '../lib/session';
 
 type EquipmentRow = { equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null; utilityType: string | null; allTags: string[] };
 type EquipmentListRow = { listKey: string; displayName: string; equipmentIds: string[] };
-type ValidatedProtocolRow = { protocolId: string; title: string; sourceUrl: string; cellType?: string | null; essential: boolean };
+type ValidatedProtocolRow = { protocolId: string; title: string; sourceUrl: string; cellTypes?: string[] | null; essential: boolean };
 
 type FeasibilityIssue = { field: string; message: string };
 type FeasibilityCheckResponse = { feasibilityCheck: { ok: boolean; issues: FeasibilityIssue[] } };
@@ -299,7 +299,7 @@ function findCatalogMatch(title: string): QuestionOption | undefined {
 // manually) resolves to 'manual', since the essential loop below only ever
 // populates ids that are NOT in removedSet — the manual loop runs second and
 // only fills in ids the essential loop didn't already claim.
-function computeFinalProtocolSelection(answers: Answers, protocols: { protocolId: string; essential: boolean; cellType?: string | null }[]): { protocolId: string; categoryKey: string }[] {
+function computeFinalProtocolSelection(answers: Answers, protocols: { protocolId: string; essential: boolean; cellTypes?: string[] | null }[]): { protocolId: string; categoryKey: string }[] {
   const essential = computeEssentialProtocolIds(answers, protocols);
   const removedSet = new Set((answers.protocol_essential_removed as string[]) || []);
   const manualIds = (answers.protocol_manual_ids as string[]) || [];
@@ -372,7 +372,7 @@ function ProtocolPicker({ answers, setField, protocols }: { answers: Answers; se
       <p className="q-inline-help" style={{ marginTop: 0 }}>
         {protocols.length === addable.length
           ? 'Search for any Validated Protocol and add it — it\'ll appear under Added Manually below.'
-          : 'Essential protocols for your biomaterials are already listed below. Search for anything else this lab needs and add it.'}
+          : 'Recommended protocols for your biomaterials are already listed below. Search for anything else this lab needs and add it.'}
       </p>
       {addable.length > 0 ? (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -462,7 +462,7 @@ function ComputedProtocolList({ answers, setField, protocols }: { answers: Answe
   }
 
   if (finalSelection.length === 0) {
-    return <p className="q-inline-help">Nothing here yet — add a protocol above, or pick a biomaterial with essential protocols on the biomaterials question.</p>;
+    return <p className="q-inline-help">Nothing here yet — add a protocol above, or pick a biomaterial with recommended protocols on the biomaterials question.</p>;
   }
 
   const rowsByCategory = new Map<string, typeof finalSelection>();
@@ -475,7 +475,7 @@ function ComputedProtocolList({ answers, setField, protocols }: { answers: Answe
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 0 }}>
-        Essential protocols for your selected biomaterials are listed automatically. Set expected weekly runs for each, or remove anything you don’t need — removing one just takes it out of this lab’s plan, it doesn’t change what’s essential for that biomaterial. Each color-coded section below shows why that protocol is in this list.
+        Recommended protocols for your selected biomaterials are listed automatically. Set expected weekly runs for each, or remove anything you don’t need — removing one just takes it out of this lab’s plan, it doesn’t change what’s recommended for that biomaterial. Each color-coded section below shows why that protocol is in this list.
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
         {PROTOCOL_PLAN_CATEGORIES.map((category) => {

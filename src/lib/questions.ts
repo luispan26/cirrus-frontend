@@ -130,10 +130,9 @@ export const BIOMATERIAL_OPTS: QuestionOption[] = [
   { v: 'yeast', l: 'Yeast' },
   { v: 'mammalian_adherent', l: 'Mammalian - Adherent' },
   { v: 'mammalian_suspension', l: 'Mammalian - Suspension' },
-  { v: 'mice', l: 'Mice' },
 ];
 
-// ValidatedProtocolsPage's cellType dropdown vocabulary — BIOMATERIAL_OPTS
+// ValidatedProtocolsPage's cellTypes tag vocabulary — BIOMATERIAL_OPTS
 // plus 'general' for protocols that aren't tied to any one biomaterial (gel
 // electrophoresis, Nanodrop/Qubit quantification, BCA assay, etc. — the same
 // technique works on a bacterial, yeast, or mammalian lysate). Deliberately
@@ -144,7 +143,7 @@ export const BIOMATERIAL_OPTS: QuestionOption[] = [
 // checkbox.
 export const CELL_TYPE_OPTS: QuestionOption[] = [...BIOMATERIAL_OPTS, { v: 'general', l: 'General' }];
 
-// Prompt 1's eight fixed equipment membership list keys (see the backend's
+// Prompt 1's seven fixed equipment membership list keys (see the backend's
 // src/equipment-lists/equipment-list.service.ts LIST_DEFINITIONS) that the
 // Basic Lab Equipment List computation below draws from. Kept in sync by
 // hand since the frontend and backend don't share types.
@@ -158,7 +157,6 @@ export const BIOMATERIAL_LIST_KEYS: Record<string, string> = {
   yeast: 'yeast_basic_equipment',
   mammalian_adherent: 'mammalian_adherent_basic_equipment',
   mammalian_suspension: 'mammalian_suspension_basic_equipment',
-  mice: 'mice_basic_equipment',
 };
 // Kept in sync by hand with the backend's PROTOCOL_SPECIFIC_CATEGORY_KEY
 // (src/bom/protocol-equipment-list.ts) — same convention as the list keys
@@ -193,7 +191,6 @@ export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; color: st
   { key: 'yeast', label: 'Yeast Basic', color: '#C9791C' },
   { key: 'mammalian_adherent', label: 'Mammalian (Adherent) Basic', color: '#7B4FD6' },
   { key: 'mammalian_suspension', label: 'Mammalian (Suspension) Basic', color: '#D64F9E' },
-  { key: 'mice', label: 'Mice Basic', color: '#8A5A3B' },
   // Not part of the equipment-plan step's Basic Lab Equipment List (nothing here is ever
   // computed by computeBasicLabEquipment) — this key is only ever produced
   // server-side by the backend's bom/protocol-equipment-list.ts when
@@ -221,27 +218,32 @@ export const PROTOCOL_PLAN_CATEGORIES: { key: string; label: string; color: stri
   { key: 'mammalian_suspension', label: 'Mammalian (Suspension)', color: '#D64F9E' },
 ];
 
-export interface ValidatedProtocolSummary { protocolId: string; essential: boolean; cellType?: string | null; }
+export interface ValidatedProtocolSummary { protocolId: string; essential: boolean; cellTypes?: string[] | null; }
 
 // Which validated protocols should be auto-selected for the protocol-plan
 // step, given the user's current Q2 biomaterials — the protocol-list analog
 // of computeBasicLabEquipment's list-walking above. Deliberately excludes
-// essential=true rows with no cellType rather than treating them as
+// essential=true rows with no cellTypes rather than treating them as
 // always-on 'general' protocols: the backend's setEssential rejects setting
-// essential without a cellType already set (see
+// essential without at least one cellType already set (see
 // ValidatedProtocolsService.setEssential), so this branch only exists as a
 // defensive fallback for stale/directly-edited data, never the expected
 // path. Recomputed fresh every render from current answers.biomaterials —
 // see ComputedProtocolList in QuestionsPage.tsx — so deselecting a
 // biomaterial makes its essential protocols disappear from the selection,
 // same as deselecting one drops its equipment from computeBasicLabEquipment.
+// A protocol tagged for more than one biomaterial only ever contributes one
+// category entry — the first of its cellTypes that matches (general or a
+// currently-selected biomaterial) — since it's one row in
+// ComputedProtocolList, not one per matching biomaterial.
 export function computeEssentialProtocolIds(answers: Answers, protocols: ValidatedProtocolSummary[]): { protocolId: string; categoryKey: string }[] {
   const biomaterials = new Set((answers.biomaterials as string[]) || []);
   const result: { protocolId: string; categoryKey: string }[] = [];
   for (const p of protocols) {
-    if (!p.essential || !p.cellType) continue;
-    if (p.cellType === 'general' || biomaterials.has(p.cellType)) {
-      result.push({ protocolId: p.protocolId, categoryKey: p.cellType });
+    if (!p.essential || !p.cellTypes || p.cellTypes.length === 0) continue;
+    const matched = p.cellTypes.find((ct) => ct === 'general' || biomaterials.has(ct));
+    if (matched) {
+      result.push({ protocolId: p.protocolId, categoryKey: matched });
     }
   }
   return result;
@@ -254,7 +256,7 @@ export const QS: Question[] = [
   { id: 'space', n: 4, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
   {
     id: 'operations', n: 5, t: 'Plan your Protocols',
-    h: 'Essential protocols for your selected biomaterials are added automatically — add or remove any protocol below, and set expected weekly runs for each.',
+    h: 'Recommended protocols for your selected biomaterials are added automatically — add or remove any protocol below, and set expected weekly runs for each.',
     type: 'protocol_plan', opts: OPERATION_OPTS,
   },
   { id: 'budget', n: 6, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
