@@ -158,18 +158,24 @@ export const BIOMATERIAL_LIST_KEYS: Record<string, string> = {
   mammalian_adherent: 'mammalian_adherent_basic_equipment',
   mammalian_suspension: 'mammalian_suspension_basic_equipment',
 };
-// Kept in sync by hand with the backend's PROTOCOL_SPECIFIC_CATEGORY_KEY
-// (src/bom/protocol-equipment-list.ts) — same convention as the list keys
-// above. Never produced by anything in this file; see the category entry
-// below for why it's still declared here.
-export const PROTOCOL_SPECIFIC_CATEGORY_KEY = 'protocol_specific';
-
 // The equipment-plan step's color-coded category legend — one entry per
 // source that can contribute equipment to the Basic Lab Equipment List (see
 // computeBasicLabEquipment below), in the same order they're added there.
 // Colors are chosen to stay visually distinct from each other and from the
 // existing amber "still a Canvas placeholder" convention used elsewhere.
-export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; color: string }[] = [
+//
+// Also doubles as the report's BOM category legend (see BomSection in
+// ReportView.tsx): the backend's bom/protocol-equipment-list.ts tags
+// protocol-only equipment with these SAME keys (bacteria/yeast/
+// mammalian_adherent/mammalian_suspension/general) rather than a separate
+// "protocol-specific" category, so a protocol-driven item merges into the
+// same report section as Basic-list equipment for that cell type. reportLabel
+// overrides the label ONLY on the report (where "Bacterial Basic" would be
+// misleading once protocol-driven items land there too, alongside the user's
+// biomaterial starter list) — the equipment-plan step keeps showing the
+// label unchanged, since there every row really is still just the Basic
+// list for that cell type.
+export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; reportLabel?: string; color: string }[] = [
   // Equipment entered as already-owned in the same step (see
   // computeBasicLabEquipment's ownedMeta loop) — listed first since an
   // owned-only item (not required by anything else) needs no action from
@@ -185,20 +191,12 @@ export const BASIC_EQUIPMENT_CATEGORIES: { key: string; label: string; color: st
   // backend's bom-generator.ts, which only special-cases 'owned'). Takes the
   // blue freed up by removing the old 'analytical' category below.
   { key: 'needed', label: 'Additional Equipment', color: '#3462C9' },
-  { key: 'general', label: 'General Lab Equipment', color: '#00A3A3' },
+  { key: 'general', label: 'General Lab Equipment', reportLabel: 'General Equipment', color: '#00A3A3' },
   { key: 'bsl', label: 'Biosafety-Required', color: '#a67c00' },
-  { key: 'bacteria', label: 'Bacterial Basic', color: '#3D8B3D' },
-  { key: 'yeast', label: 'Yeast Basic', color: '#C9791C' },
-  { key: 'mammalian_adherent', label: 'Mammalian (Adherent) Basic', color: '#7B4FD6' },
-  { key: 'mammalian_suspension', label: 'Mammalian (Suspension) Basic', color: '#D64F9E' },
-  // Not part of the equipment-plan step's Basic Lab Equipment List (nothing here is ever
-  // computed by computeBasicLabEquipment) — this key is only ever produced
-  // server-side by the backend's bom/protocol-equipment-list.ts when
-  // merging the Protocols Equipment List into the report's BOM, for
-  // equipment a selected Q7 protocol needs that isn't already on the Basic
-  // Lab list. Included here anyway so the report's BomSection (ReportView.tsx)
-  // renders it as its own category in the same format as every other one.
-  { key: PROTOCOL_SPECIFIC_CATEGORY_KEY, label: 'Protocol Specific Equipment', color: '#B5442E' },
+  { key: 'bacteria', label: 'Bacterial Basic', reportLabel: 'Bacterial Equipment', color: '#3D8B3D' },
+  { key: 'yeast', label: 'Yeast Basic', reportLabel: 'Yeast Equipment', color: '#C9791C' },
+  { key: 'mammalian_adherent', label: 'Mammalian (Adherent) Basic', reportLabel: 'Mammalian (Adherent) Equipment', color: '#7B4FD6' },
+  { key: 'mammalian_suspension', label: 'Mammalian (Suspension) Basic', reportLabel: 'Mammalian (Suspension) Equipment', color: '#D64F9E' },
 ];
 
 // The protocol-plan step's (Q5) color-coded category legend — same per-

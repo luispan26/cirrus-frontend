@@ -65,10 +65,10 @@ function bomTable(rows: any[], style?: CSSProperties, headerColor?: string) {
 // Same color-coded-by-source grouping as Q5's finalization step
 // (BASIC_EQUIPMENT_CATEGORIES in lib/questions.ts) — each row carries the
 // list(s) it was drawn from (see bom-generator.ts's BomRow.sources), grouped
-// here by its primary (first-contributing) source with cross-reference pills
-// for any others, same as QuestionsPage.tsx's BasicLabEquipmentBody. Reports
-// generated before this field existed have no sources on any row, so this
-// falls back to one flat table rather than a single "uncategorized" bucket.
+// here by its primary (first-contributing) source, same as
+// QuestionsPage.tsx's BasicLabEquipmentBody. Reports generated before this
+// field existed have no sources on any row, so this falls back to one flat
+// table rather than a single "uncategorized" bucket.
 function BomSection({ bom }: { bom: any[] }) {
   const hasSources = bom.some((row) => Array.isArray(row.sources) && row.sources.length > 0);
   if (!hasSources) {
@@ -79,7 +79,6 @@ function BomSection({ bom }: { bom: any[] }) {
     );
   }
 
-  const categoryByKey = new Map(BASIC_EQUIPMENT_CATEGORIES.map((c) => [c.key, c]));
   const rowsByCategory = new Map<string, any[]>();
   for (const row of bom) {
     const key = (Array.isArray(row.sources) && row.sources[0]) || 'general';
@@ -93,36 +92,15 @@ function BomSection({ bom }: { bom: any[] }) {
       {BASIC_EQUIPMENT_CATEGORIES.map((category) => {
         const rows = rowsByCategory.get(category.key);
         if (!rows || rows.length === 0) return null;
-        const decoratedRows = rows.map((row) => ({
-          ...row,
-          equipmentSpecification: (
-            <>
-              {row.equipmentSpecification}
-              {(row.sources as string[]).filter((s) => s !== category.key).map((sourceKey) => {
-                const meta = categoryByKey.get(sourceKey);
-                if (!meta) return null;
-                return (
-                  <span
-                    key={sourceKey}
-                    title={`Also required by ${meta.label}`}
-                    style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: meta.color, border: `1px solid ${meta.color}`, borderRadius: 10, padding: '1px 7px' }}
-                  >
-                    + {meta.label}
-                  </span>
-                );
-              })}
-            </>
-          ),
-        }));
         return (
           <div key={category.key} style={{ borderRadius: 10, overflow: 'hidden' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 8, padding: '8px 12px', background: '#fff' }}>
               <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.03em', color: category.color, textTransform: 'uppercase' }}>
-                {category.label}
+                {category.reportLabel ?? category.label}
               </span>
               <span style={{ fontSize: 11, color: category.color, opacity: 0.7 }}>({rows.length})</span>
             </div>
-            {bomTable(decoratedRows, { borderTopLeftRadius: 0, borderTopRightRadius: 0, boxShadow: 'none', marginBottom: 0 }, category.color)}
+            {bomTable(rows, { borderTopLeftRadius: 0, borderTopRightRadius: 0, boxShadow: 'none', marginBottom: 0 }, category.color)}
           </div>
         );
       })}
@@ -148,7 +126,7 @@ function computeCostByCategory(bom: any[]): { name: string; value: number; color
     .filter(([, value]) => value > 0)
     .map(([key, value]) => {
       const meta = categoryByKey.get(key);
-      return { name: meta?.label ?? cap(key), value, color: meta?.color ?? '#00D5D5' };
+      return { name: meta?.reportLabel ?? meta?.label ?? cap(key), value, color: meta?.color ?? '#00D5D5' };
     });
 }
 
