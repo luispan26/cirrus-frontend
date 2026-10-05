@@ -79,6 +79,10 @@ export const BIOMATERIAL_OPTS: QuestionOption[] = [
   { v: 'mammalian_suspension', l: 'Mammalian - Suspension' },
 ];
 
+// A Validated Protocol's cell-type tags: the biomaterials above plus 'general'
+// for protocols not tied to any one biomaterial.
+export const CELL_TYPE_OPTS: QuestionOption[] = [...BIOMATERIAL_OPTS, { v: 'general', l: 'General' }];
+
 // Prompt 1's eight fixed equipment membership list keys (see the backend's
 // src/equipment-lists/equipment-list.service.ts LIST_DEFINITIONS) that the
 // Basic Lab Equipment List computation below draws from. Kept in sync by
