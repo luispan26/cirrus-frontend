@@ -6,6 +6,7 @@ import {
   STEP_EQUIPMENT_MAPPINGS_FOR_PROTOCOL_QUERY, EQUIPMENT_USAGE_FOR_PROTOCOL_QUERY,
   ASSIGN_EQUIPMENT_TO_STEP_MUTATION, REMOVE_STEP_EQUIPMENT_MAPPING_MUTATION,
   TRIGGER_CANVAS_SYNC_MUTATION, IS_PROTOCOL_VALIDATED_QUERY, VALIDATE_PROTOCOL_MUTATION,
+  VALIDATED_PROTOCOLS_QUERY,
 } from '../graphql/operations';
 import { SearchableSelect } from '../components/SearchableSelect';
 
@@ -33,6 +34,7 @@ interface EquipmentUsageStep { stepId: string; stepNumber?: string; durationSeco
 interface EquipmentUsage { equipmentId: string; totalDurationSeconds: number; missingDurationStepCount: number; steps: EquipmentUsageStep[]; }
 interface ProtocolSummary { id: string; title: string; sourceUrl: string; doi?: string; publishedOn?: string; authorNames: string[]; }
 interface ProtocolSearchResult { currentPage: number; totalPages: number; totalResults: number; items: ProtocolSummary[]; }
+interface ValidatedProtocolRow { id: string; protocolId: string; title: string; sourceUrl: string; cellTypes?: string[] | null; essential: boolean; createdAt?: string; }
 interface CanvasSyncResult { equipmentSynced: number; protocolsSynced: number; }
 
 function durationLabel(seconds?: number): string | null {
@@ -86,33 +88,40 @@ export function ProtocolsPage() {
   // Browses/searches protocols rather than requiring a protocol ID to
   // already be known — key defaults to '' (the backend treats that as
   // "browse everything in scope", not a narrowed search). Runs on mount so
-  // results are visible immediately, not gated behind a first search.
-  // Scope defaults to the Damp Lab workspace (omitting workspaceUri lets
-  // the backend's own default apply) with an explicit opt-out to the full
-  // public catalog — passing null (not omitting the variable) is what
-  // actually overrides the backend default for that case.
-  const [scope, setScope] = useState<'workspace' | 'public'>('workspace');
+  // results are visible immediately, not gated behind a first search. Scope
+  // defaults to Validated Protocols — every protocol a technician has
+  // already confirmed ready for the questionnaire (see
+  // ValidatedProtocolsService.listAll) — with an explicit opt-out to the
+  // full public protocols.io catalog for finding something new to validate.
+  const [scope, setScope] = useState<'validated' | 'public'>('validated');
   const [searchDraft, setSearchDraft] = useState('');
   const [searchKey, setSearchKey] = useState('');
   const [searchPage, setSearchPage] = useState(1);
+
+  // Every validated protocol — unpaginated, since the list is small enough
+  // to just show in full (the user's own ask: "show all of the validated
+  // protocols there"). Filtered client-side by the same search box used for
+  // the public-catalog scope below, rather than a separate control.
+  const { data: validatedListData, loading: loadingValidated, error: validatedListError } = useQuery<{ validatedProtocols: ValidatedProtocolRow[] }>(VALIDATED_PROTOCOLS_QUERY);
+  const validatedProtocols = validatedListData?.validatedProtocols ?? [];
+  const filteredValidatedProtocols = searchKey
+    ? validatedProtocols.filter((p) => p.title.toLowerCase().includes(searchKey.toLowerCase()))
+    : validatedProtocols;
+
   const { data: searchData, loading: searching, error: searchErrorObj } = useQuery<{ protocolsIoSearch: ProtocolSearchResult }>(
     PROTOCOLS_IO_SEARCH_QUERY,
-    { variables: { key: searchKey, page: searchPage, pageSize: SEARCH_PAGE_SIZE, workspaceUri: scope === 'public' ? null : undefined } },
+    { variables: { key: searchKey, page: searchPage, pageSize: SEARCH_PAGE_SIZE, workspaceUri: null }, skip: scope !== 'public' },
   );
   const searchResult = searchData?.protocolsIoSearch;
 
-  // Counts for both scope chips at once — a single pageSize:1 request per
-  // scope (we only need totalResults, not another results page) so the
-  // inactive chip's count stays visible without switching scope to see it.
-  const { data: workspaceCountData } = useQuery<{ protocolsIoSearch: ProtocolSearchResult }>(
-    PROTOCOLS_IO_SEARCH_QUERY,
-    { variables: { key: searchKey, page: 1, pageSize: 1, workspaceUri: undefined } },
-  );
+  // Count for the public-catalog chip — a single pageSize:1 request (we
+  // only need totalResults, not another results page) so its count stays
+  // visible without switching scope to see it. The Validated Protocols
+  // chip's count comes straight from validatedProtocols.length above.
   const { data: publicCountData } = useQuery<{ protocolsIoSearch: ProtocolSearchResult }>(
     PROTOCOLS_IO_SEARCH_QUERY,
     { variables: { key: searchKey, page: 1, pageSize: 1, workspaceUri: null } },
   );
-  const workspaceResultCount = workspaceCountData?.protocolsIoSearch.totalResults;
   const publicResultCount = publicCountData?.protocolsIoSearch.totalResults;
 
   function handleSearch() {
@@ -128,7 +137,7 @@ export function ProtocolsPage() {
     }
   }
 
-  function handleScopeChange(next: 'workspace' | 'public') {
+  function handleScopeChange(next: 'validated' | 'public') {
     setScope(next);
     setSearchPage(1);
   }
@@ -138,16 +147,19 @@ export function ProtocolsPage() {
     fetchProtocol({ variables: { protocolId: id } });
   }
 
-  // Every Damp Lab workspace protocol has its Canvas-imported step-equipment
-  // mapping visible the moment it's opened from the nav — without this, an
-  // admin would have to select a protocol before its steps' equipment tags
-  // populate, which reads as the import having silently missed it.
+  // Whichever scope is active, the first row in the nav list has its
+  // Canvas-imported step-equipment mapping visible the moment the page (or
+  // scope) opens — without this, an admin would have to select a protocol
+  // before its steps' equipment tags populate, which reads as the import
+  // having silently missed it.
   useEffect(() => {
-    if (scope === 'workspace' && !protocol && searchResult && searchResult.items.length > 0) {
+    if (scope === 'validated' && !protocol && filteredValidatedProtocols.length > 0) {
+      handleBrowseSelect(filteredValidatedProtocols[0].protocolId);
+    } else if (scope === 'public' && !protocol && searchResult && searchResult.items.length > 0) {
       handleBrowseSelect(searchResult.items[0].id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchResult, scope]);
+  }, [searchResult, validatedProtocols, scope]);
 
   const { data: equipmentData } = useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
   const equipmentList = equipmentData?.equipmentList ?? [];
@@ -257,12 +269,12 @@ export function ProtocolsPage() {
           </div>
           <div style={{ fontSize: 12, color: 'var(--mid)' }}>Browse protocols, manage step-equipment assignments, and validate protocols for the questionnaire</div>
         </div>
-        <button className="btn-out" onClick={() => navigate('/dashboard')}>← Dashboard</button>
+        <button className="btn-out" onClick={() => navigate('/settings')}>← Settings</button>
       </div>
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         {/* Navigate menu: scrolls independently from the detail panel so paging
-            through many Damp Lab protocols never requires scrolling the whole page. */}
+            through many protocols never requires scrolling the whole page. */}
         <nav style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0, borderRight: '1px solid var(--br)' }}>
           <div style={{ padding: '16px 16px 0', flexShrink: 0 }}>
             <input
@@ -286,8 +298,8 @@ export function ProtocolsPage() {
             </button>
 
             <div className="chips" style={{ marginBottom: 10 }}>
-              <span className={`chip${scope === 'workspace' ? ' sel' : ''}`} onClick={() => handleScopeChange('workspace')}>
-                Damp Lab workspace{workspaceResultCount !== undefined && ` (${workspaceResultCount})`}
+              <span className={`chip${scope === 'validated' ? ' sel' : ''}`} onClick={() => handleScopeChange('validated')}>
+                Validated Protocols ({validatedProtocols.length})
               </span>
               <span className={`chip${scope === 'public' ? ' sel' : ''}`} onClick={() => handleScopeChange('public')}>
                 All public protocols{publicResultCount !== undefined && ` (${publicResultCount})`}
@@ -296,67 +308,106 @@ export function ProtocolsPage() {
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', minHeight: 0, padding: '0 16px 16px' }}>
-            {searchErrorObj && (
-              <div style={{ padding: 10, borderRadius: 8, background: '#fdecea', color: '#a33', fontSize: 12, marginBottom: 12 }}>
-                {searchErrorObj.message}
-              </div>
-            )}
-
-            {searchResult && (
+            {scope === 'validated' && (
               <>
-                <div style={{ fontSize: 11, color: 'var(--mid)', marginBottom: 8 }}>
-                  {searchResult.totalResults.toLocaleString()} protocol{searchResult.totalResults === 1 ? '' : 's'}
-                  {searchKey ? ` matching "${searchKey}"` : ''} in {scope === 'workspace' ? 'Damp Lab' : 'public catalog'}
-                </div>
+                {validatedListError && (
+                  <div style={{ padding: 10, borderRadius: 8, background: '#fdecea', color: '#a33', fontSize: 12, marginBottom: 12 }}>
+                    {validatedListError.message}
+                  </div>
+                )}
+                {!loadingValidated && (
+                  <div style={{ fontSize: 11, color: 'var(--mid)', marginBottom: 8 }}>
+                    {filteredValidatedProtocols.length.toLocaleString()} protocol{filteredValidatedProtocols.length === 1 ? '' : 's'}
+                    {searchKey ? ` matching "${searchKey}"` : ''} in Validated Protocols
+                  </div>
+                )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
-                  {searchResult.items.map((item) => (
+                  {filteredValidatedProtocols.map((item) => (
                     <div
-                      key={item.id}
-                      onClick={() => handleBrowseSelect(item.id)}
+                      key={item.protocolId}
+                      onClick={() => handleBrowseSelect(item.protocolId)}
                       style={{
                         padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
-                        background: protocolId === item.id ? 'var(--teal)' : 'transparent',
-                        color: protocolId === item.id ? 'white' : 'inherit',
+                        background: protocolId === item.protocolId ? 'var(--teal)' : 'transparent',
+                        color: protocolId === item.protocolId ? 'white' : 'inherit',
                       }}
                     >
                       <div style={{ fontWeight: 600 }}>{item.title}</div>
                       <div style={{ fontSize: 11, opacity: 0.8, marginTop: 2 }}>
-                        {item.authorNames.length > 0 && <span>{item.authorNames.join(', ')} · </span>}
-                        {item.publishedOn && <span>{new Date(item.publishedOn).toLocaleDateString()} · </span>}
-                        <span>ID {item.id}</span>
+                        {(item.cellTypes ?? []).length > 0 && <span>{(item.cellTypes ?? []).join(', ')} · </span>}
+                        <span>ID {item.protocolId}</span>
                       </div>
                     </div>
                   ))}
-                  {searchResult.items.length === 0 && scope === 'workspace' && (
+                  {!loadingValidated && filteredValidatedProtocols.length === 0 && (
                     <div style={{ fontSize: 12, color: 'var(--mid)', padding: '8px 0' }}>
-                      No protocols published to the Damp Lab workspace yet — switch to "All public protocols" to browse the wider catalog.
+                      No protocols have been validated yet — switch to "All public protocols" to find one, assign equipment to at least one step, and validate it.
                     </div>
                   )}
-                  {searchResult.items.length === 0 && scope === 'public' && (
-                    <div style={{ fontSize: 12, color: 'var(--mid)', padding: '8px 0' }}>No published protocols matched.</div>
-                  )}
                 </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <button
-                    className="btn-out"
-                    style={{ padding: '4px 10px', fontSize: 12 }}
-                    disabled={searchResult.currentPage <= 1 || searching}
-                    onClick={() => setSearchPage((p) => Math.max(1, p - 1))}
-                  >
-                    ← Prev
-                  </button>
-                  <span style={{ fontSize: 11, color: 'var(--mid)' }}>
-                    {searchResult.currentPage} / {searchResult.totalPages.toLocaleString()}
-                  </span>
-                  <button
-                    className="btn-out"
-                    style={{ padding: '4px 10px', fontSize: 12 }}
-                    disabled={searchResult.currentPage >= searchResult.totalPages || searching}
-                    onClick={() => setSearchPage((p) => p + 1)}
-                  >
-                    Next →
-                  </button>
-                </div>
+              </>
+            )}
+
+            {scope === 'public' && (
+              <>
+                {searchErrorObj && (
+                  <div style={{ padding: 10, borderRadius: 8, background: '#fdecea', color: '#a33', fontSize: 12, marginBottom: 12 }}>
+                    {searchErrorObj.message}
+                  </div>
+                )}
+
+                {searchResult && (
+                  <>
+                    <div style={{ fontSize: 11, color: 'var(--mid)', marginBottom: 8 }}>
+                      {searchResult.totalResults.toLocaleString()} protocol{searchResult.totalResults === 1 ? '' : 's'}
+                      {searchKey ? ` matching "${searchKey}"` : ''} in public catalog
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
+                      {searchResult.items.map((item) => (
+                        <div
+                          key={item.id}
+                          onClick={() => handleBrowseSelect(item.id)}
+                          style={{
+                            padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+                            background: protocolId === item.id ? 'var(--teal)' : 'transparent',
+                            color: protocolId === item.id ? 'white' : 'inherit',
+                          }}
+                        >
+                          <div style={{ fontWeight: 600 }}>{item.title}</div>
+                          <div style={{ fontSize: 11, opacity: 0.8, marginTop: 2 }}>
+                            {item.authorNames.length > 0 && <span>{item.authorNames.join(', ')} · </span>}
+                            {item.publishedOn && <span>{new Date(item.publishedOn).toLocaleDateString()} · </span>}
+                            <span>ID {item.id}</span>
+                          </div>
+                        </div>
+                      ))}
+                      {searchResult.items.length === 0 && (
+                        <div style={{ fontSize: 12, color: 'var(--mid)', padding: '8px 0' }}>No published protocols matched.</div>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <button
+                        className="btn-out"
+                        style={{ padding: '4px 10px', fontSize: 12 }}
+                        disabled={searchResult.currentPage <= 1 || searching}
+                        onClick={() => setSearchPage((p) => Math.max(1, p - 1))}
+                      >
+                        ← Prev
+                      </button>
+                      <span style={{ fontSize: 11, color: 'var(--mid)' }}>
+                        {searchResult.currentPage} / {searchResult.totalPages.toLocaleString()}
+                      </span>
+                      <button
+                        className="btn-out"
+                        style={{ padding: '4px 10px', fontSize: 12 }}
+                        disabled={searchResult.currentPage >= searchResult.totalPages || searching}
+                        onClick={() => setSearchPage((p) => p + 1)}
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>
