@@ -120,7 +120,7 @@ export function InventoryPage() {
             EQUIPMENT DATABASE
           </div>
         </div>
-        <button className="btn-out" onClick={() => navigate('/dashboard')}>← Dashboard</button>
+        <button className="btn-out" onClick={() => navigate('/settings')}>← Settings</button>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 24, maxWidth: 1300, margin: '0 auto', width: '100%' }}>

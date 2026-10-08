@@ -1,11 +1,10 @@
 import { useState, type FormEvent } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Logo } from '../components/Logo';
 
 export function LoginPage({ mode }: { mode: 'login' | 'register' }) {
   const navigate = useNavigate();
-  const location = useLocation();
   const { login, register } = useAuth();
 
   const [email, setEmail] = useState('');
@@ -13,8 +12,6 @@ export function LoginPage({ mode }: { mode: 'login' | 'register' }) {
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  const from = (location.state as { from?: Location } | null)?.from?.pathname || '/dashboard';
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -26,7 +23,10 @@ export function LoginPage({ mode }: { mode: 'login' | 'register' }) {
       } else {
         await register(email, password, name);
       }
-      navigate(from, { replace: true });
+      // Always land on the dashboard after login/register — regardless of
+      // which protected route (if any) redirected here via ProtectedRoute's
+      // state: {from: location}, which is deliberately ignored now.
+      navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(String((err as Error).message || err));
     } finally {

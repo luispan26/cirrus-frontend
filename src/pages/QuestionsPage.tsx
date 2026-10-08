@@ -9,6 +9,7 @@ import { useIntakeSync } from '../hooks/useIntakeSync';
 import {
   QS, OPERATION_OPTS, DAMPLAB_MATCH_KEYWORDS, shouldSkip, stepIndex, buildFinalIntakeJson, FEASIBILITY_GATE_IDS,
   computeBasicLabEquipment, applyBasicLabEquipmentOverrides, BASIC_EQUIPMENT_CATEGORIES,
+  computeEssentialProtocolIds, PROTOCOL_PLAN_CATEGORIES,
   type Answers, type QuestionOption, type WallSide,
 } from '../lib/questions';
 import {
@@ -18,6 +19,7 @@ import { getSessionId } from '../lib/session';
 
 type EquipmentRow = { equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; stationId: string | null; utilityType: string | null; allTags: string[] };
 type EquipmentListRow = { listKey: string; displayName: string; equipmentIds: string[] };
+type ValidatedProtocolRow = { protocolId: string; title: string; sourceUrl: string; cellTypes?: string[] | null; essential: boolean };
 
 type FeasibilityIssue = { field: string; message: string };
 type FeasibilityCheckResponse = { feasibilityCheck: { ok: boolean; issues: FeasibilityIssue[] } };
@@ -250,7 +252,7 @@ function QuestionBody({
       <div className="q-title">{q.t}</div>
       <div className="q-hint">{questionHint(q, answers)}</div>
 
-      {q.type === 'multi' && <ProtocolSelectBody answers={answers} toggleMultiField={toggleMultiField} setField={setField} />}
+      {q.type === 'protocol_plan' && <ProtocolPlanBody answers={answers} setField={setField} />}
 
       {q.type === 'radio' && (
         <div className="opt-grid" style={{ gridTemplateColumns: '1fr' }}>
@@ -276,18 +278,17 @@ function QuestionBody({
   );
 }
 
-// The full Validated Protocols list is selectable, not just the curated subset with
-// a matching Operation definition — an unmatched protocol still gets
-// recorded in the final intake payload (see resolveOperationId in
-// questions.ts, which passes an unrecognized id through unchanged), it just
-// doesn't contribute equipment/space sizing since the backend has no
-// Operation to look it up against. Matched protocols additionally record
-// which catalog Operation they matched (see ProtocolSelectBody's
-// protocol_operation_by_id) so sizing still works, but each protocol keeps
-// its own checkbox/id regardless of match — two different validated
-// protocols that both title-match the same Operation (e.g. two distinct
-// BCA assay kits) must stay independently selectable, not collapse onto one
-// shared checkbox.
+// The full Validated Protocols list can be matched, not just protocols with
+// an obvious title — an unmatched protocol still gets recorded in the final
+// intake payload (see resolveOperationId in questions.ts, which passes an
+// unrecognized id through unchanged), it just doesn't contribute
+// equipment/space sizing since the backend has no Operation to look it up
+// against. Matched protocols additionally record which catalog Operation
+// they matched (see ComputedProtocolList's protocol_operation_by_id sync) so
+// sizing still works, but each protocol keeps its own id regardless of match
+// — two different validated protocols that both title-match the same
+// Operation (e.g. two distinct BCA assay kits) stay independently
+// selectable, not collapsed onto one shared entry.
 function findCatalogMatch(title: string): QuestionOption | undefined {
   const lower = title.toLowerCase();
   return OPERATION_OPTS.find((opt) => {
@@ -296,167 +297,251 @@ function findCatalogMatch(title: string): QuestionOption | undefined {
   });
 }
 
-// Select-then-quantify, same pattern as AnalyticalEquipmentBody: adding a
-// protocol here immediately surfaces a weekly-runs input for it (folded in
-// from the old, separate protocol_demand step) instead of asking again on a
-// second screen. Run duration is deliberately not asked here; it's pulled
-// from each operation's own estimatedTimeHours metadata on the backend
-// (capacity-planner.ts), which combines with this to size bench count (see
-// FinalIntakeJson.demand in questions.ts). 0 is a valid answer (no
-// throughput-driven extra benches, not "skip this protocol") — validateQuestion
-// only requires every selected protocol to have an explicit entry, not a
-// positive one.
-// Scoped to protocols a technician has explicitly validated on the
-// /protocols admin page (see validatedProtocols — validation itself
-// requires the protocol to already have equipment mapped to at least one
-// step) rather than the full protocols.io catalog: those are the only ones
-// Cirrus can actually plan real equipment for, and the only ones a
-// technician has signed off as ready. Full scrollable checkbox list, same
-// pattern as the Equipment Membership Lists page's "Unassigned" panel —
-// select-then-quantify per row, same as AnalyticalEquipmentBody/the old
-// protocol_demand step (see FinalIntakeJson.demand in questions.ts).
-function ProtocolSelectBody({ answers, toggleMultiField, setField }: { answers: Answers; toggleMultiField: (k: string, v: string) => void; setField: (k: string, v: unknown) => void }) {
-  const { data: validatedData, loading, error } = useQuery<{ validatedProtocols: { protocolId: string; title: string; sourceUrl: string }[] }>(VALIDATED_PROTOCOLS_QUERY);
-  const validatedItems = validatedData?.validatedProtocols ?? [];
-
-  const mappedProtocols = validatedItems
-    .map((item) => {
-      const catalogMatch = findCatalogMatch(item.title);
-      // value is always the protocol's own real protocols.io id — never
-      // the shared catalog operation id — so two different validated
-      // protocols matching the same Operation (e.g. two distinct BCA assay
-      // kits) get independent checkboxes instead of one toggling both.
-      // operationId (set only when matched) is recorded separately via
-      // protocol_operation_by_id in toggleProtocol below, purely for
-      // equipment/space sizing.
-      return { value: item.protocolId, title: item.title, sourceUrl: item.sourceUrl, sized: !!catalogMatch, operationId: catalogMatch?.v };
-    })
-    .sort((a, b) => a.title.localeCompare(b.title));
-
-  const selected = (answers.operations as string[]) || [];
-  const runs = (answers.protocol_runs_per_week as Record<string, number>) || {};
-  const operationByProtocolId = (answers.protocol_operation_by_id as Record<string, string>) || {};
-  const [search, setSearch] = useState('');
-  const visible = search.trim()
-    ? mappedProtocols.filter((p) => p.title.toLowerCase().includes(search.trim().toLowerCase()))
-    : mappedProtocols;
-  const allVisibleChecked = visible.length > 0 && visible.every((p) => selected.includes(p.value));
-
-  function toggleProtocol(p: { value: string; operationId?: string }) {
-    const wasSelected = selected.includes(p.value);
-    toggleMultiField('operations', p.value);
-    if (wasSelected) {
-      const { [p.value]: _removed, ...rest } = runs;
-      setField('protocol_runs_per_week', rest);
-      if (p.operationId) {
-        const { [p.value]: _removedOp, ...restOps } = operationByProtocolId;
-        setField('protocol_operation_by_id', restOps);
-      }
-    } else {
-      // Selecting a protocol defaults it to 1 run/week — the user can raise
-      // that or uncheck the protocol entirely, but a freshly-checked box
-      // never sits at an empty/zero run count.
-      setField('protocol_runs_per_week', { ...runs, [p.value]: 1 });
-      if (p.operationId) {
-        setField('protocol_operation_by_id', { ...operationByProtocolId, [p.value]: p.operationId });
-      }
-    }
+// The protocol-plan step's final selection: every essential protocol
+// matching the user's current biomaterials (computeEssentialProtocolIds in
+// questions.ts) that hasn't been explicitly removed, unioned with whatever
+// the user has manually added — same "list-derived-minus-removed union
+// user-added" shape as the equipment step's computeBasicLabEquipment/
+// applyBasicLabEquipmentOverrides split, just without a quantity dimension.
+// An id present in both sets (e.g. removed as essential, then re-added
+// manually) resolves to 'manual', since the essential loop below only ever
+// populates ids that are NOT in removedSet — the manual loop runs second and
+// only fills in ids the essential loop didn't already claim.
+function computeFinalProtocolSelection(answers: Answers, protocols: { protocolId: string; essential: boolean; cellTypes?: string[] | null }[]): { protocolId: string; categoryKey: string }[] {
+  const essential = computeEssentialProtocolIds(answers, protocols);
+  const removedSet = new Set((answers.protocol_essential_removed as string[]) || []);
+  const manualIds = (answers.protocol_manual_ids as string[]) || [];
+  const byId = new Map<string, string>();
+  for (const e of essential) {
+    if (!removedSet.has(e.protocolId)) byId.set(e.protocolId, e.categoryKey);
   }
-
-  function toggleAllVisible() {
-    for (const p of visible) {
-      if (allVisibleChecked) { if (selected.includes(p.value)) toggleProtocol(p); }
-      else if (!selected.includes(p.value)) toggleProtocol(p);
-    }
+  for (const id of manualIds) {
+    if (!byId.has(id)) byId.set(id, 'manual');
   }
+  return [...byId.entries()].map(([protocolId, categoryKey]) => ({ protocolId, categoryKey }));
+}
 
-  function setRuns(opId: string, value: number) {
-    // Floored at 1 while the protocol stays checked — deselecting it
-    // entirely is how a user drops it back out, not dialing runs to 0.
-    setField('protocol_runs_per_week', { ...runs, [opId]: Math.max(1, Math.round(value)) });
-  }
+// The merged protocol-planning step: essential protocols for the user's
+// selected biomaterials are computed and pre-selected automatically (mirrors
+// EquipmentPlanBody/computeBasicLabEquipment for Q3), and the user can add
+// any other validated protocol or remove anything computed. Hoists
+// VALIDATED_PROTOCOLS_QUERY here rather than in each child so there's one
+// loading/error state instead of two.
+function ProtocolPlanBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
+  const { data, loading, error } = useQuery<{ validatedProtocols: ValidatedProtocolRow[] }>(VALIDATED_PROTOCOLS_QUERY);
+  const protocols = data?.validatedProtocols ?? [];
 
   if (loading) return <p className="q-inline-help">Loading validated protocols…</p>;
   if (error) return <p className="q-validation-error">Couldn’t load validated protocols: {error.message}</p>;
 
-  if (mappedProtocols.length === 0) {
+  if (protocols.length === 0) {
     return <p className="q-inline-help">No protocols have been validated yet — assign equipment to at least one step and validate a protocol on the Protocols page first.</p>;
   }
 
   return (
-    <>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '64vh', overflowY: 'auto', paddingRight: 6 }}>
+      <ProtocolPicker answers={answers} setField={setField} protocols={protocols} />
+      <ComputedProtocolList answers={answers} setField={setField} protocols={protocols} />
+    </div>
+  );
+}
+
+// Search-and-add control for protocols beyond whatever's essential-computed
+// — single-bucket, unlike EquipmentPicker's Owned/Needed split, since a
+// protocol has no owned/needed distinction. Deliberately doesn't render
+// what's already selected (essential or manual) — once added, a protocol
+// becomes a row in ComputedProtocolList below with its own Remove control,
+// so there's exactly one place per protocol to view or edit it.
+function ProtocolPicker({ answers, setField, protocols }: { answers: Answers; setField: (k: string, v: unknown) => void; protocols: ValidatedProtocolRow[] }) {
+  const finalIds = new Set(computeFinalProtocolSelection(answers, protocols).map((s) => s.protocolId));
+  const addable = protocols.filter((p) => !finalIds.has(p.protocolId));
+  const [draftId, setDraftId] = useState('');
+
+  useEffect(() => {
+    if (draftId && !addable.some((p) => p.protocolId === draftId)) {
+      setDraftId('');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addable.length, draftId]);
+
+  function addProtocol() {
+    const p = protocols.find((x) => x.protocolId === draftId);
+    if (!p) return;
+    const manualIds = (answers.protocol_manual_ids as string[]) || [];
+    if (!manualIds.includes(p.protocolId)) {
+      setField('protocol_manual_ids', [...manualIds, p.protocolId]);
+    }
+    setDraftId('');
+  }
+
+  return (
+    <div className="field-wrap" style={{ marginBottom: 0 }}>
+      <label className="field-label">Add another protocol</label>
       <p className="q-inline-help" style={{ marginTop: 0 }}>
-        Only Validated Protocols are shown ({mappedProtocols.length} available). Check the ones this lab needs and set expected weekly runs for each.
+        {protocols.length === addable.length
+          ? 'Search for any Validated Protocol and add it — it\'ll appear under Added Manually below.'
+          : 'Recommended protocols for your biomaterials are already listed below. Search for anything else this lab needs and add it.'}
       </p>
-
-      {mappedProtocols.length > 6 && (
-        <input
-          className="field-input"
-          style={{ width: '100%', fontSize: 12, marginBottom: 10 }}
-          placeholder="Search protocols…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      {addable.length > 0 ? (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <SearchableSelect
+            style={{ width: 320 }}
+            value={draftId}
+            onChange={setDraftId}
+            placeholder="Search for a protocol…"
+            options={[{ value: '', label: 'Select a protocol…', disabled: true }, ...addable.map((p) => ({ value: p.protocolId, label: p.title }))]}
+          />
+          <button type="button" className="btn-out" disabled={!draftId} onClick={addProtocol}>Add</button>
+        </div>
+      ) : (
+        <p className="q-inline-help" style={{ marginBottom: 0 }}>Every validated protocol is already in your list below.</p>
       )}
+    </div>
+  );
+}
 
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--mid)', marginBottom: 8, cursor: 'pointer' }}>
-        <input type="checkbox" checked={allVisibleChecked} onChange={toggleAllVisible} />
-        Select all {search.trim() ? 'matching' : ''} ({visible.length})
-      </label>
+// Computes+renders the final protocol selection, grouped by
+// PROTOCOL_PLAN_CATEGORIES, and syncs it into the raw answer fields
+// buildFinalIntakeJson actually reads (operations/protocol_runs_per_week/
+// protocol_operation_by_id) — same "compute, render, sync via effect"
+// pattern as ComputedEquipmentList's basic_lab_equipment_final sync below,
+// just writing three fields instead of one since protocols never got their
+// own combined "_final" field.
+function ComputedProtocolList({ answers, setField, protocols }: { answers: Answers; setField: (k: string, v: unknown) => void; protocols: ValidatedProtocolRow[] }) {
+  const protocolById = new Map(protocols.map((p) => [p.protocolId, p]));
+  const finalSelection = computeFinalProtocolSelection(answers, protocols);
+  const finalIds = finalSelection.map((s) => s.protocolId);
+  const serialized = JSON.stringify(finalSelection);
 
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 10,
-          maxHeight: 360,
-          overflowY: 'scroll',
-          border: '1px solid var(--br)',
-          borderRadius: 8,
-          padding: '10px 10px 2px',
-          background: '#fafafa',
-          boxShadow: 'inset 0 6px 6px -6px rgba(0,0,0,.12), inset 0 -6px 6px -6px rgba(0,0,0,.12)',
-        }}
-      >
-        {visible.map((p) => {
-          const isSelected = selected.includes(p.value);
+  useEffect(() => {
+    const runs = (answers.protocol_runs_per_week as Record<string, number>) || {};
+    const operationByProtocolId = (answers.protocol_operation_by_id as Record<string, string>) || {};
+
+    const nextRuns: Record<string, number> = {};
+    const nextOps: Record<string, string> = {};
+    for (const id of finalIds) {
+      // Preserves an existing runs/week value for anything staying selected
+      // — only a newly-entering id defaults to 1 (mirrors the old
+      // ProtocolSelectBody's toggle-on default).
+      nextRuns[id] = runs[id] ?? 1;
+      const existingOp = operationByProtocolId[id];
+      if (existingOp) {
+        nextOps[id] = existingOp;
+      } else {
+        const p = protocolById.get(id);
+        const match = p ? findCatalogMatch(p.title) : undefined;
+        if (match) nextOps[id] = match.v;
+      }
+    }
+
+    setField('operations', finalIds);
+    setField('protocol_runs_per_week', nextRuns);
+    setField('protocol_operation_by_id', nextOps);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serialized]);
+
+  const runs = (answers.protocol_runs_per_week as Record<string, number>) || {};
+
+  function setRuns(protocolId: string, value: number) {
+    // Floored at 1 while the protocol stays selected — removing it entirely
+    // is how a user drops it back out, not dialing runs to 0.
+    setField('protocol_runs_per_week', { ...runs, [protocolId]: Math.max(1, Math.round(value)) });
+  }
+
+  // Always clears any manual-addition record for this id (harmless no-op if
+  // it was never there), and additionally records an essential-sourced
+  // removal when the row wasn't showing as 'manual' — covers the case where
+  // a protocol is both an essential match AND already in protocol_manual_ids
+  // (e.g. added manually before its biomaterial was selected): without also
+  // clearing protocol_manual_ids here, the manual loop in
+  // computeFinalProtocolSelection would silently resurrect it next render
+  // under the Added Manually section instead of actually removing it.
+  function remove(protocolId: string, categoryKey: string) {
+    const manualIds = (answers.protocol_manual_ids as string[]) || [];
+    if (manualIds.includes(protocolId)) {
+      setField('protocol_manual_ids', manualIds.filter((id) => id !== protocolId));
+    }
+    if (categoryKey !== 'manual') {
+      const removedIds = (answers.protocol_essential_removed as string[]) || [];
+      if (!removedIds.includes(protocolId)) {
+        setField('protocol_essential_removed', [...removedIds, protocolId]);
+      }
+    }
+  }
+
+  if (finalSelection.length === 0) {
+    return <p className="q-inline-help">Nothing here yet — add a protocol above, or pick a biomaterial with recommended protocols on the biomaterials question.</p>;
+  }
+
+  const rowsByCategory = new Map<string, typeof finalSelection>();
+  for (const row of finalSelection) {
+    const bucket = rowsByCategory.get(row.categoryKey);
+    if (bucket) bucket.push(row);
+    else rowsByCategory.set(row.categoryKey, [row]);
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 0 }}>
+        Recommended protocols for your selected biomaterials are listed automatically. Set expected weekly runs for each, or remove anything you don’t need — removing one just takes it out of this lab’s plan, it doesn’t change what’s recommended for that biomaterial. Each color-coded section below shows why that protocol is in this list.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+        {PROTOCOL_PLAN_CATEGORIES.map((category) => {
+          const categoryRows = rowsByCategory.get(category.key);
+          if (!categoryRows || categoryRows.length === 0) return null;
           return (
-            <div key={p.value} style={{ paddingBottom: 8, borderBottom: '1px solid var(--br)' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
-                <input type="checkbox" checked={isSelected} onChange={() => toggleProtocol(p)} />
-                <span style={{ fontWeight: 600, color: 'var(--dark)' }}>{p.title}</span>
-                {!p.sized && (
-                  <span title="No Operation definition to size a room against yet — still recorded, just not sized." style={{ fontSize: 11, color: 'var(--mid)', border: '1px solid var(--br)', borderRadius: 4, padding: '1px 5px' }}>
-                    not sized yet
-                  </span>
-                )}
-                <a href={p.sourceUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 11, color: 'var(--teal)' }}>
-                  View on protocols.io →
-                </a>
-              </label>
-              {isSelected && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 26, marginTop: 6 }}>
-                  <input
-                    className="field-input"
-                    type="number"
-                    min={1}
-                    step={1}
-                    style={{ width: 80 }}
-                    placeholder="1"
-                    value={runs[p.value] ?? 1}
-                    onChange={(e) => setRuns(p.value, Number(e.target.value) || 1)}
-                  />
-                  <span style={{ fontSize: 12, color: 'var(--mid)' }}>runs/week</span>
-                </div>
-              )}
+            <div key={category.key}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: category.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.03em', color: category.color, textTransform: 'uppercase' }}>
+                  {category.label}
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--mid)' }}>({categoryRows.length})</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, borderLeft: `3px solid ${category.color}`, paddingLeft: 12 }}>
+                {categoryRows.map((row) => {
+                  const p = protocolById.get(row.protocolId);
+                  if (!p) return null;
+                  const sized = !!findCatalogMatch(p.title);
+                  return (
+                    <div key={row.protocolId} style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 8, borderBottom: '1px solid var(--br)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 600, color: 'var(--dark)', fontSize: 13 }}>{p.title}</span>
+                          {!sized && (
+                            <span title="No Operation definition to size a room against yet — still recorded, just not sized." style={{ fontSize: 11, color: 'var(--mid)', border: '1px solid var(--br)', borderRadius: 4, padding: '1px 5px' }}>
+                              not sized yet
+                            </span>
+                          )}
+                          <a href={p.sourceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--teal)' }}>
+                            View on protocols.io →
+                          </a>
+                        </div>
+                        <button type="button" className="btn-out" style={{ padding: '2px 10px', fontSize: 11 }} onClick={() => remove(row.protocolId, row.categoryKey)}>
+                          Remove
+                        </button>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input
+                          className="field-input"
+                          type="number"
+                          min={1}
+                          step={1}
+                          style={{ width: 80 }}
+                          value={runs[row.protocolId] ?? 1}
+                          onChange={(e) => setRuns(row.protocolId, Number(e.target.value) || 1)}
+                        />
+                        <span style={{ fontSize: 12, color: 'var(--mid)' }}>runs/week</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           );
         })}
-        {visible.length === 0 && (
-          <div style={{ fontSize: 13, color: 'var(--mid)', padding: '6px 0' }}>No protocols match "{search}".</div>
-        )}
       </div>
-    </>
+    </div>
   );
 }
 

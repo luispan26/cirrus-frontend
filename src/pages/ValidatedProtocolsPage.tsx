@@ -1,17 +1,13 @@
 import { useState } from 'react';
 import { useQuery, useMutation } from '@apollo/client/react';
 import { useNavigate } from 'react-router-dom';
-import { VALIDATED_PROTOCOLS_QUERY, REMOVE_VALIDATED_PROTOCOL_MUTATION, SET_VALIDATED_PROTOCOL_CELL_TYPE_MUTATION } from '../graphql/operations';
-import { SearchableSelect } from '../components/SearchableSelect';
-import { BIOMATERIAL_OPTS } from '../lib/questions';
+import {
+  VALIDATED_PROTOCOLS_QUERY, REMOVE_VALIDATED_PROTOCOL_MUTATION,
+  SET_VALIDATED_PROTOCOL_CELL_TYPES_MUTATION, SET_VALIDATED_PROTOCOL_ESSENTIAL_MUTATION,
+} from '../graphql/operations';
+import { CELL_TYPE_OPTS } from '../lib/questions';
 
-interface ValidatedProtocolRow { id: string; protocolId: string; title: string; sourceUrl: string; cellType?: string | null; createdAt?: string; }
-
-// Same vocabulary as the intake questionnaire's Q2 ("What type of
-// biomaterials would you like to work with?" — BIOMATERIAL_OPTS in
-// lib/questions.ts), imported rather than duplicated so this never drifts
-// out of sync with that question's option list.
-const CELL_TYPE_OPTIONS = [{ value: '', label: 'Unassigned' }, ...BIOMATERIAL_OPTS.map((o) => ({ value: o.v, label: o.l }))];
+interface ValidatedProtocolRow { id: string; protocolId: string; title: string; sourceUrl: string; cellTypes?: string[] | null; essential: boolean; createdAt?: string; }
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : 'Something went wrong.';
@@ -23,18 +19,39 @@ export function ValidatedProtocolsPage() {
   const protocols = data?.validatedProtocols ?? [];
 
   const [removeValidatedProtocol] = useMutation(REMOVE_VALIDATED_PROTOCOL_MUTATION);
-  const [setCellType] = useMutation(SET_VALIDATED_PROTOCOL_CELL_TYPE_MUTATION);
+  const [setCellTypes] = useMutation(SET_VALIDATED_PROTOCOL_CELL_TYPES_MUTATION);
+  const [setEssential] = useMutation(SET_VALIDATED_PROTOCOL_ESSENTIAL_MUTATION);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState('');
   const [cellTypeError, setCellTypeError] = useState('');
+  const [essentialError, setEssentialError] = useState('');
 
-  async function handleSetCellType(protocolId: string, cellType: string) {
+  // Toggles one biomaterial tag on/off a protocol's cellTypes array — a
+  // protocol can now carry more than one (e.g. a gel or BCA assay that's
+  // also run on yeast/mammalian lysates), unlike the old single-select.
+  async function handleToggleCellType(row: ValidatedProtocolRow, value: string) {
     setCellTypeError('');
+    const current = row.cellTypes ?? [];
+    const next = current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
     try {
-      await setCellType({ variables: { protocolId, cellType: cellType || null } });
+      await setCellTypes({ variables: { protocolId: row.protocolId, cellTypes: next } });
       refetch();
     } catch (e) {
       setCellTypeError(errMsg(e));
+    }
+  }
+
+  // The checkbox itself is disabled whenever a row has no cellTypes (see the
+  // essential <td> below), so this only ever runs with at least one cellType
+  // already set — the server still enforces the same invariant independently
+  // (see ValidatedProtocolsService.setEssential), this is just the UI-side half.
+  async function handleSetEssential(protocolId: string, essential: boolean) {
+    setEssentialError('');
+    try {
+      await setEssential({ variables: { protocolId, essential } });
+      refetch();
+    } catch (e) {
+      setEssentialError(errMsg(e));
     }
   }
 
@@ -71,6 +88,7 @@ export function ValidatedProtocolsPage() {
         {error && <div style={{ color: '#a33', fontSize: 12, marginBottom: 16 }}>{error.message}</div>}
         {removeError && <div style={{ color: '#a33', fontSize: 12, marginBottom: 16 }}>{removeError}</div>}
         {cellTypeError && <div style={{ color: '#a33', fontSize: 12, marginBottom: 16 }}>{cellTypeError}</div>}
+        {essentialError && <div style={{ color: '#a33', fontSize: 12, marginBottom: 16 }}>{essentialError}</div>}
         {!loading && protocols.length === 0 && (
           <div style={{ fontSize: 13, color: 'var(--mid)' }}>
             No protocols have been validated yet — assign equipment to at least one step and click Validate on the Protocols page.
@@ -88,10 +106,11 @@ export function ValidatedProtocolsPage() {
             <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--br)' }}>
-                  <th style={{ padding: '6px 6px 6px 0', textAlign: 'left', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Title</th>
-                  <th style={{ padding: 6, textAlign: 'left', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Protocol ID</th>
-                  <th style={{ padding: 6, textAlign: 'left', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Cell Type</th>
-                  <th style={{ padding: 6, textAlign: 'left', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Validated</th>
+                  <th style={{ padding: '6px 6px 6px 0', textAlign: 'center', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Title</th>
+                  <th style={{ padding: 6, textAlign: 'center', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Protocol ID</th>
+                  <th style={{ padding: 6, textAlign: 'center', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Cell Type</th>
+                  <th style={{ padding: 6, textAlign: 'center', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Recommended</th>
+                  <th style={{ padding: 6, textAlign: 'center', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--mid)' }}>Validated</th>
                   <th style={{ padding: 6 }} />
                 </tr>
               </thead>
@@ -104,13 +123,34 @@ export function ValidatedProtocolsPage() {
                       </a>
                     </td>
                     <td style={{ padding: 6, fontFamily: 'var(--mono)', color: 'var(--mid)' }}>{row.protocolId}</td>
+                    <td style={{ padding: 6, minWidth: 220 }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {CELL_TYPE_OPTS.map((opt) => {
+                          const checked = (row.cellTypes ?? []).includes(opt.v);
+                          return (
+                            <span
+                              key={opt.v}
+                              onClick={() => handleToggleCellType(row, opt.v)}
+                              style={{
+                                cursor: 'pointer', userSelect: 'none', fontSize: 11, padding: '3px 8px', borderRadius: 999,
+                                border: '1px solid var(--br)',
+                                background: checked ? 'var(--teal)' : 'transparent',
+                                color: checked ? 'white' : 'var(--dark)',
+                              }}
+                            >
+                              {opt.l}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </td>
                     <td style={{ padding: 6 }}>
-                      <SearchableSelect
-                        style={{ width: 160 }}
-                        options={CELL_TYPE_OPTIONS}
-                        value={row.cellType ?? ''}
-                        onChange={(v) => handleSetCellType(row.protocolId, v)}
-                        placeholder="Unassigned"
+                      <input
+                        type="checkbox"
+                        checked={row.essential}
+                        disabled={(row.cellTypes ?? []).length === 0}
+                        title={(row.cellTypes ?? []).length > 0 ? undefined : 'Set a cell type before marking recommended'}
+                        onChange={(e) => handleSetEssential(row.protocolId, e.target.checked)}
                       />
                     </td>
                     <td style={{ padding: 6, color: 'var(--mid)' }}>{row.createdAt ? new Date(row.createdAt).toLocaleDateString() : '—'}</td>
