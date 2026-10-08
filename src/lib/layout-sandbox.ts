@@ -98,6 +98,9 @@ export interface SandboxFixture {
   depthFt: number;
   orientation: FixtureOrientation;
   clearance?: FixtureClearance;
+  // Floor-standing equipment placed by hand: the catalog item this fixture
+  // stands for (one unit of a report's plan.floorItems entry).
+  equipmentId?: string;
 }
 
 export interface SandboxLayout {

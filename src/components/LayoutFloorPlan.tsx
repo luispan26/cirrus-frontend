@@ -350,9 +350,10 @@ export function LayoutFloorPlan({
           <title>Pipette work area (working space)</title>
         </rect>
       ))}
-      {!zoneOfBench && plan?.initialEquipment?.placements.map((item) => {
-        const spanX = item.spanXFt ?? item.widthFt;
-        const spanY = item.spanYFt ?? item.depthFt;
+      {/* Floor equipment (benchId null) is drawn by its sandbox fixture. */}
+      {!zoneOfBench && plan?.initialEquipment?.placements.filter((item) => item.benchId !== null).map((item) => {
+        const spanX = item.spanXFt ?? item.widthFt ?? 0;
+        const spanY = item.spanYFt ?? item.depthFt ?? 0;
         const vertical = spanY > spanX;
         const cx = item.xFt + spanX / 2;
         const cy = item.yFt + spanY / 2;

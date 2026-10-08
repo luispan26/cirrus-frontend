@@ -11,6 +11,7 @@ import { Logo } from '../components/Logo';
 import { CanvasLayers } from '../components/sandbox/CanvasLayers';
 import { FixtureDetailsPanel } from '../components/sandbox/FixtureDetailsPanel';
 import { FixturePalette } from '../components/sandbox/FixturePalette';
+import { FloorEquipmentPanel, type FloorEquipmentDragSpec } from '../components/sandbox/FloorEquipmentPanel';
 import { InfraPalette } from '../components/sandbox/InfraPalette';
 import { DEFAULT_CLEARANCE, FIXTURE_DEFAULTS, INFRA_PALETTE, ZONE_FAMILY_COLORS, ZONE_FAMILY_LABELS, type PlaceableBaseKind } from '../components/sandbox/constants';
 import type { ZoneRequirementSummary, ZoningOverlay } from '../components/sandbox/types';
@@ -107,7 +108,7 @@ export function LayoutSandboxPage() {
   const dragFrame = useRef<number | null>(null);
   const dragState = useRef<{ id: string; offsetX: number; offsetY: number; x: number; y: number } | null>(null);
   const paletteDragFrame = useRef<number | null>(null);
-  const paletteDragState = useRef<{ kind: FixtureKind; widthFt: number; depthFt: number; x: number; y: number; onCanvas: boolean } | null>(null);
+  const paletteDragState = useRef<{ kind: FixtureKind; widthFt: number; depthFt: number; x: number; y: number; onCanvas: boolean; floorItem?: FloorEquipmentDragSpec } | null>(null);
   // Room-object drags are computed from where the drag started plus the
   // pointer's total travel, so a refused or wall-clamped frame never leaves
   // the object lagging behind the cursor.
@@ -132,7 +133,7 @@ export function LayoutSandboxPage() {
   const [layers, setLayers] = useState<Record<SandboxLayer, boolean>>({ base: true, equipment: true, circulation: true, electrical: true, plumbing: true, ventilation: true, validation: true, zoning: true });
   const [zoning, setZoning] = useState<ZoningOverlay | null>(null);
   const [dragPreview, setDragPreview] = useState<{ id: string; x: number; y: number } | null>(null);
-  const [paletteDragPos, setPaletteDragPos] = useState<{ kind: FixtureKind; widthFt: number; depthFt: number; x: number; y: number; onCanvas: boolean } | null>(null);
+  const [paletteDragPos, setPaletteDragPos] = useState<{ kind: FixtureKind; widthFt: number; depthFt: number; x: number; y: number; onCanvas: boolean; floorItem?: FloorEquipmentDragSpec } | null>(null);
   const [placementPreview, setPlacementPreview] = useState<{ widthFt: number; depthFt: number; orientation: FixtureOrientation; excludeInstanceId?: string } | null>(null);
   const [selectedOverlay, setSelectedOverlay] = useState<string | null>(null);
   const [placingKind, setPlacingKind] = useState<PlaceableBaseKind | null>(null);
@@ -173,6 +174,8 @@ export function LayoutSandboxPage() {
   const selectedBaseObject = selectedOverlay ? layout.baseObjects.find((object) => object.id === selectedOverlay) ?? null : null;
   const utilization = useMemo(() => Math.round(layout.fixtures.reduce((sum, f) => { const size = fixtureFootprint(f, layout.room.gridFt); return sum + size.width * size.height; }, 0) / (columns * rows) * 100), [layout, columns, rows]);
   const violations = useMemo(() => validateSandboxLayout(layout), [layout]);
+  // Floor-standing equipment of the report this layout was opened from.
+  const floorItems = useMemo(() => readLabPlan(layout)?.floorItems ?? [], [layout]);
   // Only computed while a fixture is actively being picked up or dragged —
   // the whole room's green/red availability for that exact footprint, not
   // just a single cell under the cursor, so the user can see every open
@@ -290,9 +293,12 @@ export function LayoutSandboxPage() {
   }
   function updateLayout(fn: (previous: SandboxLayout) => SandboxLayout) { setLayout((previous) => ({ ...fn(previous), updatedAt: new Date().toISOString() })); }
   function setKind(kind: FixtureKind) { const d = FIXTURE_DEFAULTS[kind]; setNewKind(kind); setNewWidth(d.widthFt); setNewDepth(d.depthFt); if (kind === 'bench' || kind === 'laminarHood') setNewClearance({ ...DEFAULT_CLEARANCE[kind] }); }
-  function createFixture(x: number, y: number) {
+  function createFixture(x: number, y: number, floorItem?: FloorEquipmentDragSpec) {
     const d = FIXTURE_DEFAULTS[newKind];
-    const fixture: SandboxFixture = { instanceId: `${newKind}-${Date.now()}`, kind: newKind, name: d.name, x, y, widthFt: newKind === 'bench' ? BENCH_WIDTH_FT : Math.max(.5, newWidth), depthFt: newKind === 'bench' ? BENCH_DEPTH_FT : Math.max(.5, newDepth), orientation: 0, clearance: newKind === 'bench' || newKind === 'laminarHood' ? { ...newClearance } : undefined };
+    const fixture: SandboxFixture = floorItem
+      // Floor equipment from the report: its own name, catalog size and id.
+      ? { instanceId: `${floorItem.kind}-${Date.now()}`, kind: floorItem.kind, name: floorItem.name, x, y, widthFt: floorItem.widthFt, depthFt: floorItem.depthFt, orientation: 0, clearance: floorItem.kind === 'laminarHood' ? { ...DEFAULT_CLEARANCE.laminarHood } : undefined, equipmentId: floorItem.equipmentId }
+      : { instanceId: `${newKind}-${Date.now()}`, kind: newKind, name: d.name, x, y, widthFt: newKind === 'bench' ? BENCH_WIDTH_FT : Math.max(.5, newWidth), depthFt: newKind === 'bench' ? BENCH_DEPTH_FT : Math.max(.5, newDepth), orientation: 0, clearance: newKind === 'bench' || newKind === 'laminarHood' ? { ...newClearance } : undefined };
     if (!canPlaceFixture(fixture, layout.fixtures, layout.baseObjects, layout.room.gridFt)) return setMessage('That fixture overlaps another fixture or object.');
     updateLayout((p) => ({ ...p, fixtures: [...p.fixtures, fixture] })); setSelectedFixtureId(fixture.instanceId); setMessage(`${fixture.name} placed.`);
   }
@@ -346,15 +352,18 @@ export function LayoutSandboxPage() {
     const y = Math.round((event.clientY - rect.top) / rect.height * rows - spanY / 2);
     return { x: Math.min(Math.max(0, columns - spanX), Math.max(0, x)), y: Math.min(Math.max(0, rows - spanY), Math.max(0, y)) };
   }
-  function startPaletteDrag(event: React.PointerEvent<HTMLDivElement>) {
+  // floorItem: dragging one of the report's floor-standing equipment items
+  // (FloorEquipmentPanel) rather than the fixture palette's current kind.
+  function startPaletteDrag(event: React.PointerEvent<HTMLDivElement>, floorItem?: FloorEquipmentDragSpec) {
     if (event.button !== 0) return;
     event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
-    const widthFt = newKind === 'bench' ? BENCH_WIDTH_FT : Math.max(.5, newWidth);
-    const depthFt = newKind === 'bench' ? BENCH_DEPTH_FT : Math.max(.5, newDepth);
+    const kind = floorItem?.kind ?? newKind;
+    const widthFt = floorItem ? floorItem.widthFt : newKind === 'bench' ? BENCH_WIDTH_FT : Math.max(.5, newWidth);
+    const depthFt = floorItem ? floorItem.depthFt : newKind === 'bench' ? BENCH_DEPTH_FT : Math.max(.5, newDepth);
     const rect = canvasRef.current?.getBoundingClientRect();
     const onCanvas = !!rect && event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
     const { x, y } = rect ? paletteCell(event, rect, widthFt, depthFt) : { x: 0, y: 0 };
-    const next = { kind: newKind, widthFt, depthFt, x, y, onCanvas };
+    const next = { kind, widthFt, depthFt, x, y, onCanvas, floorItem };
     paletteDragState.current = next; setPaletteDragPos(next);
     setPlacementPreview({ widthFt, depthFt, orientation: 0 });
   }
@@ -370,7 +379,7 @@ export function LayoutSandboxPage() {
     event.currentTarget.releasePointerCapture(event.pointerId); paletteDragState.current = null;
     if (paletteDragFrame.current !== null) { cancelAnimationFrame(paletteDragFrame.current); paletteDragFrame.current = null; }
     setPaletteDragPos(null); setPlacementPreview(null);
-    if (drag.onCanvas) createFixture(drag.x, drag.y);
+    if (drag.onCanvas) createFixture(drag.x, drag.y, drag.floorItem);
   }
   function cancelPaletteDrag(event: React.PointerEvent<HTMLDivElement>) {
     event.currentTarget.releasePointerCapture(event.pointerId); paletteDragState.current = null;
@@ -740,11 +749,12 @@ export function LayoutSandboxPage() {
     <div className="ls-workspace">
       <aside className="ls-sidebar"><label className="field-label">Layout name</label><input className="field-input" value={layout.name} onChange={(e) => updateLayout((p) => ({ ...p, name: e.target.value }))} /><div className="ls-room-fields"><label><span className="field-label">Width (ft)</span><input className="field-input" type="number" min="5" value={layout.room.widthFt} onChange={(e) => updateLayout((p) => resizeRoom(p, { widthFt: Math.max(5, Number(e.target.value)), heightFt: p.room.heightFt }))} /></label><label><span className="field-label">Depth (ft)</span><input className="field-input" type="number" min="5" value={layout.room.heightFt} onChange={(e) => updateLayout((p) => resizeRoom(p, { widthFt: p.room.widthFt, heightFt: Math.max(5, Number(e.target.value)) }))} /></label></div>
         <BenchArrangement value={arrangement} onChange={setArrangement} />
+        <FloorEquipmentPanel items={floorItems} placedCount={(equipmentId) => layout.fixtures.filter((f) => f.equipmentId === equipmentId).length} startDrag={startPaletteDrag} moveDrag={movePaletteDrag} finishDrag={finishPaletteDrag} cancelDrag={cancelPaletteDrag} />
         {paletteVisible('infrastructure', activeCategory) && <InfraPalette placingKind={placingKind} beginPlacing={beginPlacing} visibleLayers={infraVisibleLayers} />}
         {paletteVisible('fixtures', activeCategory) && <FixturePalette newKind={newKind} setKind={setKind} newWidth={newWidth} setNewWidth={setNewWidth} newDepth={newDepth} setNewDepth={setNewDepth} newClearance={newClearance} setNewClearance={setNewClearance} startPaletteDrag={startPaletteDrag} movePaletteDrag={movePaletteDrag} finishPaletteDrag={finishPaletteDrag} cancelPaletteDrag={cancelPaletteDrag} visibleKinds={fixtureVisibleKinds} />}
         {!activeCategory && <p className="ls-help">Answer the placement questions (top right) to start placing things — whatever you leave derived, Cirrus places for you automatically.</p>}
       </aside>
-      <main className="ls-main"><div className="ls-metrics"><span>{layout.room.widthFt} × {layout.room.heightFt} ft room</span><span>{layout.fixtures.filter((f) => f.kind === 'bench').length} benches</span><span>{utilization}% occupied</span></div><div className="ls-canvas-wrap"><div ref={canvasRef} className={`ls-canvas ${placingKind ? 'placing' : ''}`} style={{ gridTemplateColumns: `repeat(${columns}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)`, aspectRatio: `${columns} / ${rows}`, '--grid-cols': columns, '--grid-rows': rows } as React.CSSProperties} onPointerDown={startMarquee} onPointerMove={moveMarquee} onPointerUp={finishMarquee} onPointerCancel={finishMarquee} onClick={() => { if (suppressCanvasClick.current) { suppressCanvasClick.current = false; return; } if (!placingKind) { setSelectedFixtureId(null); clearGroup(); } }}>{placementHeatmap && placementHeatmap.flatMap((row, y) => row.map((valid, x) => <div key={`ph-${x}-${y}`} className={`ls-placement-cell ${valid ? 'valid' : 'invalid'}`} style={{ gridColumn: `${x + 1} / span 1`, gridRow: `${y + 1} / span 1` }} />))}{layout.fixtures.map((f) => { const position = dragPreview?.id === f.instanceId ? dragPreview : f; const rect = fixtureRectFt({ ...f, x: position.x, y: position.y }, layout.room.gridFt); const cellFt = layout.room.gridFt; return <div key={f.instanceId} tabIndex={0} role="button" aria-label={`${f.name}. Use arrow keys to move.`} className={`ls-fixture ${f.kind} ${selectedFixtureId === f.instanceId || group?.fixtures.includes(f.instanceId) ? 'selected' : ''} ${dragPreview?.id === f.instanceId ? 'dragging' : ''}`} onPointerDown={(e) => startFixtureMove(e, f)} onPointerMove={previewFixtureMove} onPointerUp={finishFixtureMove} onPointerCancel={finishFixtureMove} onKeyDown={(e) => moveFixtureWithKeyboard(e, f)} onClick={(e) => { e.stopPropagation(); if (group?.fixtures.includes(f.instanceId)) return; setSelectedFixtureId(f.instanceId); }} style={{ position: 'absolute', left: `${rect.left / cellFt / columns * 100}%`, top: `${rect.top / cellFt / rows * 100}%`, width: `${(rect.right - rect.left) / cellFt / columns * 100}%`, height: `${(rect.bottom - rect.top) / cellFt / rows * 100}%` }}><b>{f.name}</b><small>{f.widthFt} × {f.depthFt} ft</small></div>; })}{paletteDragPos && paletteDragPos.onCanvas && <div className={`ls-fixture ${paletteDragPos.kind} ls-fixture-ghost`} style={{ gridColumn: `${paletteDragPos.x + 1} / span ${Math.max(1, Math.ceil(paletteDragPos.widthFt / layout.room.gridFt))}`, gridRow: `${paletteDragPos.y + 1} / span ${Math.max(1, Math.ceil(paletteDragPos.depthFt / layout.room.gridFt))}` }}><b>{FIXTURE_DEFAULTS[paletteDragPos.kind].name}</b><small>{paletteDragPos.widthFt} × {paletteDragPos.depthFt} ft</small></div>}{marquee && <div className="ls-marquee" style={{ left: `${marquee.left / (columns * layout.room.gridFt) * 100}%`, top: `${marquee.top / (rows * layout.room.gridFt) * 100}%`, width: `${(marquee.right - marquee.left) / (columns * layout.room.gridFt) * 100}%`, height: `${(marquee.bottom - marquee.top) / (rows * layout.room.gridFt) * 100}%` }} />}</div></div>{group && <div className="ls-group-bar"><span>{group.fixtures.length + group.objects.length} items selected</span><button type="button" onClick={deleteSelection}>Delete selected</button><button type="button" onClick={clearGroup}>Clear selection</button></div>}<div className="ls-status">{message}</div></main>
+      <main className="ls-main"><div className="ls-metrics"><span>{layout.room.widthFt} × {layout.room.heightFt} ft room</span><span>{layout.fixtures.filter((f) => f.kind === 'bench').length} benches</span><span>{utilization}% occupied</span></div><div className="ls-canvas-wrap"><div ref={canvasRef} className={`ls-canvas ${placingKind ? 'placing' : ''}`} style={{ gridTemplateColumns: `repeat(${columns}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)`, aspectRatio: `${columns} / ${rows}`, '--grid-cols': columns, '--grid-rows': rows } as React.CSSProperties} onPointerDown={startMarquee} onPointerMove={moveMarquee} onPointerUp={finishMarquee} onPointerCancel={finishMarquee} onClick={() => { if (suppressCanvasClick.current) { suppressCanvasClick.current = false; return; } if (!placingKind) { setSelectedFixtureId(null); clearGroup(); } }}>{placementHeatmap && placementHeatmap.flatMap((row, y) => row.map((valid, x) => <div key={`ph-${x}-${y}`} className={`ls-placement-cell ${valid ? 'valid' : 'invalid'}`} style={{ gridColumn: `${x + 1} / span 1`, gridRow: `${y + 1} / span 1` }} />))}{layout.fixtures.map((f) => { const position = dragPreview?.id === f.instanceId ? dragPreview : f; const rect = fixtureRectFt({ ...f, x: position.x, y: position.y }, layout.room.gridFt); const cellFt = layout.room.gridFt; return <div key={f.instanceId} tabIndex={0} role="button" aria-label={`${f.name}. Use arrow keys to move.`} className={`ls-fixture ${f.kind} ${selectedFixtureId === f.instanceId || group?.fixtures.includes(f.instanceId) ? 'selected' : ''} ${dragPreview?.id === f.instanceId ? 'dragging' : ''}`} onPointerDown={(e) => startFixtureMove(e, f)} onPointerMove={previewFixtureMove} onPointerUp={finishFixtureMove} onPointerCancel={finishFixtureMove} onKeyDown={(e) => moveFixtureWithKeyboard(e, f)} onClick={(e) => { e.stopPropagation(); if (group?.fixtures.includes(f.instanceId)) return; setSelectedFixtureId(f.instanceId); }} style={{ position: 'absolute', left: `${rect.left / cellFt / columns * 100}%`, top: `${rect.top / cellFt / rows * 100}%`, width: `${(rect.right - rect.left) / cellFt / columns * 100}%`, height: `${(rect.bottom - rect.top) / cellFt / rows * 100}%` }}><b>{f.name}</b><small>{f.widthFt} × {f.depthFt} ft</small></div>; })}{paletteDragPos && paletteDragPos.onCanvas && <div className={`ls-fixture ${paletteDragPos.kind} ls-fixture-ghost`} style={{ gridColumn: `${paletteDragPos.x + 1} / span ${Math.max(1, Math.ceil(paletteDragPos.widthFt / layout.room.gridFt))}`, gridRow: `${paletteDragPos.y + 1} / span ${Math.max(1, Math.ceil(paletteDragPos.depthFt / layout.room.gridFt))}` }}><b>{paletteDragPos.floorItem?.name ?? FIXTURE_DEFAULTS[paletteDragPos.kind].name}</b><small>{paletteDragPos.widthFt} × {paletteDragPos.depthFt} ft</small></div>}{marquee && <div className="ls-marquee" style={{ left: `${marquee.left / (columns * layout.room.gridFt) * 100}%`, top: `${marquee.top / (rows * layout.room.gridFt) * 100}%`, width: `${(marquee.right - marquee.left) / (columns * layout.room.gridFt) * 100}%`, height: `${(marquee.bottom - marquee.top) / (rows * layout.room.gridFt) * 100}%` }} />}</div></div>{group && <div className="ls-group-bar"><span>{group.fixtures.length + group.objects.length} items selected</span><button type="button" onClick={deleteSelection}>Delete selected</button><button type="button" onClick={clearGroup}>Clear selection</button></div>}<div className="ls-status">{message}</div></main>
       {showIntro && <GuidedFlowIntro onDismiss={() => { setShowIntro(false); setOpenQuestion(firstUnanswered(categoryMode)); }} />}
       {!showIntro && openQuestion && <PlacementQuestionBox category={openQuestion} index={CATEGORY_ORDER.indexOf(openQuestion) + 1} subgroups={subgroupsFor(openQuestion)} selected={subSelection[openQuestion]} onToggleSubgroup={(key) => toggleSubgroup(openQuestion, key)} onSelectAll={() => selectAllSubgroups(openQuestion)} hoveredSubgroup={hoveredSubgroup} onHoverSubgroup={setHoveredSubgroup} note={openQuestion === 'fixtures' ? 'Any fixtures not placed manually will be derived from unassigned space.' : undefined} onCommit={(mode) => commitCategoryQuestion(openQuestion, mode)} />}
       <aside className="ls-sidebar ls-right">

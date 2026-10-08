@@ -65,10 +65,13 @@ export interface LabPlan {
     // widthFt runs along the bench, depthFt front to back; spanXFt/spanYFt
     // are the footprint's extent on the floor plan (absent on reports made
     // before the one-row bench rules, when they equalled width/depth).
-    placements: { instanceId: string; equipmentId: string; zoneId: string; benchId: string; name: string; fixed: boolean; placeholderSize: boolean; xFt: number; yFt: number; widthFt: number; depthFt: number; spanXFt?: number; spanYFt?: number; offsetFt?: number; rotationDegrees: number; workAreaId?: string }[];
+    // benchId null: floor-standing equipment placed by hand in the sandbox
+    // (drawn by its sandbox fixture), reached from accessCell.
+    placements: { instanceId: string; equipmentId: string; zoneId: string | null; benchId: string | null; name: string; fixed: boolean; placeholderSize: boolean; xFt: number; yFt: number; widthFt?: number; depthFt?: number; spanXFt?: number; spanYFt?: number; offsetFt?: number; rotationDegrees?: number; workAreaId?: string; accessCell?: [number, number] }[];
     // Pipette work areas: 3 ft of bench, all working space, 1-2 pipettes.
     workAreas?: { id: string; benchId: string; zoneId: string; offsetFt: number; lengthFt: number; xFt: number; yFt: number; spanXFt: number; spanYFt: number; instanceIds: string[] }[];
-    unplaced: { instanceId: string; equipmentId: string; zoneId: string; reason: string }[];
+    // zoneId null: floor-standing equipment not yet placed in the sandbox.
+    unplaced: { instanceId: string; equipmentId: string; zoneId: string | null; reason: string }[];
   };
   version: number;
   gridInches: number;

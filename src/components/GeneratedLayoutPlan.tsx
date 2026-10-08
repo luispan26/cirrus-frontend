@@ -54,6 +54,11 @@ function settingsFromPlan(plan: LabPlan): SettingsDraft {
 
 function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { generated: GeneratedLayout; layout: SandboxLayout; plan: LabPlan; reportId: string | null; onUpdated?: (generated: GeneratedLayout, reportData?: Record<string, unknown>) => void }) {
   const navigate = useNavigate();
+  // Unplaced units with no zone are floor-standing equipment (placed by hand
+  // in the sandbox); placements with no bench are the ones already placed.
+  const benchUnplaced = (plan.initialEquipment?.unplaced ?? []).filter((u) => u.zoneId !== null);
+  const floorUnplaced = (plan.initialEquipment?.unplaced ?? []).filter((u) => u.zoneId === null);
+  const floorPlaced = (equipmentId: string) => (plan.initialEquipment?.placements ?? []).filter((p) => p.benchId === null && p.equipmentId === equipmentId).length;
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [zones, setZones] = useState<EditableZone[]>(() => zonesFromPlan(plan));
   const [activeZoneId, setActiveZoneId] = useState<string>(() => plan.zones[0]?.id ?? '');
@@ -246,16 +251,26 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
         </div>
 
         {(generated.warnings?.length ?? 0) > 0 && <div className="generated-layout-warnings"><strong>Draft notes</strong>{generated.warnings!.map((warning) => <div key={warning}>{warning}</div>)}</div>}
-        {plan.initialEquipment && plan.initialEquipment.unplaced.length > 0 && (
+        {benchUnplaced.length > 0 && (
           <div className="plan-floor-items">
             <strong>Bench equipment still to place</strong>
-            <ul>{plan.initialEquipment.unplaced.map((item) => <li key={item.instanceId}>{plan.zones.find((zone) => zone.id === item.zoneId)?.equipment.find((e) => e.equipmentId === item.equipmentId)?.name ?? item.equipmentId}: {item.reason}</li>)}</ul>
+            <ul>{benchUnplaced.map((item) => <li key={item.instanceId}>{plan.zones.find((zone) => zone.id === item.zoneId)?.equipment.find((e) => e.equipmentId === item.equipmentId)?.name ?? item.equipmentId}: {item.reason}</li>)}</ul>
           </div>
         )}
         {plan.floorItems.length > 0 && (
           <div className="plan-floor-items">
-            <strong>Floor-standing equipment to place by hand</strong>
-            <ul>{plan.floorItems.map((e) => <li key={e.equipmentId}>{e.name} ×{e.quantity}{e.placeholderSize ? '' : ` — ${e.widthFt} × ${e.depthFt} ft`}</li>)}</ul>
+            <strong>Floor-standing equipment</strong>
+            <ul>{plan.floorItems.map((e) => {
+              const placed = floorPlaced(e.equipmentId);
+              const reason = floorUnplaced.find((u) => u.equipmentId === e.equipmentId)?.reason;
+              return <li key={e.equipmentId}>{e.name}{e.placeholderSize ? '' : ` (${e.widthFt} × ${e.depthFt} ft)`}: {placed >= e.quantity ? `placed${e.quantity > 1 ? ` (${e.quantity})` : ''}` : <>{placed} of {e.quantity} placed{reason && placed > 0 ? ` — ${reason}` : ''}</>}</li>;
+            })}</ul>
+            {plan.floorItems.some((e) => floorPlaced(e.equipmentId) < e.quantity) && (
+              <p style={{ margin: '6px 0 0' }}>
+                Place these in the layout sandbox (Floor equipment, in its sidebar), use the room in your intake, then generate again.{' '}
+                <button type="button" className="btn-out" style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => navigate('/layout-sandbox', { state: { loadLayout: generated.data } })}>Place in sandbox</button>
+              </p>
+            )}
           </div>
         )}
         <p className="generated-layout-caption">Cirrus places equipment on benches within its assigned zone, keeping the requested working space free. The optimizer can refine this starting arrangement. Every bench's working aisle, the aisles between rows and the cross-aisles form one connected walking area.</p>
