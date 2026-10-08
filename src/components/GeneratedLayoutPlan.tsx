@@ -24,7 +24,7 @@ export type GeneratedLayout = {
 // The report's generated floor plan. Layouts generated with workflow zones
 // (layout.plan present) get the zone editor; older reports still show the
 // station-colored plan they were generated with.
-export function GeneratedLayoutPlan({ value, reportId, onUpdated }: { value: unknown; reportId?: string | null; onUpdated?: (generated: GeneratedLayout) => void }) {
+export function GeneratedLayoutPlan({ value, reportId, onUpdated }: { value: unknown; reportId?: string | null; onUpdated?: (generated: GeneratedLayout, reportData?: Record<string, unknown>) => void }) {
   const generated = value && typeof value === 'object' ? value as GeneratedLayout : null;
   const layout = parseSandboxLayout(generated?.data);
   const plan = readLabPlan(generated?.data);
@@ -52,7 +52,7 @@ function settingsFromPlan(plan: LabPlan): SettingsDraft {
   return { mode, mainWall, sameDirection, wallBenches, workingSpacePct, separateZonesWithAisles, optimizerBalance: optimizerBalance ?? 0.5 };
 }
 
-function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { generated: GeneratedLayout; layout: SandboxLayout; plan: LabPlan; reportId: string | null; onUpdated?: (generated: GeneratedLayout) => void }) {
+function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { generated: GeneratedLayout; layout: SandboxLayout; plan: LabPlan; reportId: string | null; onUpdated?: (generated: GeneratedLayout, reportData?: Record<string, unknown>) => void }) {
   const navigate = useNavigate();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [zones, setZones] = useState<EditableZone[]>(() => zonesFromPlan(plan));
@@ -110,7 +110,7 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
         },
       });
       const updated = data?.updateReportLayout.data?.generated_layout as GeneratedLayout | undefined;
-      if (updated) onUpdated?.(updated);
+      if (updated) onUpdated?.(updated, data?.updateReportLayout.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
