@@ -306,6 +306,21 @@ export const LAYOUT_CAPACITY_CHECK_QUERY = gql`
   }
 `;
 
+// Floor-standing equipment (cold storage, hoods) the questionnaire's intake
+// brings in, for placing by hand in the layout sandbox before generating.
+export const FLOOR_EQUIPMENT_FOR_INTAKE_QUERY = gql`
+  query FloorEquipmentForIntake($intake: JSON!) {
+    floorEquipmentForIntake(intake: $intake) {
+      equipmentId
+      name
+      quantity
+      widthFt
+      depthFt
+      placeholderSize
+    }
+  }
+`;
+
 // Zone and layout-setting edits from the report's floor plan; returns the
 // report with its re-run generated layout.
 export const UPDATE_REPORT_LAYOUT_MUTATION = gql`

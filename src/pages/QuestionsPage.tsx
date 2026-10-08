@@ -7,6 +7,7 @@ import { SyncBadge } from '../components/SyncBadge';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { Logo } from '../components/Logo';
 import { useIntakeSync } from '../hooks/useIntakeSync';
+import type { SandboxLayout } from '../lib/layout-sandbox';
 import {
   QS, OPERATION_OPTS, DAMPLAB_MATCH_KEYWORDS, shouldSkip, stepIndex, buildFinalIntakeJson,
   computeBasicLabEquipment, applyBasicLabEquipmentOverrides, BASIC_EQUIPMENT_CATEGORIES, LAYOUT_SETTING_DEFAULTS,
@@ -14,7 +15,7 @@ import {
   type Answers, type QuestionOption, type WallSide,
 } from '../lib/questions';
 import {
-  EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, VALIDATED_PROTOCOLS_QUERY, MY_REPORTS_QUERY, LAYOUT_CAPACITY_CHECK_QUERY,
+  EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, VALIDATED_PROTOCOLS_QUERY, MY_REPORTS_QUERY, LAYOUT_CAPACITY_CHECK_QUERY, FLOOR_EQUIPMENT_FOR_INTAKE_QUERY,
 } from '../graphql/operations';
 import { getSessionId } from '../lib/session';
 
@@ -591,8 +592,17 @@ function SpaceBody({ answers, setField, generatedLayout }: { answers: Answers; s
   // Opens on Cirrus's own generated layout, not a blank room, whenever one
   // is available (see the generatedLayout plumbing in QuestionsPage) — the
   // sandbox already handles state.loadLayout on mount.
-  function openSandbox() {
-    navigate('/layout-sandbox', { state: { loadLayout: answers.space_sandbox_layout ?? generatedLayout, arrangement: Object.fromEntries(['layout_mode', 'layout_main_wall', 'layout_same_direction', 'layout_wall_benches'].filter((key) => answers[key] !== undefined && answers[key] !== null).map((key) => [key, answers[key]])) } });
+  // The floor-standing equipment the equipment step brought in goes along,
+  // so it can be placed by hand before generating (benches then plan around
+  // it). If it can't be fetched, the sandbox opens without it.
+  const [fetchFloorEquipment, { loading: loadingFloorEquipment }] = useLazyQuery<{ floorEquipmentForIntake: NonNullable<SandboxLayout['floorEquipment']> }>(FLOOR_EQUIPMENT_FOR_INTAKE_QUERY, { fetchPolicy: 'network-only' });
+  async function openSandbox() {
+    let floorEquipment: SandboxLayout['floorEquipment'];
+    try {
+      const { data } = await fetchFloorEquipment({ variables: { intake: buildFinalIntakeJson(answers) } });
+      floorEquipment = data?.floorEquipmentForIntake;
+    } catch { /* open without it */ }
+    navigate('/layout-sandbox', { state: { loadLayout: answers.space_sandbox_layout ?? generatedLayout, floorEquipment, arrangement: Object.fromEntries(['layout_mode', 'layout_main_wall', 'layout_same_direction', 'layout_wall_benches'].filter((key) => answers[key] !== undefined && answers[key] !== null).map((key) => [key, answers[key]])) } });
   }
 
   function handleFile(file: File | undefined) {
@@ -641,7 +651,7 @@ function SpaceBody({ answers, setField, generatedLayout }: { answers: Answers; s
               <p className="q-inline-help" style={{ marginTop: 0 }}>
                 Current room from the sandbox: {w} × {h} ft ({(w * h).toLocaleString()} sq ft)
               </p>
-              <button type="button" className="btn-out" onClick={openSandbox}>
+              <button type="button" className="btn-out" onClick={openSandbox} disabled={loadingFloorEquipment}>
                 {generatedLayout ? 'Edit the generated layout →' : 'Rebuild in the sandbox →'}
               </button>
             </>
@@ -651,7 +661,7 @@ function SpaceBody({ answers, setField, generatedLayout }: { answers: Answers; s
                 Opens the layout sandbox in this tab. Once you've sized the room, use its "Use this room in my
                 intake" button to come back here with the dimensions filled in.
               </p>
-              <button type="button" className="btn-teal" onClick={openSandbox}>
+              <button type="button" className="btn-teal" onClick={openSandbox} disabled={loadingFloorEquipment}>
                 {generatedLayout ? 'Edit the generated layout →' : 'Open the sandbox →'}
               </button>
             </>

@@ -174,8 +174,9 @@ export function LayoutSandboxPage() {
   const selectedBaseObject = selectedOverlay ? layout.baseObjects.find((object) => object.id === selectedOverlay) ?? null : null;
   const utilization = useMemo(() => Math.round(layout.fixtures.reduce((sum, f) => { const size = fixtureFootprint(f, layout.room.gridFt); return sum + size.width * size.height; }, 0) / (columns * rows) * 100), [layout, columns, rows]);
   const violations = useMemo(() => validateSandboxLayout(layout), [layout]);
-  // Floor-standing equipment of the report this layout was opened from.
-  const floorItems = useMemo(() => readLabPlan(layout)?.floorItems ?? [], [layout]);
+  // Floor-standing equipment to place: the questionnaire's current list when
+  // opened from the intake, else that of the report this layout came from.
+  const floorItems = useMemo(() => layout.floorEquipment ?? readLabPlan(layout)?.floorItems ?? [], [layout]);
   // Only computed while a fixture is actively being picked up or dragged —
   // the whole room's green/red availability for that exact footprint, not
   // just a single cell under the cursor, so the user can see every open
@@ -194,16 +195,20 @@ export function LayoutSandboxPage() {
     try { localStorage.setItem(SANDBOX_LAYOUT_STORAGE_KEY, JSON.stringify({ layout, arrangement, categoryMode, subSelection, activeCategory })); } catch { /* private browsing, quota, etc — resuming is a convenience, not a guarantee */ }
   }, [layout, arrangement, categoryMode, subSelection, activeCategory]);
   useEffect(() => {
-    const state = location.state as { loadLayout?: unknown; arrangement?: Answers } | null;
+    const state = location.state as { loadLayout?: unknown; arrangement?: Answers; floorEquipment?: SandboxLayout['floorEquipment'] } | null;
     if (state?.arrangement) setArrangement({ ...DEFAULT_ARRANGEMENT, ...state.arrangement });
     else {
       const options = readLabPlan(state?.loadLayout)?.options;
       if (options) setArrangement({ layout_mode: options.mode, layout_main_wall: options.mainWall ?? 'S', layout_same_direction: options.sameDirection, layout_wall_benches: options.wallBenches });
     }
-    if (!state?.loadLayout) return;
+    const floorEquipment = state?.floorEquipment;
+    if (!state?.loadLayout) {
+      if (floorEquipment) { setLayout((previous) => ({ ...previous, floorEquipment })); navigate(location.pathname, { replace: true, state: null }); }
+      return;
+    }
     const loaded = parseSandboxLayout(state.loadLayout);
     const parsed = loaded && withGridFt(loaded, SANDBOX_GRID_FT);
-    if (parsed) { setLayout(parsed); applySeededCategoryModes(parsed); }
+    if (parsed) { const withFloor = floorEquipment ? { ...parsed, floorEquipment } : parsed; setLayout(withFloor); applySeededCategoryModes(withFloor); }
     navigate(location.pathname, { replace: true, state: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
