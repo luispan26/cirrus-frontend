@@ -113,7 +113,7 @@ export function LayoutOptimization({ value }: { value: unknown }) {
                       <td>{p.runsPerPeriod}</td>
                       <td style={muted}>{ft(p.baselineWeightedFt)}</td>
                       <td style={{ fontWeight: 600, color: '#049295' }}>{ft(p.optimizedWeightedFt)}</td>
-                      <td style={p.skippedVisits ? { color: '#B5442E', fontWeight: 600 } : muted}>{p.skippedVisits}</td>
+                      <td style={p.skippedVisits ? { color: '#C41678', fontWeight: 600 } : muted}>{p.skippedVisits}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -160,7 +160,7 @@ export function LayoutOptimization({ value }: { value: unknown }) {
           <summary style={summaryStyle}>Optimizer notes ({notes.length})</summary>
           <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
             {notes.map((n, i) => (
-              <li key={i} style={{ marginBottom: 4, ...(n.level === 'error' ? { color: '#B5442E' } : n.level === 'warning' ? {} : muted) }}>{n.message}</li>
+              <li key={i} style={{ marginBottom: 4, ...(n.level === 'error' ? { color: '#C41678' } : n.level === 'warning' ? {} : muted) }}>{n.message}</li>
             ))}
           </ul>
         </details>

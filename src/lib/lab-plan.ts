@@ -95,9 +95,9 @@ export function readLabPlan(layoutData: unknown): LabPlan | null {
 }
 
 // The three default zones keep fixed colors; zones a user adds cycle
-// through the rest.
-const ZONE_COLORS: Record<string, string> = { microbial: '#3D8B3D', general: '#3462C9', mammalian: '#B5442E' };
-const EXTRA_ZONE_COLORS = ['#C9791C', '#7B4FD6', '#D64F9E', '#00A3A3', '#8A5A3B', '#6B7280'];
+// through the rest. All from the Cirrus palette (index.css :root).
+const ZONE_COLORS: Record<string, string> = { microbial: '#049295', general: '#8C7CFF', mammalian: '#FF3FA4' };
+const EXTRA_ZONE_COLORS = ['#00D5D5', '#C41678', '#FF5CB8', '#69707F'];
 
 export function zoneColor(zoneId: string, zoneIds: string[]): string {
   if (ZONE_COLORS[zoneId]) return ZONE_COLORS[zoneId];
