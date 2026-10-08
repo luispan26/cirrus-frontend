@@ -835,6 +835,23 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
     setDraftId('');
   }
 
+  // Everything the picker currently offers (so it follows the tag filter)
+  // that isn't already needed, added as needed in the picker's zone. Items
+  // already marked owned keep their zone.
+  const addAllCandidates = tagFilteredAddable.filter((eq) => !neededMeta[eq.equipmentId]);
+  function addAll() {
+    if (addAllCandidates.length === 0) return;
+    const nextNeeded = { ...neededMeta };
+    const nextZones = { ...((answers.equipment_zones as Record<string, string>) ?? {}) };
+    for (const eq of addAllCandidates) {
+      nextNeeded[eq.equipmentId] = { name: eq.name, count: 1 };
+      if (!ownedMeta[eq.equipmentId]) nextZones[eq.equipmentId] = addZone;
+    }
+    setField('needed_equipment_meta', nextNeeded);
+    setField('equipment_zones', nextZones);
+    setDraftId('');
+  }
+
   return (
     <div className="field-wrap" style={{ marginBottom: 0 }}>
       <label className="field-label">Already have equipment, or still need some?</label>
@@ -888,6 +905,16 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
             onClick={() => addTo('needed')}
           >
             Add
+          </button>
+          <button
+            type="button"
+            className="btn-out"
+            style={{ padding: '6px 14px' }}
+            disabled={addAllCandidates.length === 0}
+            title={selectedTags.size ? 'Add every equipment item matching the tag filter' : 'Add every equipment item in the catalog'}
+            onClick={addAll}
+          >
+            Add all ({addAllCandidates.length})
           </button>
         </div>
       )}
