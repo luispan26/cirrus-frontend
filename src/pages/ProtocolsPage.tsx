@@ -35,7 +35,7 @@ interface EquipmentUsage { equipmentId: string; totalDurationSeconds: number; mi
 interface ProtocolSummary { id: string; title: string; sourceUrl: string; doi?: string; publishedOn?: string; authorNames: string[]; }
 interface ProtocolSearchResult { currentPage: number; totalPages: number; totalResults: number; items: ProtocolSummary[]; }
 interface ValidatedProtocolRow { id: string; protocolId: string; title: string; sourceUrl: string; cellTypes?: string[] | null; essential: boolean; createdAt?: string; }
-interface CanvasSyncResult { equipmentSynced: number; protocolsSynced: number; }
+interface CanvasSyncResult { equipmentSynced: number; protocolsSynced: number; protocolsValidated: number; }
 
 function durationLabel(seconds?: number): string | null {
   if (seconds === undefined || seconds === null) return null;
@@ -56,7 +56,9 @@ function errMsg(e: unknown): string {
 // plus a manual button for an on-demand refresh right after a known Canvas
 // change, without waiting for the next scheduled interval.
 function useCanvasImport(onSynced: () => void) {
-  const [triggerCanvasSync, { loading }] = useMutation<{ triggerCanvasSync: CanvasSyncResult }>(TRIGGER_CANVAS_SYNC_MUTATION);
+  // The sync also validates every protocol Canvas has mapped, so the
+  // validated list and badges are refetched with it.
+  const [triggerCanvasSync, { loading }] = useMutation<{ triggerCanvasSync: CanvasSyncResult }>(TRIGGER_CANVAS_SYNC_MUTATION, { refetchQueries: ['ValidatedProtocols', 'IsProtocolValidated'] });
   const [result, setResult] = useState<CanvasSyncResult | null>(null);
   const [error, setError] = useState('');
 

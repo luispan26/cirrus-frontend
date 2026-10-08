@@ -633,6 +633,7 @@ export const TRIGGER_CANVAS_SYNC_MUTATION = gql`
     triggerCanvasSync {
       equipmentSynced
       protocolsSynced
+      protocolsValidated
     }
   }
 `;
