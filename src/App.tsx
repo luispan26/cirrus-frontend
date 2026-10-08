@@ -11,17 +11,14 @@ import { DesignHistoryPage } from './pages/DesignHistoryPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { ProtocolsPage } from './pages/ProtocolsPage';
 import { FloorPlanParserTestPage } from './pages/FloorPlanParserTestPage';
-import { ZoneGenerationTestPage } from './pages/ZoneGenerationTestPage';
-import { BenchPlacementTestPage } from './pages/BenchPlacementTestPage';
 import { ZoneBenchMaximizerTestPage } from './pages/ZoneBenchMaximizerTestPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { EquipmentListsPage } from './pages/EquipmentListsPage';
-import { StationsPage } from './pages/StationsPage';
 import { LayoutSandboxPage } from './pages/LayoutSandboxPage';
-import { LayoutCandidatesPage } from './pages/LayoutCandidatesPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { ValidatedProtocolsPage } from './pages/ValidatedProtocolsPage';
+import { DisclaimerPage } from './pages/DisclaimerPage';
 
 export default function App() {
   return (
@@ -40,17 +37,14 @@ export default function App() {
         <Route path="/report" element={<ReportPage />} />
         <Route path="/protocols" element={<ProtocolsPage />} />
         <Route path="/floor-plan-parser-test" element={<FloorPlanParserTestPage />} />
-        <Route path="/zone-generation-test" element={<ZoneGenerationTestPage />} />
-        <Route path="/bench-placement-test" element={<BenchPlacementTestPage />} />
         <Route path="/zone-bench-maximizer-test" element={<ZoneBenchMaximizerTestPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/equipment-lists" element={<EquipmentListsPage />} />
-        <Route path="/stations" element={<StationsPage />} />
         <Route path="/layout-sandbox" element={<LayoutSandboxPage />} />
-        <Route path="/layout-candidates" element={<LayoutCandidatesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/validated-protocols" element={<ValidatedProtocolsPage />} />
         <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/disclaimer" element={<DisclaimerPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

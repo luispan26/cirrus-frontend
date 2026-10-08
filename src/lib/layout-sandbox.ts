@@ -1,7 +1,7 @@
 export type FixtureKind = 'bench' | 'laminarHood' | 'sink' | 'cabinet' | 'refrigerator' | 'door' | 'waste';
 export type FixtureOrientation = 0 | 90 | 180 | 270;
 export interface FixtureClearance { frontFt: number; backFt: number; sideFt: number; overheadFt?: number; }
-export type SandboxLayer = 'base' | 'stations' | 'equipment' | 'circulation' | 'electrical' | 'plumbing' | 'ventilation' | 'validation' | 'zoning';
+export type SandboxLayer = 'base' | 'equipment' | 'circulation' | 'electrical' | 'plumbing' | 'ventilation' | 'validation' | 'zoning';
 export type AccessFace = 'front' | 'back' | 'left' | 'right';
 export const BENCH_WIDTH_FT = 6;
 export const BENCH_DEPTH_FT = 2.5;
@@ -54,18 +54,20 @@ export interface SandboxBaseObject {
   plumbing?: { coldWater: boolean; hotWater: boolean; drain: boolean; diWater: boolean; processWaste: boolean; flowGpm?: number };
   ventilation?: { category: VentilationCategory; cfm?: number; ducted: boolean };
 }
-// The three typed point kinds are wall/ceiling-mounted service points, not
-// physical obstructions — like a window, they're attached to a surface but
-// don't occupy floor area, so they must not collide with fixtures or block
-// derived circulation the way a column, casework, or door footprint does.
-const NON_BLOCKING_BASE_KINDS = new Set<SandboxBaseObject['kind']>(['electrical_point', 'plumbing_point', 'ventilation_point']);
+// Windows and the three typed point kinds are attached to a wall/ceiling
+// but don't occupy floor area, so they must not collide with fixtures,
+// block derived circulation, or become no-placement cells for the bench
+// solvers the way a column, casework, or door footprint does. (A window's
+// drawn 0.3ft-deep strip used to round up to a full blocked row along its
+// wall — in effect a 1ft clearance nothing asked for.)
+const NON_BLOCKING_BASE_KINDS = new Set<SandboxBaseObject['kind']>(['window', 'electrical_point', 'plumbing_point', 'ventilation_point']);
 export function blocksFloorSpace(kind: SandboxBaseObject['kind']): boolean {
   return !NON_BLOCKING_BASE_KINDS.has(kind);
 }
 export interface CirculationRequirements { personnelWidthIn: number; accessibleWidthIn: number; egressWidthIn: number; }
 export interface ElectricalEndpoint { id: string; position: SandboxPoint; voltage: number; amperage: number; phase: number; frequencyHz: number; plugType: string; circuitId: string; powerClass: 'normal' | 'emergency' | 'ups'; }
 export interface ElectricalCircuit { id: string; allowableLoadVa: number; existingLoadVa: number; dedicatedEquipmentId?: string; }
-export type LayoutFix = { type: 'set-door-width' | 'add-exit' | 'set-access-face' | 'add-circuit' | 'move-fixture' | 'remove-largest-equipment'; targetId?: string; value?: number; label: string };
+export type LayoutFix = { type: 'set-door-width' | 'add-exit' | 'add-circuit' | 'move-fixture'; targetId?: string; value?: number; label: string };
 export interface LayoutViolation { id: string; severity: 'error' | 'warning'; layer: SandboxLayer; objectIds: string[]; message: string; fix?: LayoutFix; }
 
 // What a piece of equipment needs from the room's utilities — compared
@@ -86,27 +88,6 @@ export interface UtilityRequirement {
 }
 export type EquipmentMounting = 'floor' | 'wall' | 'bench';
 
-export interface SandboxEquipmentAssignment {
-  equipmentId: string;
-  name: string;
-  widthFt?: number;
-  depthFt?: number;
-  heightFt?: number;
-  utilityRequirements?: UtilityRequirement[];
-  mounting?: EquipmentMounting | null;
-}
-
-export interface SandboxStationAssignment {
-  instanceId: string;
-  stationId: string;
-  name: string;
-  zone: string;
-  equipment: SandboxEquipmentAssignment[];
-  accessFaces?: AccessFace[];
-  operatingClearances?: ClearanceZone[];
-  serviceClearances?: ClearanceZone[];
-}
-
 export interface SandboxFixture {
   instanceId: string;
   kind: FixtureKind;
@@ -117,7 +98,6 @@ export interface SandboxFixture {
   depthFt: number;
   orientation: FixtureOrientation;
   clearance?: FixtureClearance;
-  stations: SandboxStationAssignment[];
 }
 
 export interface SandboxLayout {
@@ -132,20 +112,94 @@ export interface SandboxLayout {
   updatedAt: string;
 }
 
+// The sandbox grid: 6", so every bench edge (6 × 2.5 ft, placed on the
+// generator's 6" subgrid) lands on a grid line.
+export const SANDBOX_GRID_FT = 0.5;
+
 export const EMPTY_SANDBOX_LAYOUT: SandboxLayout = {
   version: 5,
   name: 'Untitled layout',
-  room: { widthFt: 40, heightFt: 30, gridFt: 1 },
+  room: { widthFt: 40, heightFt: 30, gridFt: SANDBOX_GRID_FT },
   fixtures: [],
   baseObjects: [], circulationRequirements: { personnelWidthIn: 60, accessibleWidthIn: 36, egressWidthIn: 36 }, electricalEndpoints: [], electricalCircuits: [],
   updatedAt: new Date(0).toISOString(),
 };
+
+// The same layout counted on another grid. Only fixture x/y are in grid
+// cells; everything else (room size, base objects, utilities) is in feet
+// and stays as it is. Used to bring saved 1 ft layouts onto the 6" grid,
+// and to hand the older 12"-only solvers a 1 ft copy.
+export function withGridFt(layout: SandboxLayout, gridFt: number): SandboxLayout {
+  const old = layout.room.gridFt;
+  if (old === gridFt) return layout;
+  return {
+    ...layout,
+    room: { ...layout.room, gridFt },
+    fixtures: layout.fixtures.map((fixture) => ({ ...fixture, x: (fixture.x * old) / gridFt, y: (fixture.y * old) / gridFt })),
+  };
+}
 
 export function fixtureFootprint(fixture: SandboxFixture, gridFt: number) {
   const vertical = fixture.orientation === 90 || fixture.orientation === 270;
   const width = vertical ? fixture.depthFt : fixture.widthFt;
   const depth = vertical ? fixture.widthFt : fixture.depthFt;
   return { width: Math.max(1, Math.ceil(width / gridFt)), height: Math.max(1, Math.ceil(depth / gridFt)) };
+}
+
+// A fixture's real footprint in feet — exact, not rounded up to whole grid
+// cells like fixtureFootprint. Solver-placed benches sit on a 6" grid (a
+// 2.5ft-deep bench, a half-foot offset), so rounding would make two benches
+// placed back to back look like they overlap.
+export interface RectFt { left: number; top: number; right: number; bottom: number; }
+export function fixtureRectFt(fixture: SandboxFixture, gridFt: number): RectFt {
+  const vertical = fixture.orientation === 90 || fixture.orientation === 270;
+  const width = vertical ? fixture.depthFt : fixture.widthFt;
+  const depth = vertical ? fixture.widthFt : fixture.depthFt;
+  const left = fixture.x * gridFt, top = fixture.y * gridFt;
+  return { left, top, right: left + width, bottom: top + depth };
+}
+
+// Which side of a fixture is its working front, by orientation: 0 faces
+// down the canvas (+y), 90 left, 180 up, 270 right — "front and back rotate
+// with the fixture" (ClearanceFields).
+export function fixtureFrontSide(orientation: FixtureOrientation): WallSide {
+  return orientation === 0 ? 'bottom' : orientation === 90 ? 'left' : orientation === 180 ? 'top' : 'right';
+}
+
+// The clear working aisle in front of a fixture (clearance.frontFt deep,
+// the full length of its front edge), or null when it has none.
+export function fixtureFrontAisleFt(fixture: SandboxFixture, gridFt: number): RectFt | null {
+  const depth = fixture.clearance?.frontFt ?? 0;
+  if (depth <= 0) return null;
+  const r = fixtureRectFt(fixture, gridFt);
+  switch (fixtureFrontSide(fixture.orientation)) {
+    case 'bottom': return { left: r.left, right: r.right, top: r.bottom, bottom: r.bottom + depth };
+    case 'top': return { left: r.left, right: r.right, top: r.top - depth, bottom: r.top };
+    case 'left': return { left: r.left - depth, right: r.left, top: r.top, bottom: r.bottom };
+    case 'right': return { left: r.right, right: r.right + depth, top: r.top, bottom: r.bottom };
+  }
+}
+
+// Kept clear straight in front of every door: exactly the door's width
+// (nothing on its sides), the swing (door width deep) plus a
+// DOOR_LANDING_FT landing beyond it — the same landing the zone/bench
+// maximizer reserves on the backend (room-circulation.ts
+// computeDoorLandings).
+export const DOOR_LANDING_FT = 5;
+export function doorClearanceRectFt(door: SandboxBaseObject, room: { widthFt: number; heightFt: number }): RectFt | null {
+  if (!door.footprint.points.length) return null;
+  const b = polygonBounds(door.footprint);
+  const side = wallSideOfBounds(b, room);
+  const alongWall = side === 'top' || side === 'bottom';
+  const span = alongWall ? b.right - b.left : b.bottom - b.top;
+  const depth = span + DOOR_LANDING_FT;
+  const a0 = alongWall ? b.left : b.top, a1 = alongWall ? b.right : b.bottom;
+  switch (side) {
+    case 'top': return { left: a0, right: a1, top: 0, bottom: depth };
+    case 'bottom': return { left: a0, right: a1, top: room.heightFt - depth, bottom: room.heightFt };
+    case 'left': return { left: 0, right: depth, top: a0, bottom: a1 };
+    case 'right': return { left: room.widthFt - depth, right: room.widthFt, top: a0, bottom: a1 };
+  }
 }
 
 export function polygonBounds(polygon: SandboxPolygon) {
@@ -230,6 +284,49 @@ export function reanchorWallMountedObjects(baseObjects: SandboxBaseObject[], roo
     const offsetFt = object.utility.offsetFt ?? (object.footprint.points[0] ? offsetAlongWall(wallId, object.footprint.points[0]) : 0);
     return { ...object, footprint: { points: [pointOnWall(wallId, offsetFt, room)] }, utility: { ...object.utility, offsetFt } };
   });
+}
+
+// Resizes the room while keeping everything along a wall on that wall.
+// The north and west walls stay put, so anything touching the east or south
+// wall moves with it; anything running along a wall that got shorter is
+// slid back inside it. Nothing is ever resized — doors, windows, columns,
+// no-placement areas and fixtures keep their exact dimensions. Objects not
+// touching a wall keep their position.
+export function resizeRoom(layout: SandboxLayout, size: RoomSize): SandboxLayout {
+  const old = layout.room;
+  const room = { ...old, widthFt: size.widthFt, heightFt: size.heightFt };
+  const eps = 1e-6;
+  const shiftFor = (b: RectFt) => {
+    const onNorth = b.top <= eps, onSouth = b.bottom >= old.heightFt - eps;
+    const onWest = b.left <= eps, onEast = b.right >= old.widthFt - eps;
+    // Something spanning the whole room one way (touching both opposite
+    // walls) can't follow both without being stretched — it stays put.
+    let dx = onEast && !onWest ? room.widthFt - old.widthFt : 0;
+    let dy = onSouth && !onNorth ? room.heightFt - old.heightFt : 0;
+    if (onNorth || onSouth) {
+      const over = b.right + dx - room.widthFt;
+      if (over > eps) dx -= Math.min(over, b.left + dx);
+    }
+    if (onWest || onEast) {
+      const over = b.bottom + dy - room.heightFt;
+      if (over > eps) dy -= Math.min(over, b.top + dy);
+    }
+    return { dx, dy };
+  };
+  const baseObjects = layout.baseObjects.map((object) => {
+    if (!object.footprint.points.length) return object;
+    const { dx, dy } = shiftFor(polygonBounds(object.footprint));
+    if (dx === 0 && dy === 0) return object;
+    return { ...object, footprint: { points: object.footprint.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) } };
+  });
+  const fixtures = layout.fixtures.map((fixture) => {
+    const { dx, dy } = shiftFor(fixtureRectFt(fixture, old.gridFt));
+    if (dx === 0 && dy === 0) return fixture;
+    return { ...fixture, x: fixture.x + dx / old.gridFt, y: fixture.y + dy / old.gridFt };
+  });
+  // Wall-mounted utility points keep their position of record (wall +
+  // offset) — re-derive them from it against the new size.
+  return { ...layout, room, baseObjects: reanchorWallMountedObjects(baseObjects, room), fixtures };
 }
 
 // A rectangular footprint (door/window) flush against the nearest wall,
@@ -362,7 +459,7 @@ export function computePlacementAvailability(
   for (let y = 0; y < rows; y++) {
     const row: boolean[] = [];
     for (let x = 0; x < columns; x++) {
-      const candidate: SandboxFixture = { instanceId: '__placement-preview__', kind: 'bench', name: '', x, y, widthFt: size.widthFt, depthFt: size.depthFt, orientation: size.orientation, stations: [] };
+      const candidate: SandboxFixture = { instanceId: '__placement-preview__', kind: 'bench', name: '', x, y, widthFt: size.widthFt, depthFt: size.depthFt, orientation: size.orientation };
       row.push(canPlaceFixture(candidate, others, baseObjects, gridFt));
     }
     grid.push(row);
@@ -407,6 +504,12 @@ function migrateBaseObject(object: SandboxBaseObject, room: RoomSize): SandboxBa
   return migrated;
 }
 
+// Utilities (electrical, plumbing, HVAC/ventilation points and electrical
+// circuits) are not part of Cirrus layouts: Cirrus assumes they can be
+// reconfigured to the planned layout (see the Disclaimer page). Older saves
+// that still have them lose them on load.
+export const UTILITY_OBJECT_KINDS: SandboxBaseObject['kind'][] = ['electrical_panel', 'utility_connection', 'electrical_point', 'plumbing_point', 'ventilation_point'];
+
 export function parseSandboxLayout(value: unknown): SandboxLayout | null {
   if (!value || typeof value !== 'object') return null;
   const layout = value as Omit<Partial<SandboxLayout>, 'version'> & { version?: number };
@@ -417,18 +520,18 @@ export function parseSandboxLayout(value: unknown): SandboxLayout | null {
     const legacy = fixture as Omit<SandboxFixture, 'orientation'> & { orientation?: FixtureOrientation | 'horizontal' | 'vertical' };
     const orientation = legacy.orientation === 'vertical' ? 90 : legacy.orientation === 'horizontal' ? 0 : legacy.orientation;
     if (![0, 90, 180, 270].includes(orientation as number)) return null;
-    // Fixture position is a grid CELL INDEX (see fixtureFootprint/canPlaceFixture
-    // and the CSS grid rendering in LayoutSandboxPage, which use x/y directly as
-    // a `grid-column`/`grid-row` line number — those must be whole numbers).
-    // The report generator computes bench positions in real feet using
-    // BENCH_DEPTH_FT (2.5 ft) back-to-back pairs, which lands every other
-    // bench on a half-integer (e.g. 7.5) — harmless to the generator's own
-    // real-number overlap math, but an invalid CSS grid line here, which
-    // silently falls back to grid auto-placement and stacks fixtures on top
-    // of each other. Flooring on the way in (rather than fixing the
-    // generator) keeps this the sandbox's own coordinate contract regardless
-    // of where a layout comes from — generated, imported, or hand-authored.
-    const parsed = { ...legacy, orientation, x: Math.floor(Number(legacy.x)), y: Math.floor(Number(legacy.y)) } as SandboxFixture;
+    // Fixture position is kept exactly as saved, fractions included.
+    // Solver-placed benches sit on a 6" grid, so a back-to-back pair lands
+    // every other bench on a half-foot (e.g. 7.5). This used to be floored
+    // because fixtures were drawn as CSS grid items (a grid line must be a
+    // whole number); they're now drawn absolutely at their exact feet
+    // (fixtureRectFt), and flooring shifted one bench of each pair half a
+    // foot — overlapping its partner or leaving a gap after any reload.
+    const x = Number(legacy.x), y = Number(legacy.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    // Station assignments (removed from Cirrus) in older saves are dropped.
+    const { stations: _stations, ...rest } = legacy as typeof legacy & { stations?: unknown };
+    const parsed = { ...rest, orientation, x, y } as SandboxFixture;
     if (parsed.kind === 'bench') {
       parsed.widthFt = BENCH_WIDTH_FT;
       parsed.depthFt = BENCH_DEPTH_FT;
@@ -442,10 +545,10 @@ export function parseSandboxLayout(value: unknown): SandboxLayout | null {
   if (fixtures.some((fixture) => fixture === null)) return null;
   return {
     ...layout, version: 5, fixtures,
-    baseObjects: Array.isArray((layout as SandboxLayout).baseObjects) ? (layout as SandboxLayout).baseObjects.map((object) => migrateBaseObject(object, layout.room!)) : [],
+    baseObjects: Array.isArray((layout as SandboxLayout).baseObjects) ? (layout as SandboxLayout).baseObjects.filter((object) => !UTILITY_OBJECT_KINDS.includes(object.kind)).map((object) => migrateBaseObject(object, layout.room!)) : [],
     circulationRequirements: (layout as SandboxLayout).circulationRequirements ?? { personnelWidthIn: 60, accessibleWidthIn: 36, egressWidthIn: 36 },
-    electricalEndpoints: Array.isArray((layout as SandboxLayout).electricalEndpoints) ? (layout as SandboxLayout).electricalEndpoints : [],
-    electricalCircuits: Array.isArray((layout as SandboxLayout).electricalCircuits) ? (layout as SandboxLayout).electricalCircuits : [],
+    electricalEndpoints: [],
+    electricalCircuits: [],
   } as SandboxLayout;
 }
 
@@ -500,14 +603,10 @@ export interface LayoutGeometryInput {
   sinkCells: number[];
 }
 
-// Rasterizes the room's empty shell into the integer cell grid solveToyZoning
-// expects — baseObjects only, deliberately no fixtures: zoning happens
-// *before* benches are placed (see cirrus-backend's src/zoning), so the
-// geometry it should see is the architecture (walls, doors, columns, sinks),
-// not what's already sitting in the room. Same gridFt-based column/row math
-// as deriveCirculationSpace, so the two never disagree about cell layout.
-// Cells are 0-indexed row-major (cell = row * roomWidth + col), matching
-// solveToyZoning's convention.
+// Rasterizes the room's empty shell into an integer cell grid — baseObjects
+// only (walls, doors, columns, sinks), no fixtures. Same gridFt-based
+// column/row math as deriveCirculationSpace, so the two never disagree about
+// cell layout. Cells are 0-indexed row-major (cell = row * roomWidth + col).
 export function buildLayoutGeometryInput(layout: SandboxLayout): LayoutGeometryInput {
   const grid = layout.room.gridFt;
   const roomWidth = Math.max(1, Math.ceil(layout.room.widthFt / grid));
@@ -572,122 +671,81 @@ export function buildLayoutGeometryInput(layout: SandboxLayout): LayoutGeometryI
   };
 }
 
-// Only rule enforced: no two floor-blocking placed objects (fixtures or
-// base objects) may occupy the same physical space — electrical/plumbing/
-// ventilation points are exempt (see blocksFloorSpace). Everything else
-// this used to check (clearance zones, exit/door-swing clearance,
-// circulation routing, bench capacity, station access faces, electrical
-// circuit wiring) has been intentionally removed.
-export function validateSandboxLayout(layout: SandboxLayout): LayoutViolation[] {
-  const violations: LayoutViolation[] = [];
+// buildLayoutGeometryInput plus every fixture already in the room as a
+// no-placement area, for the bench fitter: a hood, sink,
+// cabinet, fridge, waste bin or hand-placed bench is an obstacle to plan
+// around — blocked at its own footprint, with no clearance of its own
+// added (only doors keep a landing; see DOOR_LANDING_FT). A cell counts
+// as blocked if the fixture covers any part of it. Benches a previous
+// solve auto-placed (AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX) are left out,
+// since the solve replaces them.
+export function buildBenchPlacementGeometryInput(layout: SandboxLayout): LayoutGeometryInput {
+  const geometry = buildLayoutGeometryInput(layout);
+  const grid = layout.room.gridFt;
+  const blocked = new Set(geometry.blockedCells);
+  const entrance = new Set(geometry.entranceCells);
   for (const fixture of layout.fixtures) {
-    if (!canPlaceFixture(fixture, layout.fixtures, layout.baseObjects, layout.room.gridFt)) {
-      violations.push({ id: `placement-${fixture.instanceId}`, severity: 'error', layer: 'validation', objectIds: [fixture.instanceId], message: `${fixture.name} overlaps another object.`, fix: { type: 'move-fixture', targetId: fixture.instanceId, label: 'Move to nearest open position' } });
+    if (isAutoPlacedBench(fixture)) continue;
+    const r = fixtureRectFt(fixture, grid);
+    const x0 = Math.max(0, Math.floor(r.left / grid + 1e-6)), x1 = Math.min(geometry.roomWidth - 1, Math.ceil(r.right / grid - 1e-6) - 1);
+    const y0 = Math.max(0, Math.floor(r.top / grid + 1e-6)), y1 = Math.min(geometry.roomHeight - 1, Math.ceil(r.bottom / grid - 1e-6) - 1);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const cell = y * geometry.roomWidth + x;
+      if (!entrance.has(cell)) blocked.add(cell);
     }
   }
-  for (let i = 0; i < layout.baseObjects.length; i++) {
-    for (let j = i + 1; j < layout.baseObjects.length; j++) {
-      const a = layout.baseObjects[i], b = layout.baseObjects[j];
-      if (blocksFloorSpace(a.kind) && blocksFloorSpace(b.kind) && a.footprint.points.length && b.footprint.points.length && rectsIntersect(polygonBounds(a.footprint), polygonBounds(b.footprint))) {
-        violations.push({ id: `base-overlap-${a.id}-${b.id}`, severity: 'error', layer: 'base', objectIds: [a.id, b.id], message: `${a.name} overlaps ${b.name}.` });
-      }
+  return { ...geometry, blockedCells: [...blocked] };
+}
+
+// The Sandbox's global rules — exactly two, both on exact footprints:
+//   1. Aisle clearance: every fixture's front working aisle
+//      (clearance.frontFt, on the side fixtureFrontSide names) lies inside
+//      the room and is clear of every other fixture and every
+//      floor-blocking base object. Aisles may overlap each other — two
+//      facing benches sharing one aisle is the normal layout.
+//   2. Door clearance: no fixture sits in a door's swing + landing
+//      (doorClearanceRectFt).
+// Everything else (fixture/base overlap, circulation routing, capacity,
+// station faces, wiring) is intentionally not checked here, so the solver's
+// own output shows up as-is. Manual placement/moves still refuse overlaps
+// (canPlaceFixture) — that's an editing aid, not a global rule.
+export function validateSandboxLayout(layout: SandboxLayout): LayoutViolation[] {
+  const violations: LayoutViolation[] = [];
+  const gridFt = layout.room.gridFt;
+  const overlaps = (a: RectFt, b: RectFt) => a.left < b.right - 1e-6 && b.left < a.right - 1e-6 && a.top < b.bottom - 1e-6 && b.top < a.bottom - 1e-6;
+  const blockingBase = layout.baseObjects.filter((object) => blocksFloorSpace(object.kind) && object.footprint.points.length);
+
+  for (const fixture of layout.fixtures) {
+    const aisle = fixtureFrontAisleFt(fixture, gridFt);
+    if (!aisle) continue;
+    const outside = aisle.left < -1e-6 || aisle.top < -1e-6 || aisle.right > layout.room.widthFt + 1e-6 || aisle.bottom > layout.room.heightFt + 1e-6;
+    const blockers = [
+      ...layout.fixtures.filter((other) => other.instanceId !== fixture.instanceId && overlaps(aisle, fixtureRectFt(other, gridFt))).map((other) => ({ id: other.instanceId, name: other.name })),
+      ...blockingBase.filter((object) => overlaps(aisle, polygonBounds(object.footprint))).map((object) => ({ id: object.id, name: object.name })),
+    ];
+    if (outside || blockers.length > 0) {
+      const what = blockers.length > 0 ? `blocked by ${blockers.map((b) => b.name).join(', ')}` : 'runs outside the room';
+      violations.push({ id: `aisle-${fixture.instanceId}`, severity: 'error', layer: 'validation', objectIds: [fixture.instanceId, ...blockers.map((b) => b.id)], message: `${fixture.name}'s ${fixture.clearance?.frontFt} ft front aisle is ${what}.` });
+    }
+  }
+
+  for (const door of layout.baseObjects.filter((object) => object.kind === 'door')) {
+    const zone = doorClearanceRectFt(door, layout.room);
+    if (!zone) continue;
+    const intruders = layout.fixtures.filter((fixture) => overlaps(zone, fixtureRectFt(fixture, gridFt)));
+    if (intruders.length > 0) {
+      violations.push({ id: `door-${door.id}`, severity: 'error', layer: 'validation', objectIds: intruders.map((f) => f.instanceId), message: `${intruders.map((f) => f.name).join(', ')} ${intruders.length === 1 ? 'sits' : 'sit'} in ${door.name}'s clearance (swing + ${DOOR_LANDING_FT} ft landing).` });
     }
   }
   return violations;
 }
 
-// Shortest distance from a point to a fixture's own footprint (0 if the
-// point falls inside it) — used to decide whether a utility point is within
-// its own connectionRadiusFt of a bench, not whether it collides with one.
-function distanceToFixture(fixture: SandboxFixture, point: SandboxPoint, gridFt: number): number {
-  const size = fixtureFootprint(fixture, gridFt);
-  const left = fixture.x * gridFt, top = fixture.y * gridFt;
-  const right = left + size.width * gridFt, bottom = top + size.height * gridFt;
-  const nearestX = Math.min(Math.max(point.x, left), right);
-  const nearestY = Math.min(Math.max(point.y, top), bottom);
-  return Math.hypot(point.x - nearestX, point.y - nearestY);
-}
-
-const UTILITY_OBJECT_KIND: Record<UtilityRequirementType, SandboxBaseObject['kind']> = { electrical: 'electrical_point', plumbing: 'plumbing_point', ventilation: 'ventilation_point' };
-
-// Whether a utility point's own type/capacity satisfies a requirement's
-// subtype — distance and quantity are checked separately by the caller,
-// this only judges "is this the right kind of connection at all."
-function requirementMatchesObject(requirement: UtilityRequirement, object: SandboxBaseObject): boolean {
-  if (object.kind !== UTILITY_OBJECT_KIND[requirement.type]) return false;
-  if (requirement.type === 'electrical' && object.electrical) {
-    if (requirement.dedicated && !object.electrical.dedicated) return false;
-    const requestedVoltage = requirement.subtype ? Number(requirement.subtype.replace(/[^0-9]/g, '')) : null;
-    if (requestedVoltage && Number(object.electrical.voltage) !== requestedVoltage) return false;
-    return true;
-  }
-  if (requirement.type === 'plumbing' && object.plumbing) {
-    if (requirement.subtype && !(object.plumbing as unknown as Record<string, boolean>)[requirement.subtype]) return false;
-    return true;
-  }
-  if (requirement.type === 'ventilation' && object.ventilation) {
-    if (requirement.subtype && object.ventilation.category !== requirement.subtype) return false;
-    return true;
-  }
-  return false;
-}
-
-export interface UtilityReachabilityResult {
-  reachable: Array<{ object: SandboxBaseObject; distanceFt: number }>;
-  requirementResults: Array<{ stationName: string; equipmentId: string; equipmentName: string; requirement: UtilityRequirement; satisfied: boolean; reason: string }>;
-}
-
-// The one validator this step adds: for a selected bench (optionally
-// narrowed to one of its stations), which utility points are within reach,
-// and for each piece of assigned equipment's utilityRequirements, is there
-// a reachable point that actually matches (type/subtype/dedicated) within
-// both the point's own connectionRadiusFt and the requirement's own
-// maxConnectionDistanceFt. Deliberately stops at "reachable and matching" —
-// no shared-capacity bookkeeping across multiple pieces of equipment, no
-// bench sizing. That's the bench calculator's job, not this validator's.
-export function evaluateUtilityReachability(fixture: SandboxFixture, baseObjects: SandboxBaseObject[], gridFt: number, station?: SandboxStationAssignment): UtilityReachabilityResult {
-  const reachable = baseObjects
-    .filter((object) => object.utility && object.footprint.points.length)
-    .map((object) => ({ object, distanceFt: distanceToFixture(fixture, object.footprint.points[0], gridFt) }))
-    .filter(({ object, distanceFt }) => distanceFt <= object.utility!.connectionRadiusFt)
-    .sort((a, b) => a.distanceFt - b.distanceFt);
-
-  const stations = station ? [station] : fixture.stations;
-  const requirementResults: UtilityReachabilityResult['requirementResults'] = [];
-  for (const st of stations) {
-    for (const equipment of st.equipment) {
-      for (const requirement of equipment.utilityRequirements ?? []) {
-        const maxDistance = requirement.maxConnectionDistanceFt ?? Infinity;
-        const matches = reachable.filter(({ object, distanceFt }) => distanceFt <= maxDistance && requirementMatchesObject(requirement, object));
-        const needed = requirement.quantity ?? 1;
-        const satisfied = matches.length >= needed;
-        const label = `${requirement.type}${requirement.subtype ? ` (${requirement.subtype})` : ''}`;
-        const reason = satisfied
-          ? `${matches.length} reachable match${matches.length === 1 ? '' : 'es'} within range.`
-          : requirement.required
-            ? `No reachable ${label} within range — needs ${needed}, found ${matches.length}.`
-            : `Preferred ${label} not available within range (optional).`;
-        requirementResults.push({ stationName: st.name, equipmentId: equipment.equipmentId, equipmentName: equipment.name, requirement, satisfied, reason });
-      }
-    }
-  }
-  return { reachable, requirementResults };
-}
-
-// The inverse of buildLayoutGeometryInput's rasterization: turns
-// placeBenchesForSandbox's grid-cell result (PlaceBenchesForSandboxMutation's
+// The inverse of buildLayoutGeometryInput's rasterization: turns the bench
+// fitter's grid-cell result (maximizeZonesAndBenchesForSandbox's
 // benchResult.benches, in the placement subgrid's own coordinates) into
 // SandboxFixture objects a person can see, select, and nudge like any other
-// hand-placed fixture.
-//
-// ASSUMES the sandbox's room.gridFt is 1 (one room cell = 12"): the
-// backend's own sandbox-zone-request.ts hardcodes a 12"-per-cell grid for
-// every room it solves against today (see DEFAULT_GRID_CELL_SIZE_INCHES's
-// own comment there) regardless of what this layout's actual gridFt is, so
-// converting through a different gridFt here would only relocate a bench
-// onto a grid the backend never actually solved against — not make the
-// result more correct. Fix both sides together, not just this one, once a
-// real gridFt is threaded through as an input field.
+// hand-placed fixture. The fitter sends its real cellSizeInches; gridFt
+// places the benches back on the sandbox grid.
 export interface PlacementGridCell { row: number; column: number; }
 
 export interface PlacedBenchGeometry {
@@ -695,6 +753,19 @@ export interface PlacedBenchGeometry {
   zoneId: string;
   rotationDegrees: number;
   footprintCells: PlacementGridCell[]; // in the placement subgrid — see PlacedBenchType.footprintCells' own field comment
+  accessSide?: string | null; // GridEdgeSide — the side the bench is worked from
+}
+
+// GridEdgeSide (any case) → the orientation whose front (fixtureFrontSide)
+// is that side. Falls back to the rotation when the side is missing.
+function orientationForAccessSide(accessSide: string | null | undefined, rotationDegrees: number): FixtureOrientation {
+  switch ((accessSide ?? '').toLowerCase()) {
+    case 'south': return 0;
+    case 'west': return 90;
+    case 'north': return 180;
+    case 'east': return 270;
+    default: return (rotationDegrees as FixtureOrientation) ?? 0;
+  }
 }
 
 const SANDBOX_ROOM_CELL_SIZE_INCHES = 12; // matches DEFAULT_GRID_CELL_SIZE_INCHES on the backend — see this function's own header comment
@@ -706,7 +777,27 @@ const SANDBOX_ROOM_CELL_SIZE_INCHES = 12; // matches DEFAULT_GRID_CELL_SIZE_INCH
 // bench happens to also start with bench-".
 export const AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX = 'auto-bench-';
 
-export function sandboxFixturesFromBenchPlacement(benches: PlacedBenchGeometry[], placementCellSizeInches: number, zoneNameById: Map<string, string>): SandboxFixture[] {
+// A bench an automatic placement produced — the sandbox's own maximize/
+// place run, or a generated report's plan (those carry planBenchId) — as
+// opposed to one a person placed. Re-running placement replaces these.
+export function isAutoPlacedBench(fixture: SandboxFixture): boolean {
+  return fixture.instanceId.startsWith(AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX) || (fixture as SandboxFixture & { planBenchId?: string }).planBenchId !== undefined;
+}
+
+// workingAisleFt is the SAME aisle width every bench in this call was
+// solved against (both callers pass one PlaceBenchesInput.benchRequirements
+// list per call, and every requirement in it shares one
+// workingAisleWidthInches — see PlaceBenchesForSandboxResponse's own
+// benchRequirementsFromZoneRequirements/ZoneBenchMaximizerService callers).
+// Without this, every auto-placed bench came back with clearance
+// undefined — indistinguishable, to the rest of the Sandbox (the details
+// panel, overlap/clearance validation), from a bench with NO required
+// aisle at all, even though the solver enforced a real one. frontFt is the
+// right field for it: ClearanceFields' own comment ("front and back rotate
+// with the fixture") matches accessSide always being the solved bench's
+// own working edge.
+// gridFt is the sandbox grid the fixture's x/y are counted in (room.gridFt).
+export function sandboxFixturesFromBenchPlacement(benches: PlacedBenchGeometry[], placementCellSizeInches: number, zoneNameById: Map<string, string>, workingAisleFt: number, gridFt = SANDBOX_ROOM_CELL_SIZE_INCHES / 12): SandboxFixture[] {
   return benches.map((bench) => {
     const rows = bench.footprintCells.map((c) => c.row);
     const columns = bench.footprintCells.map((c) => c.column);
@@ -725,12 +816,12 @@ export function sandboxFixturesFromBenchPlacement(benches: PlacedBenchGeometry[]
       instanceId: `${AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX}${bench.id}`,
       kind: 'bench',
       name: zoneNameById.get(bench.zoneId) ? `Bench (${zoneNameById.get(bench.zoneId)})` : 'Bench',
-      x: (minColumn * placementCellSizeInches) / SANDBOX_ROOM_CELL_SIZE_INCHES,
-      y: (minRow * placementCellSizeInches) / SANDBOX_ROOM_CELL_SIZE_INCHES,
+      x: (minColumn * placementCellSizeInches) / 12 / gridFt,
+      y: (minRow * placementCellSizeInches) / 12 / gridFt,
       widthFt,
       depthFt,
-      orientation: (bench.rotationDegrees as FixtureOrientation) ?? 0,
-      stations: [],
+      orientation: orientationForAccessSide(bench.accessSide, bench.rotationDegrees),
+      clearance: { frontFt: workingAisleFt, backFt: 0, sideFt: 0 },
     };
   });
 }

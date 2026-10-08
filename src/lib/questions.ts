@@ -42,64 +42,14 @@ export interface Question {
 
 export type Answers = Record<string, unknown>;
 
-// The full intake flow, in order: biosafety_level -> biomaterials ->
-// basic_lab_equipment (the merged equipment-planning step: add anything you
-// already own or still need, then review the resulting Basic Lab Equipment
-// List — see computeBasicLabEquipment/applyBasicLabEquipmentOverrides below)
-// -> space -> operations (the protocol-planning step: essential protocols
-// for the selected biomaterials are pre-selected automatically, add/remove
-// on top of that, plus expected weekly runs per protocol asked inline — see
-// ProtocolPlanBody in QuestionsPage.tsx and computeEssentialProtocolIds
-// below) -> budget -> layout_prefs (optional — layout priority sliders plus manual
-// door/utility placement, all defaulted so a user can skip it entirely; see
-// LayoutPrefsBody in QuestionsPage.tsx and the layout_weights/door/utilities
-// fields on FinalIntakeJson below).
-//
-// There used to be a separate "Do you already have equipment?" step asked
-// first, unconditionally, before biosafety_level/biomaterials were answered
-// — which meant the app asked the user to list their equipment before it had
-// enough context to know what to size against. It's been folded into
-// basic_lab_equipment instead: owning equipment is entered in the same step
-// where its effect (reduced quantities needed, an "Already Owned" bucket) is
-// immediately visible. Whether any equipment was actually entered is itself
-// the signal for "already has equipment" elsewhere in the flow (see
-// hasExistingEquipment in buildFinalIntakeJson and questionHint in
-// QuestionsPage.tsx) — there's no separate gating question for it.
-//
-// There also used to be a standalone "additional analytical equipment"
-// question. Removed: the equipment-plan step's tag filter (see
-// TagFilterPopover in QuestionsPage.tsx) already lets a user find analytical
-// equipment inside the same picker used for everything else, and the
-// picker's Owned/Needed toggle covers the case a dedicated analytical
-// question couldn't — "I want this but don't have it yet" (a costed
-// 'needed' row) as opposed to "I already have it" (an 'owned' row, no
-// BOM cost). See the needed_equipment_meta handling below.
-//
-// biosafety_level/biomaterials feed directly into basic_lab_equipment, so
-// they're grouped right before it, ahead of space/protocols/budget. Tiered
-// protocol prioritization used to be its own step after this one; removed
-// outright (the backend never actually consumed it — finalIntakeJson is
-// passed through as an opaque JSON scalar, see intake.resolver.ts).
-//
-// This is intentionally just the sizing-stage questions from the
-// generator's intake spec, plus the Prompt 1/2 equipment-planning questions
-// — no facilities/staff/schedule/constraints/growth/business-model
-// questions, and no "how long does each run take" question
-// (the weekly-runs input only asks frequency — duration comes from each
-// protocol's own Operation.estimatedTimeHours metadata, see
-// capacity-planner.ts's estimatedTimeHoursFor). FinalIntakeJson.bsl (the
-// field the layout generator itself reads) is still fixed to 'BSL-1'
-// regardless of the biosafety_level answer — the generator only ever
-// supported that one value (see intake-validator.ts's assertSupportedBsl)
-// and wiring a real BSL-2 answer through to generation/BOM is Prompt 3's
-// job, not this one. biosafety_level's real answer is fully used for the
-// Basic Lab Equipment List computation below, just not for FinalIntakeJson.bsl
-// yet. Everything else not asked here is simply not collected; the backend
-// treats all of it as optional and defaults safely when absent (see
-// feasibility.service.ts / report-generator.service.ts / capacity-planner.ts).
-//
-// See FEASIBILITY_GATE_IDS below for exactly which steps trigger a
-// cross-field feasibility check against everything answered so far.
+// Budget -> biosafety -> biomaterials -> equipment -> space -> protocols ->
+// layout preferences. Budget warnings are advisory. Arrangement settings
+// round-trip through the sandbox; other preferences remain in the form.
+// The protocols step pre-selects essential protocols for the selected
+// biomaterials (computeEssentialProtocolIds below; ProtocolPlanBody in
+// QuestionsPage.tsx) and lets the user add/remove on top of that.
+// Protocol selections are keyed by protocol ID, with frequencies kept per
+// protocol and aggregated to catalog operations in buildFinalIntakeJson.
 export const OPERATION_OPTS: QuestionOption[] = [
   { v: 'glycerol_stocking', l: 'Glycerol stocking' },
   { v: 'making_overnight_cultures', l: 'Making overnight cultures' },
@@ -248,31 +198,21 @@ export function computeEssentialProtocolIds(answers: Answers, protocols: Validat
 }
 
 export const QS: Question[] = [
-  { id: 'biosafety_level', n: 1, t: 'What biosafety level is your labspace compliant with?', h: 'Adds that level\'s required equipment to your Basic Lab Equipment List', type: 'radio', opts: BIOSAFETY_LEVEL_OPTS },
-  { id: 'biomaterials', n: 2, t: 'What type of biomaterials would you like to work with?', h: 'Each one adds its own basic equipment set to your Basic Lab Equipment List', type: 'checklist', opts: BIOMATERIAL_OPTS },
-  { id: 'basic_lab_equipment', n: 3, t: 'Plan your Basic Lab Equipment', h: 'Add anything you already own or still need, then review the computed Basic Lab Equipment List — adjust quantities or remove anything you don’t need', type: 'equipment_plan' },
-  { id: 'space', n: 4, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
+  { id: 'budget', n: 1, t: 'What is your equipment budget?', h: 'Set a desired spend and an absolute maximum for new equipment.', type: 'budget' },
+  { id: 'biosafety_level', n: 2, t: 'What biosafety level is your labspace compliant with?', h: 'Adds that level\'s required equipment to your Basic Lab Equipment List', type: 'radio', opts: BIOSAFETY_LEVEL_OPTS },
+  { id: 'biomaterials', n: 3, t: 'What type of biomaterials would you like to work with?', h: 'Each one adds its own basic equipment set to your Basic Lab Equipment List', type: 'checklist', opts: BIOMATERIAL_OPTS },
+  { id: 'basic_lab_equipment', n: 4, t: 'Plan your Basic Lab Equipment', h: 'Add anything you already own or still need, then review the computed Basic Lab Equipment List — adjust quantities or remove anything you don’t need', type: 'equipment_plan' },
+  { id: 'space', n: 5, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
   {
-    id: 'operations', n: 5, t: 'Plan your Protocols',
+    id: 'operations', n: 6, t: 'Plan your Protocols',
     h: 'Recommended protocols for your selected biomaterials are added automatically — add or remove any protocol below, and set expected weekly runs for each.',
     type: 'protocol_plan', opts: OPERATION_OPTS,
   },
-  { id: 'budget', n: 6, t: 'What is your budget?', h: 'Drives all financial projections', type: 'budget' },
   {
     id: 'layout_prefs', n: 7, t: 'Layout preferences', type: 'layout_prefs',
-    h: 'Optional — tune what the generator optimizes for, and where the door/utility hookups go. Leave anything here alone and the generator decides.',
+    h: 'Optional — tune how the generator lays out benches, and where the door goes. Leave anything here alone and the generator decides.',
   },
 ];
-
-// Steps where advancing past them triggers a feasibilityCheck GraphQL call
-// against everything answered so far (see QuestionsPage.tsx's nextQ) —
-// 'budget' re-checks room-vs-required-benches and budget-vs-equipment-cost
-// with desired/max now known. 'operations' (protocol selection and
-// weekly-runs, both answered on that one step) deliberately does NOT gate
-// here for now — throughput is temporarily unlimited, no room-vs-bench
-// error blocks leaving that step. Revisit once real throughput limits are
-// wanted again.
-export const FEASIBILITY_GATE_IDS = ['budget'];
 
 export const INTAKE_FIELD_KEYS = [
   'existing_equipment_meta', 'needed_equipment_meta',
@@ -282,9 +222,21 @@ export const INTAKE_FIELD_KEYS = [
   'operations', 'protocol_runs_per_week', 'protocol_operation_by_id',
   'protocol_essential_removed', 'protocol_manual_ids',
   'budget_desired', 'budget_max', 'budget_scope',
-  'layout_priority_throughput', 'layout_priority_walking_distance', 'layout_priority_contamination',
-  'door_wall', 'door_offset_ft', 'utility_placements',
+  'door_wall', 'door_offset_ft',
+  // The room built in the sandbox (see LayoutSandboxPage's useInIntake):
+  // its drawn objects, and the same room as grid cells for the generator.
+  'space_sandbox_layout', 'space_geometry',
+  // How the generator lays out benches (Layout preferences step).
+  'layout_mode', 'layout_main_wall', 'layout_same_direction', 'layout_wall_benches', 'layout_working_space_pct',
+  'layout_separate_zones', 'layout_optimizer_balance',
+  // Per-equipment zone reassignment and "fixed" flags (equipment step).
+  'equipment_zones', 'equipment_fixed',
 ];
+
+// Defaults for the generator's layout settings — the same defaults the
+// backend applies (resolvePlanOptions in layout-generator.service.ts).
+export const DEFAULT_WORKING_SPACE_PCT = 35;
+export const LAYOUT_SETTING_DEFAULTS = { mode: 'max_fit' as const, sameDirection: true, wallBenches: false, workingSpacePct: DEFAULT_WORKING_SPACE_PCT, separateZones: false, optimizerBalance: 0.5 };
 
 // No steps are skipped today — there used to be a gating "does your space
 // already have equipment?" question with a conditional step behind it,
@@ -371,7 +323,19 @@ export interface FinalIntakeJson {
     // completed.
     method: 'sandbox' | 'upload' | null;
     floorplan_filename: string | null;
+    // The sandbox room itself (method 'sandbox' only): every door, column,
+    // no-placement area and fixture, so the generator plans the real room.
+    layout?: unknown;
+    geometry?: unknown;
   };
+  // separate_zones: contamination control (an aisle between different
+  // zones). optimizer_balance: for the equipment optimizer only — 0 = favor
+  // meeting soft constraints, 1 = favor minimizing walking distance.
+  layout_options: { mode: 'max_fit' | 'main_wall'; main_wall: WallSide | null; same_direction: boolean; wall_benches: boolean; working_space_pct: number; separate_zones: boolean; optimizer_balance: number };
+  // equipmentId -> zone id, for equipment moved to another zone.
+  equipment_zones: Record<string, string>;
+  // Equipment the optimizer must never move.
+  equipment_fixed: string[];
   budget: { desired: number; max: number; scope: string };
   allocation: { equipment: number; construction: number; staffing: number; consumables: number; contingency: number };
   // Expected weekly run volume per resolved operation id — feeds
@@ -389,26 +353,20 @@ export interface FinalIntakeJson {
   // the real one. When more than one selected protocol shares an
   // operation, only the first is used for this lookup.
   demand: { runs_per_week_by_operation: Record<string, number>; protocol_ids_by_operation: Record<string, string> };
-  // The layout_prefs step's three fields, each present only if the user
-  // actually touched that control — see buildFinalIntakeJson below for the
-  // opt-in logic and LayoutPrefsBody (QuestionsPage.tsx) for the inputs.
-  // Absent means "let the generator decide", not "use these defaults" — the
-  // backend (LayoutGeneratorService.generate) treats a missing layout_weights
-  // as skip-the-optimization-pass, and a missing door/utilities as its own
-  // existing defaults (centered south-wall door, uncovered-utility warnings).
+  // The layout_prefs step's door, present only if the user actually touched
+  // that control — see buildLayoutPrefsJson below. Absent means the
+  // backend's default (centered south-wall door). Only used when the room
+  // didn't come from the sandbox. Utilities are not placed (see the
+  // Disclaimer page).
   //
-  // door/utilities intentionally use the backend's own camelCase field names
-  // (offsetFt, not offset_ft) — unlike the rest of this JSON, these two
-  // objects are passed straight through to LayoutGeneratorService's
-  // DoorSpec/UtilitySpec (layout-generation/intake-payload.type.ts), not
-  // re-parsed by anything in between.
-  layout_weights?: { throughput: number; walking_distance: number; contamination: number };
+  // door intentionally uses the backend's own camelCase field names
+  // (offsetFt, not offset_ft) — unlike the rest of this JSON, it is passed
+  // straight through to LayoutGeneratorService's DoorSpec
+  // (layout-generation/intake-payload.type.ts), not re-parsed in between.
   door?: { wall: WallSide; offsetFt: number };
-  utilities?: { type: string; wall: WallSide; offsetFt: number }[];
 }
 
 export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
-  const hasCon = a.budget_scope === 'equipment_and_construction';
   const width_ft = parseFloat((a.width_ft as string) || '0') || 0;
   const height_ft = parseFloat((a.height_ft as string) || '0') || 0;
 
@@ -441,7 +399,7 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
     equipment_status: hasExistingEquipment ? 'has_equipment' : 'no_equipment',
     bsl: 'BSL-1',
     biosafety_level: (a.biosafety_level as string) || null,
-    biomaterials: (a.biomaterials as string[]) || [],
+    biomaterials: ((a.biomaterials as string[]) || []).filter((id) => BIOMATERIAL_OPTS.some((option) => option.v === id)),
     basic_lab_equipment: (a.basic_lab_equipment_final as { equipment_id: string; name: string; quantity: number; sources: string[] }[]) || [],
     operations: resolveOperations(a),
     selected_protocols: rawSelectedProtocolIds.map((protocolId) => ({ protocol_id: protocolId, runs_per_week: rawRunsPerWeek[protocolId] ?? 0 })),
@@ -458,44 +416,36 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
       renovation: hasExistingEquipment,
       method: (a.space_method as 'sandbox' | 'upload' | undefined) ?? null,
       floorplan_filename: (a.space_floorplan_filename as string) || null,
+      ...(a.space_method === 'sandbox' && a.space_geometry ? { layout: a.space_sandbox_layout, geometry: a.space_geometry } : {}),
     },
-    budget: { desired: budgetDesired, max: budgetMax || budgetDesired, scope: (a.budget_scope as string) || 'equipment_only' },
-    allocation: { equipment: hasCon ? 0.5 : 0.7, construction: hasCon ? 0.25 : 0, staffing: 0.1, consumables: 0.1, contingency: 0.05 },
+    layout_options: {
+      mode: a.layout_mode === 'main_wall' ? 'main_wall' : LAYOUT_SETTING_DEFAULTS.mode,
+      main_wall: a.layout_mode === 'main_wall' ? ((a.layout_main_wall as WallSide | undefined) ?? 'S') : null,
+      same_direction: (a.layout_same_direction as boolean | undefined) ?? LAYOUT_SETTING_DEFAULTS.sameDirection,
+      wall_benches: (a.layout_wall_benches as boolean | undefined) ?? LAYOUT_SETTING_DEFAULTS.wallBenches,
+      working_space_pct: Number(a.layout_working_space_pct) || LAYOUT_SETTING_DEFAULTS.workingSpacePct,
+      separate_zones: (a.layout_separate_zones as boolean | undefined) ?? LAYOUT_SETTING_DEFAULTS.separateZones,
+      optimizer_balance: (a.layout_optimizer_balance as number | undefined) ?? LAYOUT_SETTING_DEFAULTS.optimizerBalance,
+    },
+    equipment_zones: (a.equipment_zones as Record<string, string>) || {},
+    equipment_fixed: (a.equipment_fixed as string[]) || [],
+    budget: { desired: budgetDesired, max: budgetMax || budgetDesired, scope: 'equipment_only' },
+    allocation: { equipment: 1, construction: 0, staffing: 0, consumables: 0, contingency: 0 },
     demand: { runs_per_week_by_operation: runsPerWeekByOperation, protocol_ids_by_operation: protocolIdsByOperation },
     ...buildLayoutPrefsJson(a),
   };
 }
 
-// layout_weights/door/utilities are each omitted entirely unless the user
-// actually touched the corresponding layout_prefs control (see
-// LayoutPrefsBody in QuestionsPage.tsx, which only ever calls setField from
-// an input's onChange, never on mount) — an untouched slider/selector must
-// not silently start sending a value, since the backend takes *any*
-// layout_weights presence as "run the optimization pass" (see
-// LayoutGeneratorService.generate).
-function buildLayoutPrefsJson(a: Answers): Pick<FinalIntakeJson, 'layout_weights' | 'door' | 'utilities'> {
-  const result: Pick<FinalIntakeJson, 'layout_weights' | 'door' | 'utilities'> = {};
-
-  const throughput = a.layout_priority_throughput as number | undefined;
-  const walkingDistance = a.layout_priority_walking_distance as number | undefined;
-  const contamination = a.layout_priority_contamination as number | undefined;
-  if (throughput !== undefined || walkingDistance !== undefined || contamination !== undefined) {
-    result.layout_weights = {
-      throughput: throughput ?? 0.5,
-      walking_distance: walkingDistance ?? 0.5,
-      contamination: contamination ?? 0.5,
-    };
-  }
+// door is omitted entirely unless the user actually touched the
+// corresponding layout_prefs control (see LayoutPrefsBody in
+// QuestionsPage.tsx, which only ever calls setField from an input's
+// onChange, never on mount).
+function buildLayoutPrefsJson(a: Answers): Pick<FinalIntakeJson, 'door'> {
+  const result: Pick<FinalIntakeJson, 'door'> = {};
 
   const doorWall = a.door_wall as WallSide | undefined;
   if (doorWall) {
     result.door = { wall: doorWall, offsetFt: Number(a.door_offset_ft) || 0 };
-  }
-
-  const utilityPlacements = (a.utility_placements as Record<string, { wall: WallSide; offsetFt: number }>) || {};
-  const utilityEntries = Object.entries(utilityPlacements).filter(([, placement]) => placement?.wall);
-  if (utilityEntries.length > 0) {
-    result.utilities = utilityEntries.map(([type, placement]) => ({ type, wall: placement.wall, offsetFt: Number(placement.offsetFt) || 0 }));
   }
 
   return result;

@@ -51,7 +51,7 @@ export function GeneratingPage() {
     if (!r) return;
     if (r.status === 'ready') {
       stopPolling();
-      navigate('/report', { state: { reportData: r.data, sessionId } });
+      navigate('/report', { state: { reportData: r.data, sessionId, reportId } });
     } else if (r.status === 'failed') {
       stopPolling();
       setError(r.error || 'Report generation failed for an unknown reason.');

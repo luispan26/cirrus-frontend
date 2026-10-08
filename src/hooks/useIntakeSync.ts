@@ -1,3 +1,4 @@
+import { mergeIntakeFields } from '../lib/intake-merge';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApolloClient, useMutation, useQuery, useSubscription } from '@apollo/client/react';
 import {
@@ -30,23 +31,16 @@ export function useIntakeSync(onComplete: (finalIntakeJson: Record<string, unkno
   const [answers, setAnswers] = useState<Answers>({});
   const [status, setStatus] = useState<SyncStatus>('idle');
   const completionHandled = useRef(false);
+  // This editor owns locally touched keys until it closes. Subscription snapshots
+  // have no field revision, so even acknowledged writes can echo out of order.
+  const locallyEdited = useRef(new Set<string>());
+  const answersRef = useRef<Answers>({});
 
   const mergeFields = useCallback((fields: Record<string, unknown> | undefined) => {
     if (!fields) return;
-    setAnswers((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      for (const key of INTAKE_FIELD_KEYS) {
-        if (!(key in fields)) continue;
-        const v = fields[key];
-        if (v == null || v === '') continue;
-        if (JSON.stringify(prev[key]) !== JSON.stringify(v)) {
-          next[key] = v;
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
+    const next = mergeIntakeFields(answersRef.current, fields, locallyEdited.current);
+    answersRef.current = next;
+    setAnswers(next);
   }, []);
 
   // Initial hydrate — picks up anything already on the session (e.g. from a
@@ -98,80 +92,59 @@ export function useIntakeSync(onComplete: (finalIntakeJson: Record<string, unkno
   const [runUpdateFields] = useMutation(UPDATE_INTAKE_FIELDS_MUTATION);
   const [runCompleteIntake] = useMutation(COMPLETE_INTAKE_MUTATION);
 
-  const writeTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  // Mirrors what each pending timer above is about to write — lets the
-  // unmount cleanup below flush real values instead of just cancelling the
-  // timers and losing whatever hadn't been saved yet.
+  const writeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingWrites = useRef<Record<string, unknown>>({});
+  const writeQueue = useRef<Promise<void>>(Promise.resolve());
 
-  const scheduleWrite = useCallback(
-    (key: string, value: unknown) => {
-      if (writeTimers.current[key]) clearTimeout(writeTimers.current[key]);
-      pendingWrites.current[key] = value;
-      writeTimers.current[key] = setTimeout(() => {
-        delete pendingWrites.current[key];
-        runUpdateFields({ variables: { sessionId, patch: { [key]: value }, updatedBy: 'form' } })
-          .then(() => setStatus('live'))
-          .catch(() => setStatus('err'));
-      }, 500);
-    },
-    [runUpdateFields, sessionId],
-  );
+  const flushWrites = useCallback(() => {
+    if (writeTimer.current) clearTimeout(writeTimer.current);
+    writeTimer.current = null;
+    const patch = pendingWrites.current;
+    pendingWrites.current = {};
+    if (!Object.keys(patch).length) return writeQueue.current;
+    const task = writeQueue.current.catch(() => {}).then(async () => {
+      try {
+        await runUpdateFields({ variables: { sessionId, patch, updatedBy: 'form' } });
+        setStatus('live');
+      } catch (error) {
+        const stillCurrent = Object.fromEntries(Object.entries(patch).filter(([key, value]) => JSON.stringify(answersRef.current[key]) === JSON.stringify(value)));
+        pendingWrites.current = { ...stillCurrent, ...pendingWrites.current };
+        setStatus('err');
+        throw error;
+      }
+    });
+    writeQueue.current = task;
+    return task;
+  }, [runUpdateFields, sessionId]);
 
-  const setField = useCallback(
-    (key: string, value: unknown) => {
-      setAnswers((prev) => ({ ...prev, [key]: value }));
-      if (!INTAKE_FIELD_KEYS.includes(key)) return;
-      scheduleWrite(key, value);
-    },
-    [scheduleWrite],
-  );
+  const setField = useCallback((key: string, value: unknown) => {
+    // Normalize clearing to null: undefined disappears from a JSON patch.
+    const nextValue = value === undefined ? null : value;
+    answersRef.current = { ...answersRef.current, [key]: nextValue };
+    setAnswers(answersRef.current);
+    if (!INTAKE_FIELD_KEYS.includes(key)) return;
+    locallyEdited.current.add(key);
+    pendingWrites.current[key] = nextValue;
+    if (writeTimer.current) clearTimeout(writeTimer.current);
+    writeTimer.current = setTimeout(() => { void flushWrites().catch(() => {}); }, 500);
+  }, [flushWrites]);
 
-  const toggleMultiField = useCallback(
-    (key: string, value: string) => {
-      setAnswers((prev) => {
-        const current = (prev[key] as string[]) || [];
-        const next = current.includes(value) ? current.filter((v) => v !== value) : [...current, value];
-        // Debounced the same way setField is — rapid clicks (checking several
-        // operations quickly) now collapse into one save of the final array,
-        // instead of firing a separate concurrent mutation per click that can
-        // land out of order and get pushed back down via the subscription,
-        // silently overwriting freshly-selected local state.
-        if (INTAKE_FIELD_KEYS.includes(key)) scheduleWrite(key, next);
-        return { ...prev, [key]: next };
-      });
-    },
-    [scheduleWrite],
-  );
+  const toggleMultiField = useCallback((key: string, value: string) => {
+    const current = (answersRef.current[key] as string[]) ?? [];
+    setField(key, current.includes(value) ? current.filter((v) => v !== value) : [...current, value]);
+  }, [setField]);
 
   const completeIntake = useCallback(
     async (finalIntakeJson: Record<string, unknown>) => {
+      await flushWrites();
       await runCompleteIntake({ variables: { sessionId, finalIntakeJson } });
       completionHandled.current = true;
       onComplete(finalIntakeJson);
     },
-    [runCompleteIntake, sessionId, onComplete],
+    [runCompleteIntake, sessionId, onComplete, flushWrites],
   );
 
-  // Debounced writes are cancelled-and-rescheduled on every keystroke/click
-  // (see scheduleWrite) so a still-pending one hasn't reached the server
-  // yet. Without this, navigating away (or just closing the tab) inside the
-  // 500ms window silently drops that edit — the timer is torn down along
-  // with the component before it ever fires, and the next time this session
-  // loads it hydrates from the server's last-saved value, which looks
-  // exactly like the edit "reverted". Flushing every still-pending write in
-  // one patch on unmount (instead of only clearing the timers) closes that
-  // gap.
-  useEffect(() => {
-    return () => {
-      Object.values(writeTimers.current).forEach(clearTimeout);
-      const pending = pendingWrites.current;
-      if (Object.keys(pending).length > 0) {
-        runUpdateFields({ variables: { sessionId, patch: pending, updatedBy: 'form' } }).catch(() => {});
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => () => { void flushWrites().catch(() => {}); }, [flushWrites]);
 
   return { sessionId, answers, status, setField, toggleMultiField, completeIntake, apolloClient: client };
 }

@@ -7,11 +7,21 @@ import { Logo } from '../components/Logo';
 export function ReportPage() {
   const location = useLocation();
   const navigate = useNavigate();
-  const routedState = location.state as { reportData?: Record<string, any>; sessionId?: string } | null;
+  const routedState = location.state as { reportData?: Record<string, any>; sessionId?: string; reportId?: string } | null;
   const routedData = routedState?.reportData ?? null;
   // Absent for the manual paste-JSON fallback path (no real session behind
   // pasted data) — the "Edit questionnaire" button only renders when present.
   const routedSessionId = routedState?.sessionId ?? null;
+  // Needed to save edits to the generated plan's zones; absent for pasted
+  // JSON, which is view-only.
+  const routedReportId = routedState?.reportId ?? null;
+
+  // After a zone edit re-runs the layout, the new generated layout replaces
+  // the old one here and in the router state, so a refresh keeps it.
+  function handleLayoutUpdated(generated: unknown) {
+    if (!routedData) return;
+    navigate(location.pathname, { replace: true, state: { ...routedState, reportData: { ...routedData, generated_layout: generated } } });
+  }
 
   function handleEditQuestionnaire() {
     if (!routedSessionId) return;
@@ -95,7 +105,7 @@ export function ReportPage() {
             </button>
           </div>
         ) : (
-          <ReportView data={data} />
+          <ReportView data={data} reportId={pastedData ? null : routedReportId} onLayoutUpdated={handleLayoutUpdated} />
         )}
       </div>
     </div>

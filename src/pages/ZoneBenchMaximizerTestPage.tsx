@@ -3,7 +3,7 @@ import { useMutation } from '@apollo/client/react';
 import { useNavigate } from 'react-router-dom';
 import { MAXIMIZE_ZONES_AND_BENCHES_MUTATION } from '../graphql/operations';
 import { ACCESS_FILL, BENCH_FILL, PlacementGrid, ZONE_COLORS } from '../lib/placement-grid';
-import type { BenchPlacementResult, ZoneHandoff } from '../lib/placement-grid';
+import type { BenchPlacementResult, Cell, ZoneHandoff } from '../lib/placement-grid';
 
 // Minimal, standalone diagnostic page for ZoneBenchMaximizerService: given
 // just a room shell (no target bench count), it repeatedly carves as many
@@ -19,7 +19,14 @@ type MaximizeZonesAndBenchesResult = {
   totalZones: number;
   totalBenches: number;
   zoneHandoff: ZoneHandoff;
-  benchResult: BenchPlacementResult;
+  // The maximizer also splits the floor into aisle (every walkable cell
+  // no bench covers) and equipment-placeable bench tops.
+  benchResult: BenchPlacementResult & {
+    aisleCells: Cell[];
+    equipmentPlaceableCells: Cell[];
+    aisleAreaSqFt: number;
+    equipmentPlaceableAreaSqFt: number;
+  };
 };
 
 function errMsg(e: unknown): string {
@@ -33,7 +40,10 @@ export function ZoneBenchMaximizerTestPage() {
   const [doorWall, setDoorWall] = useState<WallSide>('S');
   const [doorOffsetFt, setDoorOffsetFt] = useState(13.5);
   const [doorWidthFt, setDoorWidthFt] = useState(3);
-  const [workingAisleFt, setWorkingAisleFt] = useState(5);
+  const [mode, setMode] = useState<'max_fit' | 'main_wall'>('max_fit');
+  const [mainWall, setMainWall] = useState<WallSide>('S');
+  const [sameDirection, setSameDirection] = useState(true);
+  const [wallBenches, setWallBenches] = useState(false);
   const [maximize, { data, loading, error }] = useMutation<{ maximizeZonesAndBenches: MaximizeZonesAndBenchesResult }>(
     MAXIMIZE_ZONES_AND_BENCHES_MUTATION,
   );
@@ -45,7 +55,7 @@ export function ZoneBenchMaximizerTestPage() {
           widthFt,
           heightFt,
           door: { wall: doorWall, offsetFt: doorOffsetFt, widthFt: doorWidthFt },
-          workingAisleFt,
+          options: { mode, mainWall: mode === 'main_wall' ? mainWall : undefined, sameDirection, wallBenches },
         },
       },
     }).catch(() => {
@@ -64,10 +74,10 @@ export function ZoneBenchMaximizerTestPage() {
             ZONE + BENCH MAXIMIZER TEST PAGE
           </div>
           <div style={{ fontSize: 12, color: 'var(--mid)' }}>
-            No target bench count — carves as many zones as the room fits, then packs as many benches into each zone as it can hold. Can take several minutes for larger rooms.
+            No target bench count — fills the room with as many benches as fit, as islands on one room-wide grid with straight aisles.
           </div>
         </div>
-        <button className="btn-out" onClick={() => navigate('/bench-placement-test')}>← Bench placement</button>
+        <button className="btn-out" onClick={() => navigate('/dashboard')}>← Dashboard</button>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px', maxWidth: 1200, margin: '0 auto', width: '100%' }}>
@@ -93,12 +103,26 @@ export function ZoneBenchMaximizerTestPage() {
                 />
               </label>
               <label style={{ fontSize: 12, color: 'var(--mid)', display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
-                Working aisle (ft)
-                <input
-                  type="number" min={0.5} step={0.5} value={workingAisleFt}
-                  onChange={(e) => setWorkingAisleFt(Number(e.target.value) || 5)}
-                  style={{ width: 90, fontFamily: 'var(--mono)', fontSize: 12, padding: '4px 6px', borderRadius: 6, border: '1px solid var(--br)' }}
-                />
+                Arrangement
+                <select value={mode} onChange={(e) => setMode(e.target.value as 'max_fit' | 'main_wall')} style={{ width: 120, fontFamily: 'var(--mono)', fontSize: 12, padding: '4px 6px', borderRadius: 6, border: '1px solid var(--br)' }}>
+                  <option value="max_fit">Max fit</option>
+                  <option value="main_wall">Main wall</option>
+                </select>
+              </label>
+              {mode === 'main_wall' ? (
+                <label style={{ fontSize: 12, color: 'var(--mid)', display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+                  Main wall
+                  <select value={mainWall} onChange={(e) => setMainWall(e.target.value as WallSide)} style={{ width: 90, fontFamily: 'var(--mono)', fontSize: 12, padding: '4px 6px', borderRadius: 6, border: '1px solid var(--br)' }}>
+                    <option value="N">N</option><option value="S">S</option><option value="E">E</option><option value="W">W</option>
+                  </select>
+                </label>
+              ) : (
+                <label style={{ fontSize: 12, color: 'var(--mid)', display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input type="checkbox" checked={sameDirection} onChange={(e) => setSameDirection(e.target.checked)} /> All islands the same direction
+                </label>
+              )}
+              <label style={{ fontSize: 12, color: 'var(--mid)', display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="checkbox" checked={wallBenches} onChange={(e) => setWallBenches(e.target.checked)} /> Also wall benches
               </label>
 
               <div className="sec-head" style={{ marginTop: 6 }}>Door <div className="sec-line" /></div>
@@ -156,6 +180,12 @@ export function ZoneBenchMaximizerTestPage() {
                   <span style={{ fontFamily: 'var(--mono)', fontSize: 11, padding: '3px 10px', borderRadius: 999, background: 'var(--tl)', color: 'var(--td)' }}>
                     {result.totalBenches} bench{result.totalBenches === 1 ? '' : 'es'}
                   </span>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 11, padding: '3px 10px', borderRadius: 999, background: 'var(--tl)', color: 'var(--td)' }}>
+                    {Math.round(result.benchResult.equipmentPlaceableAreaSqFt)} sq ft equipment-placeable
+                  </span>
+                  <span style={{ fontFamily: 'var(--mono)', fontSize: 11, padding: '3px 10px', borderRadius: 999, background: 'var(--tl)', color: 'var(--td)' }}>
+                    {Math.round(result.benchResult.aisleAreaSqFt)} sq ft aisle
+                  </span>
                 </div>
 
                 <PlacementGrid zoneHandoff={result.zoneHandoff} scale={scale} result={result.benchResult} />
@@ -169,11 +199,11 @@ export function ZoneBenchMaximizerTestPage() {
                   ))}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                     <span style={{ width: 12, height: 12, borderRadius: 3, background: BENCH_FILL, display: 'inline-block' }} />
-                    <span>bench footprint</span>
+                    <span>bench top (equipment placeable)</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                     <span style={{ width: 12, height: 12, borderRadius: 3, background: ACCESS_FILL, display: 'inline-block' }} />
-                    <span>access / aisle</span>
+                    <span>working aisle (all other open floor is aisle too)</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                     <span style={{ width: 12, height: 12, borderRadius: 3, background: '#2b2b2b', display: 'inline-block' }} />

@@ -114,7 +114,7 @@ export function DesignHistoryPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 {statusBadge(r.status)}
                 {r.status === 'ready' && (
-                  <button className="btn-out" onClick={() => navigate('/report', { state: { reportData: r.data, sessionId: r.sessionId } })}>View report</button>
+                  <button className="btn-out" onClick={() => navigate('/report', { state: { reportData: r.data, sessionId: r.sessionId, reportId: r.id } })}>View report</button>
                 )}
                 {r.status === 'failed' && (
                   <span style={{ fontSize: 12, color: 'var(--mid)' }}>{r.error}</span>
