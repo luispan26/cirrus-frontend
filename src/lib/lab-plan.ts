@@ -31,7 +31,7 @@ export interface PlanBench {
   unitId: string;
   islandId: string | null;
   zoneId: string;
-  // Benches facing each other across a working aisle: always one zone.
+  // Benches facing into one working aisle: always one zone.
   // (Absent on plans made before zone units.)
   zoneUnitId?: string;
   rect: PlanRect;

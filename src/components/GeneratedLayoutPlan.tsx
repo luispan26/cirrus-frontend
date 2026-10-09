@@ -85,8 +85,8 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
   const planZoneById = new Map(plan.zones.map((z) => [z.id, z]));
   const benchByFixture = new Map(plan.benches.map((b) => [b.fixtureId, b]));
 
-  // Click: that bench and the one facing it across its aisle (its zone
-  // unit) join the selected zone — never its whole island.
+  // Click: every bench facing into that bench's working aisle (its zone
+  // unit) joins the selected zone, so one aisle never holds two zones.
   function moveBench(fixtureId: string) {
     const bench = benchByFixture.get(fixtureId);
     if (!bench || !activeZoneId || saving) return;
