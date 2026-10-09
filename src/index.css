@@ -360,6 +360,9 @@ h1,h2,h3,h4,h5,h6{font-family:var(--head);font-weight:500;letter-spacing:-.01em}
 .generated-layout-hover-card strong { color: var(--dark); font-size: 13px; }
 .generated-layout-hover-card ul { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 4px 16px; margin: 5px 0 0; padding-left: 18px; }
 .generated-layout-hover-card li small { color: var(--mid); margin-left: 6px; }
+.bench-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.bench-card-close { border: none; background: transparent; color: var(--mid); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.bench-card-replaced { color: #C41678; }
 .generated-layout-warnings { background: #fff7e8; color: #765821; border-radius: 9px; padding: 10px 12px; margin-top: 12px; font-size: 11px; }
 .generated-layout-warnings div { margin-top: 4px; }
 .generated-layout-caption { color: var(--mid); font-size: 11px; line-height: 1.5; margin: 12px 0 0; }

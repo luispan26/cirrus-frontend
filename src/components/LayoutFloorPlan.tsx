@@ -184,6 +184,7 @@ export function LayoutFloorPlan({
   plan,
   zoneOfBench,
   onFixtureClick,
+  fixtureClickHint,
   showPlanLayers = true,
 }: {
   layout: SandboxLayout;
@@ -195,6 +196,8 @@ export function LayoutFloorPlan({
   plan?: LabPlan | null;
   zoneOfBench?: (planBenchId: string) => string | undefined;
   onFixtureClick?: (fixtureId: string, event: React.MouseEvent) => void;
+  // What clicking a bench does, for its tooltip.
+  fixtureClickHint?: string;
   showPlanLayers?: boolean;
 }) {
   const interactive = !!onHoverChange;
@@ -285,7 +288,7 @@ export function LayoutFloorPlan({
         const zoneId = benchZone(fixture);
         const zoneName = zoneId ? zoneNames.get(zoneId) ?? zoneId : null;
         const summary = zoneName
-          ? `${fixture.name} — ${zoneName} zone.${onFixtureClick ? ' Click to move this bench into the selected zone.' : ''}`
+          ? `${fixture.name} — ${zoneName} zone.${onFixtureClick ? ` ${fixtureClickHint ?? 'Click to move this bench into the selected zone.'}` : ''}`
           : fixture.name;
         const color = zoneId ? zoneColor(zoneId, zoneIds) : UNZONED_FILL;
         const isHovered = hoveredId === fixture.instanceId;

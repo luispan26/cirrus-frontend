@@ -164,3 +164,19 @@ export function cellRuns(cells: PlanCell[]): PlanRect[] {
   }
   return runs;
 }
+
+// What stands on a bench: its items (pipettes listed with their work area),
+// how much of its 6 ft they take, or the equipment replacing it.
+export function benchContents(plan: LabPlan, benchId: string) {
+  const placements = (plan.initialEquipment?.placements ?? []).filter((p) => p.benchId === benchId);
+  const replacing = placements.find((p) => p.replacesBench);
+  const areas = (plan.initialEquipment?.workAreas ?? []).filter((a) => a.benchId === benchId);
+  const fmt = (n: number) => `${Math.round(n * 100) / 100}`;
+  const items = placements.filter((p) => !p.replacesBench).sort((a, b) => (a.offsetFt ?? 0) - (b.offsetFt ?? 0)).map((p) => ({
+    key: p.instanceId,
+    name: p.name,
+    detail: p.workAreaId ? 'pipette work area (3 ft)' : `${fmt(p.widthFt ?? 0)} × ${fmt(p.depthFt ?? 0)} ft${p.placeholderSize ? ', size not measured' : ''}${p.fixed ? ', fixed' : ''}`,
+  }));
+  const used = placements.filter((p) => !p.workAreaId).reduce((sum, p) => sum + (p.widthFt ?? 0), 0) + areas.reduce((sum, a) => sum + a.lengthFt, 0);
+  return { items, usedFt: fmt(Math.min(6, used)), replacedBy: replacing?.name ?? null };
+}

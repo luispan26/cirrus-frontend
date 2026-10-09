@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation } from '@apollo/client/react';
 import { BENCH_SURFACE_AREA_SQFT, parseSandboxLayout, type SandboxLayout } from '../lib/layout-sandbox';
-import { readLabPlan, WALL_LABELS, zoneColor, type LabPlan, type PlanOptions, type PlanWall } from '../lib/lab-plan';
+import { benchContents, readLabPlan, WALL_LABELS, zoneColor, type LabPlan, type PlanOptions, type PlanWall } from '../lib/lab-plan';
 import { UPDATE_REPORT_LAYOUT_MUTATION } from '../graphql/operations';
 import { LayoutFloorPlan } from './LayoutFloorPlan';
 
@@ -61,7 +61,10 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
   const floorPlaced = (equipmentId: string) => (plan.initialEquipment?.placements ?? []).filter((p) => p.benchId === null && p.equipmentId === equipmentId).length;
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [zones, setZones] = useState<EditableZone[]>(() => zonesFromPlan(plan));
-  const [activeZoneId, setActiveZoneId] = useState<string>(() => plan.zones[0]?.id ?? '');
+  // The zone benches are being moved into ('' = not moving benches: a
+  // click pins that bench's details instead).
+  const [activeZoneId, setActiveZoneId] = useState<string>('');
+  const [pinnedId, setPinnedId] = useState<string | null>(null);
   const [settings, setSettings] = useState<SettingsDraft>(() => settingsFromPlan(plan));
   const [error, setError] = useState<string | null>(null);
   const [updateReportLayout, { loading: saving }] = useMutation<{ updateReportLayout: { id: string; data: Record<string, unknown> } }>(UPDATE_REPORT_LAYOUT_MUTATION);
@@ -70,7 +73,8 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
   useEffect(() => {
     setZones(zonesFromPlan(plan));
     setSettings(settingsFromPlan(plan));
-    setActiveZoneId((current) => (plan.zones.some((z) => z.id === current) ? current : plan.zones[0]?.id ?? ''));
+    setActiveZoneId((current) => (plan.zones.some((z) => z.id === current) ? current : ''));
+    setPinnedId((current) => (current && plan.benches.some((b) => b.fixtureId === current) ? current : null));
   }, [plan]);
 
   const zoneIds = zones.map((z) => z.id);
@@ -84,6 +88,14 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
   const settingsChanged = JSON.stringify(settings) !== JSON.stringify(settingsFromPlan(plan));
   const planZoneById = new Map(plan.zones.map((z) => [z.id, z]));
   const benchByFixture = new Map(plan.benches.map((b) => [b.fixtureId, b]));
+
+  // Click: with a zone picked, move the bench's aisle into it; otherwise
+  // pin (or unpin) that bench's details.
+  function clickBench(fixtureId: string) {
+    if (activeZoneId && reportId) moveBench(fixtureId);
+    else setPinnedId((current) => (current === fixtureId ? null : fixtureId));
+  }
+  const toggleZone = (zoneId: string) => setActiveZoneId((current) => (current === zoneId ? '' : zoneId));
 
   // Click: every bench facing into that bench's working aisle (its zone
   // unit) joins the selected zone, so one aisle never holds two zones.
@@ -133,8 +145,11 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
     URL.revokeObjectURL(url);
   }
 
-  const hovered = hoveredId ? benchByFixture.get(hoveredId) : undefined;
+  // The bench described below the plan: the one under the pointer, else the pinned one.
+  const shownId = hoveredId ?? pinnedId;
+  const hovered = shownId ? benchByFixture.get(shownId) : undefined;
   const hoveredZone = hovered ? zones.find((z) => z.id === zoneOfBench.get(hovered.id)) : undefined;
+  const onBench = hovered ? benchContents(plan, hovered.id) : null;
   const canRerun = !!reportId && (zonesChanged || settingsChanged);
   // Changes that place every bench again (and so reset zone clicks).
   const placesAgain = (['mode', 'mainWall', 'sameDirection', 'wallBenches', 'workingSpacePct', 'zoneHeadroom'] as const).some((key) => settings[key] !== settingsFromPlan(plan)[key])
@@ -163,10 +178,11 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
               layout={layout}
               plan={plan}
               className="generated-layout-preview plan-editor-preview"
-              hoveredId={hoveredId}
+              hoveredId={shownId}
               onHoverChange={setHoveredId}
               zoneOfBench={draftZoneOf}
-              onFixtureClick={reportId ? moveBench : undefined}
+              onFixtureClick={clickBench}
+              fixtureClickHint={activeZoneId && reportId ? `Click to move this bench's aisle into ${zones.find((z) => z.id === activeZoneId)?.name ?? 'the selected'} zone.` : 'Click to pin its equipment list.'}
             />
             <div className="generated-layout-legend">
               <span><i style={{ background: 'rgba(52,98,201,.35)' }} />Aisles (where technicians walk)</span>
@@ -174,12 +190,20 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
               <span><i style={{ background: '#fbfbfa' }} />Unused floor</span>
             </div>
             <div className={`generated-layout-hover-card ${hovered ? 'visible' : ''}`} aria-live="polite">
-              {hovered ? (
+              {hovered && onBench ? (
                 <>
-                  <strong>{hoveredZone?.name ?? 'Unzoned'} zone</strong>
-                  <span>{hovered.kind === 'wall' ? 'Wall bench' : 'Island bench'} · 6 × 2.5 ft · worked from the {WALL_LABELS[hovered.facing].split(' ')[0].toLowerCase()} side</span>
+                  <div className="bench-card-head">
+                    <strong>{hoveredZone?.name ?? 'Unzoned'} zone · {hovered.kind === 'wall' ? 'wall bench' : 'island bench'}</strong>
+                    {pinnedId === hovered.fixtureId && <button type="button" className="bench-card-close" aria-label="Unpin this bench" onClick={() => setPinnedId(null)}>×</button>}
+                  </div>
+                  <span>6 × 2.5 ft · worked from the {WALL_LABELS[hovered.facing].split(' ')[0].toLowerCase()} side{onBench.replacedBy ? '' : ` · ${onBench.items.length} item${onBench.items.length === 1 ? '' : 's'}, ${onBench.usedFt} of 6 ft used`}</span>
+                  {onBench.replacedBy ? (
+                    <span className="bench-card-replaced">Replaced by <b>{onBench.replacedBy}</b> — too big for a bench, it takes this bench's place when the lab is built.</span>
+                  ) : onBench.items.length ? (
+                    <ul>{onBench.items.map((item) => <li key={item.key}>{item.name}<small>{item.detail}</small></li>)}</ul>
+                  ) : <span>No equipment on this bench yet — it's free working space.</span>}
                 </>
-              ) : <span>{reportId ? 'Pick a zone on the right, then click benches one at a time to move them into that zone. Press "Save layout changes" to save.' : 'Hover a bench to see its zone.'}</span>}
+              ) : <span>{activeZoneId && reportId ? `Moving benches into ${zones.find((z) => z.id === activeZoneId)?.name ?? 'the selected'} zone: click benches to move their aisle. Click the zone again to stop, then "Save layout changes".` : `Hover a bench to see its equipment; click to pin it.${reportId ? ' To move benches between zones, click a zone on the right first.' : ''}`}</span>}
             </div>
           </div>
 
@@ -191,10 +215,10 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
               const need = stored?.benchNeedSqFt ?? 0;
               const active = zone.id === activeZoneId;
               return (
-                <div key={zone.id} className={`plan-zone ${active ? 'active' : ''}`} onClick={() => setActiveZoneId(zone.id)}>
+                <div key={zone.id} className={`plan-zone ${active ? 'active' : ''}`} onClick={() => reportId && toggleZone(zone.id)} title={reportId ? (active ? 'Click to stop moving benches into this zone' : 'Click, then click benches to move them into this zone') : undefined}>
                   <div className="plan-zone-head">
                     <i style={{ background: zoneColor(zone.id, zoneIds) }} />
-                    <button className="plan-zone-select" type="button" aria-pressed={active} onClick={() => setActiveZoneId(zone.id)}>{zone.name}</button>
+                    <button className="plan-zone-select" type="button" aria-pressed={active} onClick={(e) => { e.stopPropagation(); if (reportId) toggleZone(zone.id); }}>{zone.name}{active ? ' — moving benches' : ''}</button>
                     <span className="plan-zone-count">{zone.benchIds.length} bench{zone.benchIds.length === 1 ? '' : 'es'}</span>
                   </div>
                   <div className={`plan-zone-area ${benchArea < need ? 'short' : ''}`}>
@@ -349,3 +373,4 @@ function LegacyDecisionReportSection({ report }: { report: LegacyDecisionReport 
     </div>
   );
 }
+
