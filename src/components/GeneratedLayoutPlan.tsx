@@ -85,13 +85,15 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
   const planZoneById = new Map(plan.zones.map((z) => [z.id, z]));
   const benchByFixture = new Map(plan.benches.map((b) => [b.fixtureId, b]));
 
-  // Click: that one bench joins the selected zone (never its whole island).
+  // Click: that bench and the one facing it across its aisle (its zone
+  // unit) join the selected zone — never its whole island.
   function moveBench(fixtureId: string) {
     const bench = benchByFixture.get(fixtureId);
     if (!bench || !activeZoneId || saving) return;
+    const moving = new Set(bench.zoneUnitId ? plan.benches.filter((b) => b.zoneUnitId === bench.zoneUnitId).map((b) => b.id) : [bench.id]);
     setZones((current) => current.map((z) => ({
       ...z,
-      benchIds: z.id === activeZoneId ? [...new Set([...z.benchIds, bench.id])] : z.benchIds.filter((id) => id !== bench.id),
+      benchIds: z.id === activeZoneId ? [...new Set([...z.benchIds, ...moving])] : z.benchIds.filter((id) => !moving.has(id)),
     })));
   }
 
