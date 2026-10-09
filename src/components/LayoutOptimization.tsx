@@ -33,6 +33,8 @@ export interface LayoutOptimizationSummary {
   moves?: { instanceId: string; name: string; fromBenchId: string | null; toBenchId: string | null }[];
   excludedVisits?: { protocolName: string; stepNumber: string | null; equipmentId: string | null; reason: string }[];
   notes?: { level: string; message: string }[];
+  // Placement rules from DAMPLab's equipment sheet (keep apart / keep near).
+  rules?: { total: number; met: number; broken: number; dropped: number; unchecked: number; items: { description: string; kind: 'apart' | 'near'; status: 'met' | 'broken' | 'dropped' | 'unchecked'; reason?: string }[] };
 }
 
 const ZONE_LABELS: Record<string, string> = { bacterial: 'Bacterial', yeast: 'Yeast', microbial: 'Microbial', mammalian: 'Mammalian', general: 'General' };
@@ -155,6 +157,8 @@ export function LayoutOptimization({ value }: { value: unknown }) {
         </>
       )}
 
+      {summary.rules && summary.rules.total > 0 && <PlacementRules rules={summary.rules} />}
+
       {notes.length > 0 && (
         <details style={card}>
           <summary style={summaryStyle}>Optimizer notes ({notes.length})</summary>
@@ -166,5 +170,44 @@ export function LayoutOptimization({ value }: { value: unknown }) {
         </details>
       )}
     </>
+  );
+}
+
+// The equipment placement rules (keep apart, keep near) and how this
+// layout did on them.
+function PlacementRules({ rules }: { rules: NonNullable<LayoutOptimizationSummary['rules']> }) {
+  const of = (status: string) => rules.items.filter((r) => r.status === status);
+  const problems = [...of('broken'), ...of('dropped')];
+  return (
+    <div style={card}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>Placement rules</div>
+      <div style={{ ...muted, fontSize: 13, marginBottom: 8 }}>
+        From DAMPLab's equipment sheet: equipment kept apart (vibration, open flames) or near what it's used with (gel station, microscope, biosafety cabinet).
+      </div>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 14 }}>
+        <span style={{ color: '#049295', fontWeight: 600 }}>{rules.met} met</span>
+        <span style={{ color: rules.broken ? '#C41678' : '#69707F', fontWeight: rules.broken ? 600 : 400 }}>{rules.broken} broken</span>
+        <span style={{ color: rules.dropped ? '#8A5A00' : '#69707F' }}>{rules.dropped} left out</span>
+        <span style={muted} title="An item the rule names isn't placed yet (e.g. floor equipment not placed in the sandbox).">{rules.unchecked} not checked</span>
+      </div>
+      {problems.length > 0 && (
+        <ul style={{ margin: '10px 0 0', paddingLeft: 18 }}>
+          {problems.map((r, i) => (
+            <li key={i} style={{ marginBottom: 4 }}>
+              <span style={{ color: r.status === 'broken' ? '#C41678' : '#8A5A00', fontWeight: 600 }}>{r.status === 'broken' ? 'Broken' : 'Left out'}:</span> {r.description}
+              {r.reason && <span style={muted}> — {r.reason}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {of('met').length > 0 && (
+        <details style={{ marginTop: 8 }}>
+          <summary style={summaryStyle}>Rules met ({of('met').length})</summary>
+          <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+            {of('met').map((r, i) => <li key={i} style={{ marginBottom: 2, ...muted }}>{r.description}</li>)}
+          </ul>
+        </details>
+      )}
+    </div>
   );
 }
