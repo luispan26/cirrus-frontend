@@ -48,8 +48,8 @@ function zonesFromPlan(plan: LabPlan): EditableZone[] {
 }
 
 function settingsFromPlan(plan: LabPlan): SettingsDraft {
-  const { mode, mainWall, sameDirection, wallBenches, workingSpacePct, separateZonesWithAisles, optimizerBalance } = plan.options;
-  return { mode, mainWall, sameDirection, wallBenches, workingSpacePct, separateZonesWithAisles, optimizerBalance: optimizerBalance ?? 0.5 };
+  const { mode, mainWall, sameDirection, wallBenches, workingSpacePct, zoneHeadroom, separateZonesWithAisles, optimizerBalance } = plan.options;
+  return { mode, mainWall, sameDirection, wallBenches, workingSpacePct, zoneHeadroom: zoneHeadroom ?? 1.25, separateZonesWithAisles, optimizerBalance: optimizerBalance ?? 0.5 };
 }
 
 function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { generated: GeneratedLayout; layout: SandboxLayout; plan: LabPlan; reportId: string | null; onUpdated?: (generated: GeneratedLayout, reportData?: Record<string, unknown>) => void }) {
@@ -135,7 +135,7 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
   const hoveredZone = hovered ? zones.find((z) => z.id === zoneOfBench.get(hovered.id)) : undefined;
   const canRerun = !!reportId && (zonesChanged || settingsChanged);
   // Changes that place every bench again (and so reset zone clicks).
-  const placesAgain = (['mode', 'mainWall', 'sameDirection', 'wallBenches', 'workingSpacePct'] as const).some((key) => settings[key] !== settingsFromPlan(plan)[key])
+  const placesAgain = (['mode', 'mainWall', 'sameDirection', 'wallBenches', 'workingSpacePct', 'zoneHeadroom'] as const).some((key) => settings[key] !== settingsFromPlan(plan)[key])
     || (plan.options.separateZonesWithAisles && !settings.separateZonesWithAisles);
 
   return (
@@ -230,6 +230,10 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
                   <label className="plan-range">
                     Working space kept free on every bench: <b>{settings.workingSpacePct}%</b>
                     <input type="range" min={20} max={50} step={1} value={settings.workingSpacePct} onChange={(e) => setSettings({ ...settings, workingSpacePct: Number(e.target.value) })} />
+                  </label>
+                  <label className="plan-range">
+                    Zone headroom (spare benches go to General): <b>{settings.zoneHeadroom.toFixed(2)}×</b>
+                    <input type="range" min={1} max={2} step={0.05} value={settings.zoneHeadroom} onChange={(e) => setSettings({ ...settings, zoneHeadroom: Number(e.target.value) })} />
                   </label>
                   <label className="plan-check"><input type="checkbox" checked={settings.separateZonesWithAisles} onChange={(e) => setSettings({ ...settings, separateZonesWithAisles: e.target.checked })} />Contamination control — keep an aisle between zones</label>
                   <label className="plan-range">

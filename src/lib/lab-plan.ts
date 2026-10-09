@@ -14,6 +14,9 @@ export interface PlanOptions {
   sameDirection: boolean;
   wallBenches: boolean;
   workingSpacePct: number;
+  // Bench space each zone gets over its equipment's need (1.25 = 25% more);
+  // spare benches go to General. (Absent on plans made before it existed.)
+  zoneHeadroom?: number;
   // Contamination control: an aisle always runs between different zones.
   separateZonesWithAisles: boolean;
   // For the equipment optimizer only: 0 = favor meeting soft constraints,
@@ -97,10 +100,12 @@ export function readLabPlan(layoutData: unknown): LabPlan | null {
   return plan && typeof plan === 'object' && Array.isArray(plan.benches) && Array.isArray(plan.zones) ? plan : null;
 }
 
-// The three default zones keep fixed colors; zones a user adds cycle
-// through the rest. All from the Cirrus palette (index.css :root).
-const ZONE_COLORS: Record<string, string> = { microbial: '#049295', general: '#8C7CFF', mammalian: '#FF3FA4' };
-const EXTRA_ZONE_COLORS = ['#00D5D5', '#C41678', '#FF5CB8', '#69707F'];
+// The default zones keep fixed colors (General, the shared hub, neutral);
+// zones a user adds cycle through the rest. All from the Cirrus palette
+// (index.css :root). Microbial: plans made before it was split into
+// Bacterial and Yeast.
+const ZONE_COLORS: Record<string, string> = { bacterial: '#049295', yeast: '#8C7CFF', mammalian: '#FF3FA4', general: '#69707F', microbial: '#049295' };
+const EXTRA_ZONE_COLORS = ['#00D5D5', '#C41678', '#FF5CB8'];
 
 export function zoneColor(zoneId: string, zoneIds: string[]): string {
   if (ZONE_COLORS[zoneId]) return ZONE_COLORS[zoneId];

@@ -10,7 +10,7 @@ import { useIntakeSync } from '../hooks/useIntakeSync';
 import type { SandboxLayout } from '../lib/layout-sandbox';
 import {
   QS, OPERATION_OPTS, DAMPLAB_MATCH_KEYWORDS, shouldSkip, stepIndex, buildFinalIntakeJson,
-  computeBasicLabEquipment, applyBasicLabEquipmentOverrides, BASIC_EQUIPMENT_CATEGORIES, LAYOUT_SETTING_DEFAULTS,
+  computeBasicLabEquipment, applyBasicLabEquipmentOverrides, BASIC_EQUIPMENT_CATEGORIES, LAYOUT_SETTING_DEFAULTS, naturalLayoutZone,
   computeEssentialProtocolIds, PROTOCOL_PLAN_CATEGORIES,
   type Answers, type QuestionOption, type WallSide,
 } from '../lib/questions';
@@ -813,7 +813,8 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
   // changes it — adding equipment or filtering leaves it alone, and it's
   // remembered for this browser tab if the step is left and reopened.
   const [addZone, setAddZone] = useState<string>(() => {
-    try { return sessionStorage.getItem(PICKER_ZONE_KEY) ?? 'general'; } catch { return 'general'; }
+    // 'microbial' from before it was split into Bacterial and Yeast.
+    try { const saved = sessionStorage.getItem(PICKER_ZONE_KEY); return !saved || saved === 'microbial' ? 'general' : saved; } catch { return 'general'; }
   });
   function chooseAddZone(zone: string) {
     setAddZone(zone);
@@ -846,19 +847,14 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
   }
 
   // Everything the picker currently offers (so it follows the tag filter)
-  // that isn't already needed, added as needed in the picker's zone. Items
-  // already marked owned keep their zone.
+  // that isn't already needed, added as needed. Zones are left alone: items
+  // with no biomaterial list go to General unless reassigned one by one.
   const addAllCandidates = tagFilteredAddable.filter((eq) => !neededMeta[eq.equipmentId]);
   function addAll() {
     if (addAllCandidates.length === 0) return;
     const nextNeeded = { ...neededMeta };
-    const nextZones = { ...((answers.equipment_zones as Record<string, string>) ?? {}) };
-    for (const eq of addAllCandidates) {
-      nextNeeded[eq.equipmentId] = { name: eq.name, count: 1 };
-      if (!ownedMeta[eq.equipmentId]) nextZones[eq.equipmentId] = addZone;
-    }
+    for (const eq of addAllCandidates) nextNeeded[eq.equipmentId] = { name: eq.name, count: 1 };
     setField('needed_equipment_meta', nextNeeded);
-    setField('equipment_zones', nextZones);
     setDraftId('');
   }
 
@@ -890,7 +886,7 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
             options={[{ value: '', label: 'Select equipment…', disabled: true }, ...tagFilteredAddable.map((eq) => ({ value: eq.equipmentId, label: eq.name }))]}
           />
           <select className="field-input" style={{ width: 'auto' }} aria-label="Zone for the equipment you add" title="Zone (biomaterial) the equipment you add goes into" value={addZone} onChange={(e) => chooseAddZone(e.target.value)}>
-            <option value="general">General</option><option value="microbial">Microbial</option><option value="mammalian">Mammalian</option>
+            <option value="general">General</option><option value="bacterial">Bacterial</option><option value="yeast">Yeast</option><option value="mammalian">Mammalian</option>
           </select>
           {/* Owned/Add each commit the selected equipment straight into that
               bucket — no separate Add button, no toggle-then-confirm step.
@@ -921,7 +917,7 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
             className="btn-out"
             style={{ padding: '6px 14px' }}
             disabled={addAllCandidates.length === 0}
-            title={selectedTags.size ? 'Add every equipment item matching the tag filter' : 'Add every equipment item in the catalog'}
+            title={`${selectedTags.size ? 'Add every equipment item matching the tag filter' : 'Add every equipment item in the catalog'} — zones are not set; reassign any below`}
             onClick={addAll}
           >
             Add all ({addAllCandidates.length})
@@ -1186,8 +1182,8 @@ function ComputedEquipmentList({
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
                       {equipmentById.get(row.equipmentId)?.allTags.some((tag) => ['Cold Storage', 'Hood'].includes(tag)) ? <span>Floor item — placed manually, no zone</span> : (
                         <label className="q-check-row">Zone
-                          <select className="field-input" aria-label={`Zone for ${row.name}`} value={zoneOverrides[row.equipmentId] ?? 'general'} onChange={(e) => setField('equipment_zones', { ...zoneOverrides, [row.equipmentId]: e.target.value })}>
-                            <option value="general">General</option><option value="microbial">Microbial</option><option value="mammalian">Mammalian</option>
+                          <select className="field-input" aria-label={`Zone for ${row.name}`} value={zoneOverrides[row.equipmentId] === 'microbial' || !zoneOverrides[row.equipmentId] ? naturalLayoutZone(row.sources) : zoneOverrides[row.equipmentId]} onChange={(e) => setField('equipment_zones', { ...zoneOverrides, [row.equipmentId]: e.target.value })}>
+                            <option value="general">General</option><option value="bacterial">Bacterial</option><option value="yeast">Yeast</option><option value="mammalian">Mammalian</option>
                           </select>
                         </label>
                       )}
@@ -1282,6 +1278,7 @@ function LayoutPrefsBody({ answers, setField }: { answers: Answers; setField: (k
 // layout's own settings panel re-runs with (GeneratedLayoutPlan.tsx).
 function LayoutGenerationSettings({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
   const workingSpacePct = Number(answers.layout_working_space_pct) || LAYOUT_SETTING_DEFAULTS.workingSpacePct;
+  const zoneHeadroom = Number(answers.layout_zone_headroom) || LAYOUT_SETTING_DEFAULTS.zoneHeadroom;
   return (
     <div className="field-wrap">
       <p className="q-inline-help">Choose Maximum fit, Main wall, and wall benches in the room sandbox on the Space step.</p>
@@ -1291,6 +1288,13 @@ function LayoutGenerationSettings({ answers, setField }: { answers: Answers; set
         <span style={{ fontSize: 16, color: 'var(--mid)' }}>20%</span>
         <input type="range" min={20} max={50} step={1} value={workingSpacePct} onChange={(e) => setField('layout_working_space_pct', Number(e.target.value))} style={{ flex: 1 }} />
         <span style={{ fontSize: 16, color: 'var(--mid)' }}>50%</span>
+      </div>
+      <label className="field-label" style={{ marginTop: 14 }}>Zone headroom: {zoneHeadroom.toFixed(2)}×</label>
+      <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 6 }}>Each Bacterial, Yeast and Mammalian zone gets its equipment's bench space times this. Every bench left over goes to General, the shared area every zone opens onto.</p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 16, color: 'var(--mid)' }}>1×</span>
+        <input type="range" min={1} max={2} step={0.05} value={zoneHeadroom} onChange={(e) => setField('layout_zone_headroom', Number(e.target.value))} style={{ flex: 1 }} />
+        <span style={{ fontSize: 16, color: 'var(--mid)' }}>2×</span>
       </div>
     </div>
   );

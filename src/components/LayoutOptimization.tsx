@@ -35,7 +35,7 @@ export interface LayoutOptimizationSummary {
   notes?: { level: string; message: string }[];
 }
 
-const ZONE_LABELS: Record<string, string> = { microbial: 'Microbial', mammalian: 'Mammalian', general: 'General' };
+const ZONE_LABELS: Record<string, string> = { bacterial: 'Bacterial', yeast: 'Yeast', microbial: 'Microbial', mammalian: 'Mammalian', general: 'General' };
 const zoneLabel = (id: string) => ZONE_LABELS[id] ?? id;
 const ft = (n: number | null | undefined) => (typeof n === 'number' ? `${n.toLocaleString()} ft` : '—');
 const benchLabel = (id: string | null) => (id ? id.replace(/^bench-/, 'Bench ') : 'unplaced');
