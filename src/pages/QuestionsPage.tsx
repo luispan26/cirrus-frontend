@@ -847,14 +847,20 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
   }
 
   // Everything the picker currently offers (so it follows the tag filter)
-  // that isn't already needed, added as needed. Zones are left alone: items
-  // with no biomaterial list go to General unless reassigned one by one.
+  // that isn't already needed, added as needed in the General zone (reassign
+  // any one by one in the list below). Items already marked owned keep their
+  // zone.
   const addAllCandidates = tagFilteredAddable.filter((eq) => !neededMeta[eq.equipmentId]);
   function addAll() {
     if (addAllCandidates.length === 0) return;
     const nextNeeded = { ...neededMeta };
-    for (const eq of addAllCandidates) nextNeeded[eq.equipmentId] = { name: eq.name, count: 1 };
+    const nextZones = { ...((answers.equipment_zones as Record<string, string>) ?? {}) };
+    for (const eq of addAllCandidates) {
+      nextNeeded[eq.equipmentId] = { name: eq.name, count: 1 };
+      if (!ownedMeta[eq.equipmentId]) nextZones[eq.equipmentId] = 'general';
+    }
     setField('needed_equipment_meta', nextNeeded);
+    setField('equipment_zones', nextZones);
     setDraftId('');
   }
 
@@ -917,7 +923,7 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
             className="btn-out"
             style={{ padding: '6px 14px' }}
             disabled={addAllCandidates.length === 0}
-            title={`${selectedTags.size ? 'Add every equipment item matching the tag filter' : 'Add every equipment item in the catalog'} — zones are not set; reassign any below`}
+            title={`${selectedTags.size ? 'Add every equipment item matching the tag filter' : 'Add every equipment item in the catalog'} — into the General zone; reassign any below`}
             onClick={addAll}
           >
             Add all ({addAllCandidates.length})
