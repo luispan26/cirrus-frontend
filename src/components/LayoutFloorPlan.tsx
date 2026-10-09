@@ -359,7 +359,9 @@ export function LayoutFloorPlan({
         const cy = item.yFt + spanY / 2;
         return (
           <g key={item.instanceId} style={{ pointerEvents: 'none' }}>
-            <rect x={item.xFt} y={item.yFt} width={spanX} height={spanY} rx={0.06} fill="#fff" fillOpacity={0.85} stroke="#263b46" strokeWidth={0.05} strokeDasharray={item.placeholderSize ? '0.12 0.08' : undefined} />
+            {/* Too big for a bench: it replaces this bench when the lab is built. */}
+            {item.replacesBench && <title>{`${item.name} — replaces this bench`}</title>}
+            <rect x={item.xFt} y={item.yFt} width={spanX} height={spanY} rx={0.06} fill="#fff" fillOpacity={item.replacesBench ? 0.95 : 0.85} stroke={item.replacesBench ? '#C41678' : '#263b46'} strokeWidth={item.replacesBench ? 0.09 : 0.05} strokeDasharray={item.placeholderSize ? '0.12 0.08' : undefined} />
             <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" fontSize={0.18} fill="#263b46" transform={vertical ? `rotate(-90 ${cx} ${cy})` : undefined}>{truncateLabel(item.name, Math.max(spanX, spanY) - 0.1, 0.18)}{item.fixed ? ' *' : ''}</text>
           </g>
         );
