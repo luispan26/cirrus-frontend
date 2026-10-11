@@ -9,18 +9,24 @@ import { Logo } from '../components/Logo';
 import { useIntakeSync } from '../hooks/useIntakeSync';
 import {
   QS, OPERATION_OPTS, DAMPLAB_MATCH_KEYWORDS, shouldSkip, stepIndex, buildFinalIntakeJson,
-  computeBasicLabEquipment, applyBasicLabEquipmentOverrides, BASIC_EQUIPMENT_CATEGORIES, LAYOUT_SETTING_DEFAULTS,
-  computeEssentialProtocolIds, PROTOCOL_PLAN_CATEGORIES,
-  type Answers, type QuestionOption, type WallSide,
+  BASIC_EQUIPMENT_CATEGORIES, LAYOUT_SETTING_DEFAULTS,
+  computeEssentialProtocolIds, PROTOCOL_PLAN_CATEGORIES, DEFAULT_RUNS_PER_WEEK,
+  type Answers, type DoorHinge, type QuestionOption, type WallSide,
 } from '../lib/questions';
 import {
   EQUIPMENT_LIST_QUERY, EQUIPMENT_LISTS_QUERY, VALIDATED_PROTOCOLS_QUERY, MY_REPORTS_QUERY, LAYOUT_CAPACITY_CHECK_QUERY,
+  EQUIPMENT_USAGE_FOR_PROTOCOLS_QUERY,
 } from '../graphql/operations';
+import {
+  EQUIPMENT_ZONES, HIDDEN_EQUIPMENT_IDS, HOURS_PER_UNIT, ZONE_BY_SOURCE, computeZoneEquipment, finalEquipmentLines, replaceProtocolEquipment,
+  type ProtocolEquipmentInput, type ProtocolReplacements, type ZoneEquipmentRow, type ZoneId,
+} from '../lib/zone-equipment';
 import { getSessionId } from '../lib/session';
 
 type EquipmentRow = { equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number; utilityType: string | null; allTags: string[] };
 type EquipmentListRow = { listKey: string; displayName: string; equipmentIds: string[] };
 type ValidatedProtocolRow = { protocolId: string; title: string; sourceUrl: string; cellTypes?: string[] | null; essential: boolean };
+type ProtocolUsageRow = { protocolId: string; durationsAvailable: boolean; usage: { equipmentId: string; totalDurationSeconds: number }[] };
 
 type CapacityCheck = { benches: number; benchAreaSqFt: number; benchNeedSqFt: number; shortfallSqFt: number; roomTooSmall: boolean; zones: { id: string; name: string; benchNeedSqFt: number; benchAreaSqFt: number }[] };
 
@@ -33,6 +39,13 @@ function validateQuestion(id: string, answers: Answers) {
     const ops = (answers.operations as string[]) || [];
     const runs = (answers.protocol_runs_per_week as Record<string, number>) || {};
     if (ops.some((opId) => runs[opId] === undefined)) return 'Enter expected weekly runs for every protocol (0 is fine).';
+  }
+  if (id === 'basic_lab_equipment') {
+    // The list is saved once every selected protocol's equipment has loaded
+    // (see ZoneEquipmentList) — don't move on with a half-built list.
+    const selected = [...((answers.operations as string[]) || [])].sort().join(',');
+    const savedFor = [...((answers.basic_lab_equipment_protocol_ids as string[]) || [])].sort().join(',');
+    if (selected !== savedFor) return 'Still loading your protocols’ equipment — give it a moment, then continue.';
   }
   if (id === 'space') {
     if (!answers.space_method) return 'Choose how you want to define your space.';
@@ -97,7 +110,7 @@ export function QuestionsPage() {
   // report's "Edit questionnaire", see ReportPage.tsx).
   useEffect(() => {
     const state = location.state as {
-      spaceFromSandbox?: { width_ft: number; height_ft: number; door?: { wall: WallSide; offsetFt: number }; layout?: unknown; geometry?: unknown; arrangement?: Record<string, unknown> };
+      spaceFromSandbox?: { width_ft: number; height_ft: number; door?: { wall: WallSide; offsetFt: number; hinge?: DoorHinge }; layout?: unknown; geometry?: unknown; arrangement?: Record<string, unknown> };
       startAtQuestionId?: string;
       generatedLayout?: unknown;
     } | null;
@@ -119,6 +132,7 @@ export function QuestionsPage() {
       if (door) {
         setField('door_wall', door.wall);
         setField('door_offset_ft', door.offsetFt);
+        setField('door_hinge', door.hinge);
       }
       const spaceIndex = QS.findIndex((sq) => sq.id === 'space');
       if (spaceIndex >= 0) setQi(spaceIndex);
@@ -332,8 +346,8 @@ function findCatalogMatch(title: string): QuestionOption | undefined {
 // matching the user's current biomaterials (computeEssentialProtocolIds in
 // questions.ts) that hasn't been explicitly removed, unioned with whatever
 // the user has manually added — same "list-derived-minus-removed union
-// user-added" shape as the equipment step's computeBasicLabEquipment/
-// applyBasicLabEquipmentOverrides split, just without a quantity dimension.
+// user-added" shape as the equipment step's computeZoneEquipment/
+// removals, just without a quantity dimension.
 // An id present in both sets (e.g. removed as essential, then re-added
 // manually) resolves to 'manual', since the essential loop below only ever
 // populates ids that are NOT in removedSet — the manual loop runs second and
@@ -354,7 +368,7 @@ function computeFinalProtocolSelection(answers: Answers, protocols: { protocolId
 
 // The merged protocol-planning step: essential protocols for the user's
 // selected biomaterials are computed and pre-selected automatically (mirrors
-// EquipmentPlanBody/computeBasicLabEquipment for Q3), and the user can add
+// EquipmentPlanBody/computeZoneEquipment), and the user can add
 // any other validated protocol or remove anything computed. Hoists
 // VALIDATED_PROTOCOLS_QUERY here rather than in each child so there's one
 // loading/error state instead of two.
@@ -435,7 +449,7 @@ function ProtocolPicker({ answers, setField, protocols }: { answers: Answers; se
 // PROTOCOL_PLAN_CATEGORIES, and syncs it into the raw answer fields
 // buildFinalIntakeJson actually reads (operations/protocol_runs_per_week/
 // protocol_operation_by_id) — same "compute, render, sync via effect"
-// pattern as ComputedEquipmentList's basic_lab_equipment_final sync below,
+// pattern as ZoneEquipmentList's basic_lab_equipment_final sync below,
 // just writing three fields instead of one since protocols never got their
 // own combined "_final" field.
 function ComputedProtocolList({ answers, setField, protocols }: { answers: Answers; setField: (k: string, v: unknown) => void; protocols: ValidatedProtocolRow[] }) {
@@ -452,9 +466,8 @@ function ComputedProtocolList({ answers, setField, protocols }: { answers: Answe
     const nextOps: Record<string, string> = {};
     for (const id of finalIds) {
       // Preserves an existing runs/week value for anything staying selected
-      // — only a newly-entering id defaults to 1 (mirrors the old
-      // ProtocolSelectBody's toggle-on default).
-      nextRuns[id] = runs[id] ?? 1;
+      // — only a newly-entering id starts at DEFAULT_RUNS_PER_WEEK.
+      nextRuns[id] = runs[id] ?? DEFAULT_RUNS_PER_WEEK;
       const existingOp = operationByProtocolId[id];
       if (existingOp) {
         nextOps[id] = existingOp;
@@ -533,17 +546,11 @@ function ComputedProtocolList({ answers, setField, protocols }: { answers: Answe
                 {categoryRows.map((row) => {
                   const p = protocolById.get(row.protocolId);
                   if (!p) return null;
-                  const sized = !!findCatalogMatch(p.title);
                   return (
                     <div key={row.protocolId} style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 8, borderBottom: '1px solid var(--br)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           <span style={{ fontWeight: 600, color: 'var(--dark)', fontSize: 13 }}>{p.title}</span>
-                          {!sized && (
-                            <span title="No Operation definition to size a room against yet — still recorded, just not sized." style={{ fontSize: 11, color: 'var(--mid)', border: '1px solid var(--br)', borderRadius: 4, padding: '1px 5px' }}>
-                              not sized yet
-                            </span>
-                          )}
                           <a href={p.sourceUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: 'var(--teal)' }}>
                             View on protocols.io →
                           </a>
@@ -559,7 +566,7 @@ function ComputedProtocolList({ answers, setField, protocols }: { answers: Answe
                           min={1}
                           step={1}
                           style={{ width: 80 }}
-                          value={runs[row.protocolId] ?? 1}
+                          value={runs[row.protocolId] ?? DEFAULT_RUNS_PER_WEEK}
                           onChange={(e) => setRuns(row.protocolId, Number(e.target.value) || 1)}
                         />
                         <span style={{ fontSize: 12, color: 'var(--mid)' }}>runs/week</span>
@@ -729,39 +736,68 @@ function BudgetBody({ answers, setField }: { answers: Answers; setField: (k: str
   );
 }
 
-// The merged equipment-planning step: add anything already owned or still
-// needed, then review the resulting Basic Lab Equipment List, in one place.
-// Used to be two separate questions — a plain "do you have equipment?"
-// inventory step asked first (before biosafety_level/biomaterials were even
-// answered, so the app had nothing to size against yet) and a "finalize"
-// step computed from those answers — plus a third, standalone "additional
-// analytical equipment" question, since folded in here too: the tag filter
-// below already lets a user find analytical equipment in the same picker,
-// and the Owned/Needed toggle covers what a dedicated question couldn't (a
-// costed 'needed' row, not just an uncosted 'owned' one). Hoists both
-// GraphQL queries (EQUIPMENT_LISTS_QUERY, EQUIPMENT_LIST_QUERY) here rather
-// than letting each child run its own, so there's a single loading/error
-// state instead of two skeletons flashing in sequence as the two queries
-// resolve independently.
+// The equipment step: add anything already owned or still needed, then
+// review every piece of equipment by zone (General, Microbial, Mammalian) —
+// the basic lists for the chosen biosafety level and biomaterials, plus the
+// equipment mapped to every protocol selected on the previous step (see
+// computeZoneEquipment in lib/zone-equipment.ts for the rules). Hoists every
+// query here so there's one loading/error state. Protocol equipment comes
+// from equipmentUsageForProtocols (step mappings + protocols.io step times),
+// which can take a few seconds.
 function EquipmentPlanBody({ answers, setField }: { answers: Answers; setField: (k: string, v: unknown) => void }) {
   const { data: listsData, loading: listsLoading, error: listsError } = useQuery<{ equipmentLists: EquipmentListRow[] }>(EQUIPMENT_LISTS_QUERY);
   const { data: equipmentData, loading: eqLoading, error: eqError } = useQuery<{ equipmentList: EquipmentRow[] }>(EQUIPMENT_LIST_QUERY);
+  const { data: protocolsData, loading: protocolsLoading, error: protocolsError } = useQuery<{ validatedProtocols: ValidatedProtocolRow[] }>(VALIDATED_PROTOCOLS_QUERY);
+  const selectedIds = (answers.operations as string[]) || [];
+  const { data: usageData, loading: usageLoading, error: usageError, refetch: refetchUsage } = useQuery<{ equipmentUsageForProtocols: ProtocolUsageRow[] }>(
+    EQUIPMENT_USAGE_FOR_PROTOCOLS_QUERY,
+    { variables: { protocolIds: selectedIds }, skip: selectedIds.length === 0 },
+  );
   const lists = listsData?.equipmentLists ?? [];
-  const catalog = equipmentData?.equipmentList ?? [];
-  const loading = listsLoading || eqLoading;
+  // Hidden non-bench items (sink, laptop, …) can't be added or picked either.
+  const catalog = (equipmentData?.equipmentList ?? []).filter((eq) => !HIDDEN_EQUIPMENT_IDS.includes(eq.equipmentId));
+  const runs = (answers.protocol_runs_per_week as Record<string, number>) || {};
 
-  if (loading) return <p className="q-inline-help">Loading your equipment lists…</p>;
+  const validatedById = new Map((protocolsData?.validatedProtocols ?? []).map((p) => [p.protocolId, p]));
+  const usageById = new Map((usageData?.equipmentUsageForProtocols ?? []).map((u) => [u.protocolId, u]));
+  const protocols: ProtocolEquipmentInput[] = selectedIds.flatMap((protocolId) => {
+    const validated = validatedById.get(protocolId);
+    const usage = usageById.get(protocolId);
+    if (!validated || !usage) return [];
+    return [{
+      protocolId,
+      title: validated.title.trim().replace(/\s+/g, ' '),
+      runsPerWeek: runs[protocolId] ?? 0,
+      cellTypes: validated.cellTypes ?? [],
+      usage: usage.usage.map((u) => ({ equipmentId: u.equipmentId, totalDurationSeconds: u.totalDurationSeconds })),
+    }];
+  });
+  const missingDurations = (usageData?.equipmentUsageForProtocols ?? []).filter((u) => !u.durationsAvailable).length;
+
+  if (listsLoading || eqLoading || protocolsLoading) return <p className="q-inline-help">Loading your equipment lists…</p>;
   if (listsError) return <p className="q-validation-error">Couldn’t load equipment lists: {listsError.message}</p>;
   if (eqError) return <p className="q-validation-error">Couldn’t load the equipment catalog: {eqError.message}</p>;
+  if (protocolsError) return <p className="q-validation-error">Couldn’t load your protocols: {protocolsError.message}</p>;
+
+  const protocolsReady = selectedIds.length === 0 || (!!usageData && !usageLoading);
 
   return (
     // No height cap of its own: the card grows to show the picker and the
-    // whole computed list, and the question stage scrolls (.qm-stage /
-    // .q-card in index.css handle cards taller than the window). A capped
-    // inner box here was too cramped to work in.
+    // whole list, and the question stage scrolls (.qm-stage / .q-card in
+    // index.css handle cards taller than the window).
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <EquipmentPicker answers={answers} setField={setField} catalog={catalog} />
-      <ComputedEquipmentList answers={answers} setField={setField} lists={lists} catalog={catalog} />
+      {usageLoading && <p className="q-inline-help" style={{ margin: 0 }}>Loading the equipment for your {selectedIds.length} protocol{selectedIds.length === 1 ? '' : 's'}…</p>}
+      {usageError && (
+        <div className="q-validation-error" style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'space-between' }}>
+          <span>Couldn’t load your protocols’ equipment: {usageError.message}</span>
+          <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => refetchUsage()}>Retry</button>
+        </div>
+      )}
+      {missingDurations > 0 && (
+        <p className="q-inline-help" style={{ margin: 0 }}>protocols.io couldn’t be reached for {missingDurations} protocol{missingDurations === 1 ? '' : 's'}, so every step of {missingDurations === 1 ? 'it' : 'them'} is counted as 10 minutes.</p>
+      )}
+      <ZoneEquipmentList answers={answers} setField={setField} lists={lists} catalog={catalog} protocols={protocols} protocolsReady={protocolsReady} selectedIds={selectedIds} />
     </div>
   );
 }
@@ -773,18 +809,13 @@ function EquipmentPlanBody({ answers, setField }: { answers: Answers; setField: 
 // "what does this lab have or want" means real, named equipment (a Synergy
 // H1 plate reader, an Opentrons FLEX), not protocol proxies. Deliberately
 // doesn't render the equipment already added: once added, an item becomes a
-// row in ComputedEquipmentList below (in the "Already Owned"/"Needed"
-// category, or as a cross-referenced pill under whatever other category
-// also requires it), with its own editable stepper and Remove/un-own
-// control there — so there's exactly one place per added item to view or
-// edit it, not two. An item CAN be in both buckets at once now (e.g. own 2,
-// still need 3 more) — addable only excludes an item from the bucket
-// currently selected by the Owned/Needed toggle, not from the other one, so
-// switching the toggle surfaces an already-owned item again to also mark it
-// needed (or vice versa). When it's in both, computeBasicLabEquipment
-// (questions.ts) emits two separate rows — one under Owned, one under
-// Needed — rather than merging them, so each shows up in its own
-// color-coded section instead of one bucket swallowing the other.
+// row in ZoneEquipmentList below, in the zone picked here, with an Owned /
+// New box and its own editable stepper and Remove/un-own control — so
+// there's exactly one place per added item to view or edit it, not two. An
+// item CAN be in both buckets at once (e.g. own 2, still need 3 more) —
+// addable only excludes an item once it's in both. When it's in both,
+// computeZoneEquipment (lib/zone-equipment.ts) emits two separate rows, one
+// Owned and one New, each with its own count.
 function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; setField: (k: string, v: unknown) => void; catalog: EquipmentRow[] }) {
   const ownedMeta = (answers.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
   const neededMeta = (answers.needed_equipment_meta as Record<string, { name: string; count: number }>) || {};
@@ -868,7 +899,7 @@ function EquipmentPicker({ answers, setField, catalog }: { answers: Answers; set
           {/* Owned/Add each commit the selected equipment straight into that
               bucket — no separate Add button, no toggle-then-confirm step.
               "Add" is this bucket's label for needed_equipment_meta (still
-              needed_equipment_meta under the hood, same as ComputedEquipmentList's
+              needed_equipment_meta under the hood, same as ZoneEquipmentList's
               Needed rows below); disabled per-button once the selected item
               is already in that particular bucket. */}
           <button
@@ -1001,94 +1032,107 @@ function TagFilterPopover({ catalog, selected, onChange }: { catalog: EquipmentR
   );
 }
 
-// Renders computeBasicLabEquipment + applyBasicLabEquipmentOverrides (see
-// questions.ts) against live Prompt 1 data, then persists the finalized,
-// post-edit list into answers.basic_lab_equipment_final so
-// buildFinalIntakeJson can read it directly without recomputing. The sync
-// effect is keyed off a serialized snapshot of the visible rows, not the
-// array reference, so it only writes when the actual content changes —
-// otherwise every render (each of which produces new row objects) would
-// re-fire the debounced session write.
-function ComputedEquipmentList({
-  answers, setField, lists, catalog,
+// Colors for the protocol boxes on each row, by the protocol's place in the
+// selection — kept apart from the three zone colors.
+const PROTOCOL_BADGE_COLORS = ['#2563EB', '#C2410C', '#BE185D', '#0E7490', '#6D28D9', '#4D7C0F', '#B91C1C', '#475569', '#A16207', '#0F766E'];
+
+const SMALL_BOX: CSSProperties = { display: 'inline-block', marginLeft: 6, fontSize: 13, fontWeight: 600, borderRadius: 6, padding: '1px 7px', verticalAlign: 'middle', lineHeight: 1.5 };
+
+// Renders computeZoneEquipment (lib/zone-equipment.ts) in three zone
+// sections, and saves the list into answers.basic_lab_equipment_final (with
+// each line's zone and protocols) so buildFinalIntakeJson can send it as
+// is. Each row shows small boxes: Owned / New / Required, the basic lists
+// that put it there, and a colored box per protocol that uses it. Protocol
+// equipment can't be removed — only replaced (Replace pop-up) — and its zone
+// follows its protocol; every other row keeps the Zone selector. The save
+// waits for the protocols' equipment to load, and records which protocols
+// it was computed for so the step can't be left half-loaded.
+function ZoneEquipmentList({
+  answers, setField, lists, catalog, protocols, protocolsReady, selectedIds,
 }: {
   answers: Answers; setField: (k: string, v: unknown) => void; lists: EquipmentListRow[]; catalog: EquipmentRow[];
+  protocols: ProtocolEquipmentInput[]; protocolsReady: boolean; selectedIds: string[];
 }) {
-  const computed = computeBasicLabEquipment(answers, lists, catalog);
-  const rows = applyBasicLabEquipmentOverrides(computed, answers);
+  const rows = computeZoneEquipment(answers, lists, catalog, protocols);
+  const lines = finalEquipmentLines(rows);
   const equipmentById = new Map(catalog.map((item) => [item.equipmentId, item]));
-  const estimatedCost = rows.reduce((sum, row) => sum + (row.owned ? 0 : row.quantity * (equipmentById.get(row.equipmentId)?.costUsd ?? 0)), 0);
+  const estimatedCost = lines.reduce((sum, line) => sum + (line.sources.includes('owned') ? 0 : line.quantity * (equipmentById.get(line.equipment_id)?.costUsd ?? 0)), 0);
   const overMax = Number(answers.budget_max) > 0 && estimatedCost > Number(answers.budget_max);
   const overDesired = Number(answers.budget_desired) > 0 && estimatedCost > Number(answers.budget_desired);
-  const zoneOverrides = (answers.equipment_zones as Record<string, string>) ?? {};
   const fixedIds = (answers.equipment_fixed as string[]) ?? [];
-  const serialized = JSON.stringify(rows.map((r) => [r.equipmentId, r.quantity, r.sources.join(',')]));
+  const protocolById = new Map(protocols.map((p) => [p.protocolId, p]));
+  const protocolColor = new Map(protocols.map((p, i) => [p.protocolId, PROTOCOL_BADGE_COLORS[i % PROTOCOL_BADGE_COLORS.length]]));
+  const categoryByKey = new Map(BASIC_EQUIPMENT_CATEGORIES.map((c) => [c.key, c]));
+  const [replacing, setReplacing] = useState<ZoneEquipmentRow | null>(null);
+  const serialized = JSON.stringify(lines);
+  const selectedKey = [...selectedIds].sort().join(',');
 
   useEffect(() => {
-    // sources travels through to the report's BOM (see reports.service.ts's
-    // extractBasicLabEquipment) so the Lab Design Report can apply the same
-    // color-coded-by-source grouping used here.
-    const currentZones = (answers.equipment_zones as Record<string, string>) ?? {};
-    const defaults = Object.fromEntries(rows.filter((r) => !currentZones[r.equipmentId]).map((r) => [r.equipmentId, 'general']));
-    if (Object.keys(defaults).length) setField('equipment_zones', { ...currentZones, ...defaults });
-    setField('basic_lab_equipment_final', rows.map(({ equipmentId, name, quantity, sources }) => ({ equipment_id: equipmentId, name, quantity, sources })));
+    if (!protocolsReady) return;
+    // sources travel through to the report's bill of materials (grouped by
+    // its first source there); zone and protocol_ids to the floor plan.
+    setField('basic_lab_equipment_final', lines);
+    setField('basic_lab_equipment_protocol_ids', selectedKey ? selectedKey.split(',') : []);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serialized]);
+  }, [serialized, protocolsReady, selectedKey]);
 
-  function setQty(equipmentId: string, next: number) {
+  function setQty(row: ZoneEquipmentRow, next: number) {
     const overrides = (answers.basic_lab_equipment_quantity_overrides as Record<string, number>) || {};
-    setField('basic_lab_equipment_quantity_overrides', { ...overrides, [equipmentId]: Math.max(1, Math.round(next)) });
+    setField('basic_lab_equipment_quantity_overrides', { ...overrides, [`${row.zone}:${row.equipmentId}`]: Math.max(1, Math.round(next)) });
   }
-  function remove(equipmentId: string) {
+  function remove(row: ZoneEquipmentRow) {
     const removedIds = (answers.basic_lab_equipment_removed as string[]) || [];
-    if (removedIds.includes(equipmentId)) return;
-    setField('basic_lab_equipment_removed', [...removedIds, equipmentId]);
+    const key = `${row.zone}:${row.equipmentId}`;
+    if (!removedIds.includes(key)) setField('basic_lab_equipment_removed', [...removedIds, key]);
   }
-  // Owned rows are edited through existing_equipment_meta directly, not the
-  // override/removed answer fields — see applyBasicLabEquipmentOverrides's
-  // comment in questions.ts for why.
-  function setOwnedQty(equipmentId: string, next: number) {
-    const meta = (answers.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
+  // Owned and New rows are edited through existing_equipment_meta /
+  // needed_equipment_meta directly — removing one means you don't own (or
+  // no longer want) it, not that the room doesn't need it.
+  function setMetaCount(field: 'existing_equipment_meta' | 'needed_equipment_meta', equipmentId: string, next: number) {
+    const meta = (answers[field] as Record<string, { name: string; count: number }>) || {};
     const current = meta[equipmentId];
     if (!current) return;
-    setField('existing_equipment_meta', { ...meta, [equipmentId]: { ...current, count: Math.max(1, Math.round(next)) } });
+    setField(field, { ...meta, [equipmentId]: { ...current, count: Math.max(1, Math.round(next)) } });
   }
-  function unown(equipmentId: string) {
-    const meta = (answers.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
+  function removeMeta(field: 'existing_equipment_meta' | 'needed_equipment_meta', equipmentId: string) {
+    const meta = (answers[field] as Record<string, { name: string; count: number }>) || {};
     const { [equipmentId]: _removed, ...rest } = meta;
-    setField('existing_equipment_meta', rest);
+    setField(field, rest);
   }
-  // Needed rows mirror the owned functions above — edited through
-  // needed_equipment_meta directly, not the override/removed answer fields.
-  function setNeededQty(equipmentId: string, next: number) {
-    const meta = (answers.needed_equipment_meta as Record<string, { name: string; count: number }>) || {};
-    const current = meta[equipmentId];
-    if (!current) return;
-    setField('needed_equipment_meta', { ...meta, [equipmentId]: { ...current, count: Math.max(1, Math.round(next)) } });
-  }
-  function removeNeeded(equipmentId: string) {
-    const meta = (answers.needed_equipment_meta as Record<string, { name: string; count: number }>) || {};
-    const { [equipmentId]: _removed, ...rest } = meta;
-    setField('needed_equipment_meta', rest);
+  // Moves a (non-protocol) row: its basic-list units, its Owned / New
+  // units, and any quantity edit go to the new zone.
+  function moveRow(row: ZoneEquipmentRow, to: ZoneId) {
+    const moves = { ...((answers.equipment_zone_moves as Record<string, string>) || {}) };
+    for (const source of row.listSources) {
+      const from = ZONE_BY_SOURCE[source];
+      const key = `${from}:${row.equipmentId}`;
+      if (to === from) delete moves[key];
+      else moves[key] = to;
+    }
+    setField('equipment_zone_moves', moves);
+    if (row.owned || row.needed || row.ownedQuantity > 0 || row.neededQuantity > 0) {
+      setField('equipment_zones', { ...((answers.equipment_zones as Record<string, string>) || {}), [row.equipmentId]: to });
+    }
+    const overrides = (answers.basic_lab_equipment_quantity_overrides as Record<string, number>) || {};
+    const fromKey = `${row.zone}:${row.equipmentId}`;
+    if (overrides[fromKey] !== undefined) {
+      const { [fromKey]: quantity, ...rest } = overrides;
+      setField('basic_lab_equipment_quantity_overrides', { ...rest, [`${to}:${row.equipmentId}`]: quantity });
+    }
   }
 
   if (rows.length === 0) {
-    return <p className="q-inline-help">Nothing here yet — add equipment you already own or still need above, or pick a biosafety level or biomaterial to draw from those lists.</p>;
+    return <p className="q-inline-help">Nothing here yet — add equipment you already own or still need above, or pick a biosafety level, biomaterial or protocol to draw from those lists.</p>;
   }
 
-  const categoryByKey = new Map(BASIC_EQUIPMENT_CATEGORIES.map((c) => [c.key, c]));
-  // Grouped by each row's PRIMARY source (sources[0], in the order
-  // computeBasicLabEquipment first added it) so every row appears in
-  // exactly one section — an item drawn from more than one list (its
-  // quantity already sums across all of them) gets small colored pills
-  // for the rest, rather than being rendered a second time with its own
-  // editable controls.
-  const rowsByCategory = new Map<string, typeof rows>();
-  for (const row of rows) {
-    const key = row.sources[0] ?? 'general';
-    const bucket = rowsByCategory.get(key);
-    if (bucket) bucket.push(row);
-    else rowsByCategory.set(key, [row]);
+  function stepper(value: number, onChange: (next: number) => void) {
+    return (
+      <div className="stepper">
+        <button type="button" onClick={() => onChange(value - 1)}>−</button>
+        <span className="stepper-val" style={{ fontSize: 16, minWidth: 20 }}>{value}</span>
+        <button type="button" onClick={() => onChange(value + 1)}>+</button>
+      </div>
+    );
   }
 
   return (
@@ -1096,117 +1140,199 @@ function ComputedEquipmentList({
       <div className={`equipment-budget ${overMax ? 'over-max' : overDesired ? 'over-desired' : ''}`} role="status">
         <strong>New equipment estimate: {estimatedCost.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}</strong>
         <p>{overMax ? 'Above your absolute maximum budget. Adjust equipment or revisit your budget.' : overDesired ? 'Above your desired spend, but within your absolute maximum.' : 'Owned equipment is excluded. Estimates use current catalog prices.'}</p>
-        <small>Warnings only; you can continue. Protocol-specific equipment added later may increase the total.</small>
+        <small>Warnings only; you can continue.</small>
       </div>
       <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 0 }}>
-        Adjust quantities as needed. Items required for your biosafety level can’t be removed, only increased.
-        Equipment you already own or still need can be adjusted or removed here too — removing an owned row means you no longer have it, and removing a needed row means you no longer want it; neither means the room doesn’t need it. Each color-coded section below shows which list brought that equipment into this combined list.
+        Equipment is grouped by the zone it goes in on your floor plan. Colored boxes show which of your protocols use each item — protocols in one zone share their equipment, with one unit for every {HOURS_PER_UNIT} hours a week they use it (a protocol step with no time on protocols.io counts as 10 minutes). Protocol equipment can’t be removed, only replaced (or remove the protocol on the Protocols step). Items required for your biosafety level can’t be removed either. Removing an owned or new item means you no longer have or want it, not that the room doesn’t need it.
       </p>
-      {/* No max-height/scroll of its own — the question stage scrolls the
-          whole step (picker + this list) together, so this only needs to
-          lay the rows out. */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
-      {BASIC_EQUIPMENT_CATEGORIES.map((category) => {
-        const categoryRows = rowsByCategory.get(category.key);
-        if (!categoryRows || categoryRows.length === 0) return null;
-        return (
-          <div key={category.key}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <span style={{ width: 10, height: 10, borderRadius: '50%', background: category.color, flexShrink: 0 }} />
-              <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: '.03em', color: category.color, textTransform: 'uppercase' }}>
-                {category.label}
-              </span>
-              <span style={{ fontSize: 16, color: 'var(--mid)' }}>({categoryRows.length})</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, borderLeft: `3px solid ${category.color}`, paddingLeft: 12 }}>
-              {categoryRows.map((row) => {
-                const otherSources = row.sources.filter((s) => s !== category.key);
-                return (
-                  <div key={row.equipmentId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--dark)' }}>
-                      {row.name}
-                      {row.owned ? (
-                        <span style={{ marginLeft: 6, fontSize: 16, fontWeight: 500, color: 'var(--mid)' }}>(owned)</span>
-                      ) : row.needed ? (
-                        <span style={{ marginLeft: 6, fontSize: 16, fontWeight: 500, color: 'var(--mid)' }}>(needed)</span>
-                      ) : row.locked && (
-                        <span style={{ marginLeft: 6, fontSize: 16, fontWeight: 500, color: 'var(--mid)' }}>(required)</span>
-                      )}
-                      {otherSources.map((sourceKey) => {
-                        const meta = categoryByKey.get(sourceKey);
-                        if (!meta) return null;
-                        return (
-                          <span
-                            key={sourceKey}
-                            title={`Also required by ${meta.label}`}
-                            style={{ marginLeft: 6, fontSize: 16, fontWeight: 600, color: meta.color, border: `1px solid ${meta.color}`, borderRadius: 10, padding: '1px 7px' }}
-                          >
-                            + {meta.label}
-                          </span>
-                        );
-                      })}
-                    </span>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-                      {equipmentById.get(row.equipmentId)?.allTags.some((tag) => ['Cold Storage', 'Hood'].includes(tag)) ? <span>Floor item — placed manually, no zone</span> : (
-                        <label className="q-check-row">Zone
-                          <select className="field-input" aria-label={`Zone for ${row.name}`} value={zoneOverrides[row.equipmentId] ?? 'general'} onChange={(e) => setField('equipment_zones', { ...zoneOverrides, [row.equipmentId]: e.target.value })}>
-                            <option value="general">General</option><option value="microbial">Microbial</option><option value="mammalian">Mammalian</option>
-                          </select>
-                        </label>
-                      )}
-                      <label className="q-check-row"><input type="checkbox" checked={fixedIds.includes(row.equipmentId)} onChange={(e) => setField('equipment_fixed', e.target.checked ? [...fixedIds, row.equipmentId] : fixedIds.filter((id) => id !== row.equipmentId))} />Fixed for optimizer</label>
-                      {/* A row is never both owned and needed at once —
-                          computeBasicLabEquipment splits that case into two
-                          separate rows (one here, one in the other
-                          category's section) — so exactly one of these
-                          three branches ever renders per row. */}
-                      {row.owned ? (
+        {EQUIPMENT_ZONES.map((zone) => {
+          const zoneRows = rows.filter((row) => row.zone === zone.id);
+          if (zoneRows.length === 0) return null;
+          return (
+            <div key={zone.id}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: zone.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: '.03em', color: zone.color, textTransform: 'uppercase' }}>{zone.label} zone</span>
+                <span style={{ fontSize: 16, color: 'var(--mid)' }}>({zoneRows.length})</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, borderLeft: `3px solid ${zone.color}`, paddingLeft: 12 }}>
+                {zoneRows.map((row) => {
+                  const usedByProtocol = row.protocolIds.length > 0;
+                  const floorItem = equipmentById.get(row.equipmentId)?.allTags.some((tag) => ['Cold Storage', 'Hood'].includes(tag));
+                  return (
+                    <div key={row.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', paddingBottom: 8, borderBottom: '1px solid var(--br)' }}>
+                      <div style={{ flex: '1 1 260px', minWidth: 0 }}>
+                        <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--dark)' }}>{row.name}</span>
+                        {row.owned && <span style={{ ...SMALL_BOX, background: '#6B7280', color: '#fff' }} title="You already own this — no cost in the estimate">Owned</span>}
+                        {row.needed && <span style={{ ...SMALL_BOX, background: '#3462C9', color: '#fff' }} title="You added this to buy">New</span>}
+                        {row.locked && <span style={{ ...SMALL_BOX, background: '#a67c00', color: '#fff' }} title="Required for your biosafety level">Required</span>}
+                        {row.listSources.filter((source) => source !== 'bsl').map((source) => {
+                          const meta = categoryByKey.get(source);
+                          if (!meta) return null;
+                          return <span key={source} style={{ ...SMALL_BOX, fontWeight: 500, color: meta.color, border: `1px solid ${meta.color}` }} title={`On your ${meta.label} list`}>{meta.label}</span>;
+                        })}
+                        {row.protocolIds.map((protocolId) => {
+                          const title = protocolById.get(protocolId)?.title ?? protocolId;
+                          return (
+                            <span key={protocolId} title={`Used by ${title}`} style={{ ...SMALL_BOX, background: protocolColor.get(protocolId), color: '#fff', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {title}
+                            </span>
+                          );
+                        })}
+                        {usedByProtocol && row.weeklyHours >= 0.05 && (
+                          <div style={{ fontSize: 14, color: 'var(--mid)', marginTop: 2 }}>Protocols use it about {row.weeklyHours.toFixed(1)} h/week</div>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                        {floorItem ? <span style={{ fontSize: 14, color: 'var(--mid)' }}>Floor item — placed by hand</span> : usedByProtocol ? (
+                          <span style={{ fontSize: 14, color: 'var(--mid)' }}>Zone set by its protocol{row.protocolIds.length === 1 ? '' : 's'}</span>
+                        ) : (
+                          <label className="q-check-row">Zone
+                            <select className="field-input" aria-label={`Zone for ${row.name}`} value={row.zone} onChange={(e) => moveRow(row, e.target.value as ZoneId)}>
+                              {EQUIPMENT_ZONES.map((z) => <option key={z.id} value={z.id}>{z.label}</option>)}
+                            </select>
+                          </label>
+                        )}
+                        <label className="q-check-row"><input type="checkbox" checked={fixedIds.includes(row.equipmentId)} onChange={(e) => setField('equipment_fixed', e.target.checked ? [...fixedIds, row.equipmentId] : fixedIds.filter((id) => id !== row.equipmentId))} />Fixed for optimizer</label>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <div className="stepper">
-                            <button type="button" onClick={() => setOwnedQty(row.equipmentId, row.ownedQuantity - 1)}>−</button>
-                            <span className="stepper-val" style={{ fontSize: 16, minWidth: 20 }}>{row.ownedQuantity}</span>
-                            <button type="button" onClick={() => setOwnedQty(row.equipmentId, row.ownedQuantity + 1)}>+</button>
-                          </div>
-                          <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => unown(row.equipmentId)}>Remove</button>
+                          {row.owned ? stepper(row.ownedQuantity, (next) => setMetaCount('existing_equipment_meta', row.equipmentId, next))
+                            : row.needed ? stepper(row.neededQuantity, (next) => setMetaCount('needed_equipment_meta', row.equipmentId, next))
+                              : stepper(row.quantity, (next) => setQty(row, next))}
+                          {usedByProtocol && <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => setReplacing(row)}>Replace</button>}
+                          {row.owned ? <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => removeMeta('existing_equipment_meta', row.equipmentId)}>Remove</button>
+                            : row.needed ? <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => removeMeta('needed_equipment_meta', row.equipmentId)}>Remove</button>
+                              : !row.locked && !usedByProtocol && <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => remove(row)}>Remove</button>}
                         </div>
-                      ) : row.needed ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <div className="stepper">
-                            <button type="button" onClick={() => setNeededQty(row.equipmentId, row.neededQuantity - 1)}>−</button>
-                            <span className="stepper-val" style={{ fontSize: 16, minWidth: 20 }}>{row.neededQuantity}</span>
-                            <button type="button" onClick={() => setNeededQty(row.equipmentId, row.neededQuantity + 1)}>+</button>
-                          </div>
-                          <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => removeNeeded(row.equipmentId)}>Remove</button>
-                        </div>
-                      ) : (row.locked ? (
-                        <div className="stepper">
-                          <button type="button" onClick={() => setQty(row.equipmentId, row.quantity - 1)}>−</button>
-                          <span className="stepper-val" style={{ fontSize: 16, minWidth: 20 }}>{row.quantity}</span>
-                          <button type="button" onClick={() => setQty(row.equipmentId, row.quantity + 1)}>+</button>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <div className="stepper">
-                            <button type="button" onClick={() => setQty(row.equipmentId, row.quantity - 1)}>−</button>
-                            <span className="stepper-val" style={{ fontSize: 16, minWidth: 20 }}>{row.quantity}</span>
-                            <button type="button" onClick={() => setQty(row.equipmentId, row.quantity + 1)}>+</button>
-                          </div>
-                          <button type="button" className="btn-out" style={{ padding: '2px 10px' }} onClick={() => remove(row.equipmentId)}>Remove</button>
-                        </div>
-                      ))}
-                      {(row.owned || row.needed) && row.requiredQuantity > row.ownedQuantity + row.neededQuantity && (
-                        <span style={{ fontSize: 16, color: 'var(--mid)' }}>Sized at {row.quantity} — this list needs at least {row.requiredQuantity}</span>
-                      )}
+                        {(row.owned || row.needed) && row.requiredQuantity > row.ownedQuantity + row.neededQuantity && (
+                          <span style={{ fontSize: 14, color: 'var(--mid)' }}>Sized at {row.quantity} — this zone needs at least {row.requiredQuantity}</span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
       </div>
+      {replacing && (
+        <ReplaceEquipmentDialog
+          row={replacing}
+          answers={answers}
+          setField={setField}
+          catalog={catalog}
+          protocols={protocols}
+          protocolColor={protocolColor}
+          onClose={() => setReplacing(null)}
+        />
+      )}
     </div>
+  );
+}
+
+// Swaps a protocol's equipment for another item, for this lab design only
+// (answers.protocol_equipment_replacements — the shared step mappings are
+// never changed). Swaps every step of each ticked protocol that uses it. The
+// search starts filtered to the item's own type tag (the filter can be
+// changed), and the user's own Owned / New items are listed for a quick
+// pick. Portaled to <body> so the scrolling question stage can't clip it;
+// Enter/Escape are kept from the questionnaire's own next/back keys.
+function ReplaceEquipmentDialog({
+  row, answers, setField, catalog, protocols, protocolColor, onClose,
+}: {
+  row: ZoneEquipmentRow; answers: Answers; setField: (k: string, v: unknown) => void; catalog: EquipmentRow[];
+  protocols: ProtocolEquipmentInput[]; protocolColor: Map<string, string | undefined>; onClose: () => void;
+}) {
+  const current = catalog.find((eq) => eq.equipmentId === row.equipmentId);
+  const [ticked, setTicked] = useState<Set<string>>(() => new Set(row.protocolIds));
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(() => new Set(current && current.allTags.length > 0 ? current.allTags : [UNTAGGED]));
+  const [draftId, setDraftId] = useState('');
+  const options = catalog.filter((eq) => eq.equipmentId !== row.equipmentId && (selectedTags.size === 0 || matchesTagFilter(eq, selectedTags)));
+  const ownedMeta = (answers.existing_equipment_meta as Record<string, unknown>) || {};
+  const neededMeta = (answers.needed_equipment_meta as Record<string, unknown>) || {};
+  const added = catalog.filter((eq) => eq.equipmentId !== row.equipmentId && (ownedMeta[eq.equipmentId] || neededMeta[eq.equipmentId]));
+  const protocolTitle = new Map(protocols.map((p) => [p.protocolId, p.title]));
+
+  function toggle(protocolId: string) {
+    const next = new Set(ticked);
+    if (next.has(protocolId)) next.delete(protocolId); else next.add(protocolId);
+    setTicked(next);
+  }
+
+  function apply() {
+    if (!draftId || ticked.size === 0) return;
+    const replacements = (answers.protocol_equipment_replacements as ProtocolReplacements) || {};
+    setField('protocol_equipment_replacements', replaceProtocolEquipment(replacements, protocols, [...ticked], row.equipmentId, draftId));
+    onClose();
+  }
+
+  return createPortal(
+    <div
+      className="q-modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="replace-title"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.stopPropagation();
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); }
+      }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="q-modal" style={{ maxWidth: 640, maxHeight: '90vh', overflowY: 'auto', fontSize: 16 }}>
+        <h3 id="replace-title">Replace {row.name}</h3>
+        <p style={{ margin: '0 0 6px' }}>Swap it for another piece of equipment in every step of these protocols:</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 12 }}>
+          {row.protocolIds.map((protocolId) => (
+            <label key={protocolId} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input type="checkbox" checked={ticked.has(protocolId)} onChange={() => toggle(protocolId)} />
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: protocolColor.get(protocolId), flexShrink: 0 }} />
+              {protocolTitle.get(protocolId) ?? protocolId}
+            </label>
+          ))}
+        </div>
+        <label className="field-label" style={{ display: 'block', marginBottom: 6 }}>Replace with</label>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <TagFilterPopover catalog={catalog} selected={selectedTags} onChange={setSelectedTags} />
+          <SearchableSelect
+            style={{ width: 340 }}
+            value={draftId}
+            onChange={setDraftId}
+            placeholder="Search for equipment…"
+            options={[{ value: '', label: 'Select equipment…', disabled: true }, ...options.map((eq) => ({ value: eq.equipmentId, label: eq.name }))]}
+          />
+        </div>
+        <p style={{ fontSize: 14, color: 'var(--mid)', margin: '6px 0 12px' }}>
+          {current && current.allTags.length > 0 ? `Showing items tagged ${current.allTags.join(' / ')}, the same type as ${row.name} — change the filter to see others.` : 'Change the filter to narrow the list.'}
+        </p>
+        {added.length > 0 && (
+          <>
+            <label className="field-label" style={{ display: 'block', marginBottom: 6 }}>Or use equipment you already added</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+              {added.map((eq) => (
+                <button
+                  key={eq.equipmentId}
+                  type="button"
+                  className={draftId === eq.equipmentId ? 'btn-teal' : 'btn-out'}
+                  style={{ padding: '4px 10px', fontSize: 14 }}
+                  onClick={() => setDraftId(eq.equipmentId)}
+                >
+                  {eq.name}{ownedMeta[eq.equipmentId] ? ' (owned)' : ' (new)'}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        <p style={{ fontSize: 14, padding: '8px 10px', borderRadius: 8, background: '#fff5df', border: '1px solid #b77a12', color: '#6b4a0c', margin: '0 0 4px' }}>
+          Cirrus doesn’t check if this equipment can actually be used in this protocol.
+        </p>
+        <div className="q-modal-actions">
+          <button type="button" className="btn-out" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-teal" disabled={!draftId || ticked.size === 0} onClick={apply}>Replace</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1298,6 +1424,7 @@ function LayoutDoorPicker({
   function useAuto() {
     setField('door_wall', undefined);
     setField('door_offset_ft', undefined);
+    setField('door_hinge', undefined);
   }
 
   return (
@@ -1324,6 +1451,10 @@ function LayoutDoorPicker({
                 onChange={(e) => setField('door_offset_ft', e.target.value)}
               />
               <span style={{ fontSize: 16, color: 'var(--mid)' }}>ft along a {runLength} ft wall</span>
+              <select className="field-input" style={{ width: 200 }} aria-label="Hinge side" value={answers.door_hinge === 'end' ? 'end' : 'start'} onChange={(e) => setField('door_hinge', e.target.value)}>
+                <option value="start">Hinge at the {wall === 'N' || wall === 'S' ? 'west' : 'north'} end</option>
+                <option value="end">Hinge at the {wall === 'N' || wall === 'S' ? 'east' : 'south'} end</option>
+              </select>
             </div>
           )}
         </>

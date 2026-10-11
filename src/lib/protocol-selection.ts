@@ -1,4 +1,4 @@
-import type { Answers } from './questions';
+import { DEFAULT_RUNS_PER_WEEK, type Answers } from './questions';
 
 // One patch preserves selections outside a filter and each existing frequency.
 export function selectProtocols(answers: Answers, protocols: { value: string; operationId?: string }[], selected: boolean): Answers {
@@ -8,7 +8,7 @@ export function selectProtocols(answers: Answers, protocols: { value: string; op
   for (const protocol of protocols) {
     if (selected) {
       ids.add(protocol.value);
-      runs[protocol.value] ??= 1;
+      runs[protocol.value] ??= DEFAULT_RUNS_PER_WEEK;
       if (protocol.operationId) operations[protocol.value] = protocol.operationId;
     } else {
       ids.delete(protocol.value);

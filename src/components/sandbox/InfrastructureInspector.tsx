@@ -1,4 +1,4 @@
-import { centeredRectFootprint, polygonBounds, wallRectFootprint, wallSideOfBounds, type SandboxBaseObject, type SandboxPolygon } from '../../lib/layout-sandbox';
+import { DOOR_HINGE_CLEARANCE_FT, centeredRectFootprint, doorHinge, polygonBounds, wallRectFootprint, wallSideOfBounds, type SandboxBaseObject, type SandboxPolygon } from '../../lib/layout-sandbox';
 
 // Re-centers a door/window's footprint on a new width without disturbing
 // which wall it's on or how far it projects into the room — reuses the same
@@ -42,6 +42,14 @@ export function InfrastructureInspector({ object, room, onUpdate, onResize, onDe
       {object.kind === 'door' && object.door && (
         <>
           <label><span className="field-label">Clear width (in)</span><input className="field-input" type="number" min="24" value={object.door.clearWidthIn} onChange={(e) => onUpdate((current) => ({ ...current, door: { ...current.door!, clearWidthIn: Number(e.target.value) || 24 } }))} /></label>
+          <label>
+            <span className="field-label">Hinge side</span>
+            <select className="field-input" value={doorHinge(object)} onChange={(e) => onUpdate((current) => ({ ...current, door: { ...current.door!, hinge: e.target.value === 'end' ? 'end' : 'start' } }))}>
+              <option value="start">{side === 'top' || side === 'bottom' ? 'West end' : 'North end'}</option>
+              <option value="end">{side === 'top' || side === 'bottom' ? 'East end' : 'South end'}</option>
+            </select>
+            <small>{DOOR_HINGE_CLEARANCE_FT} ft beside the hinge is kept clear of benches.</small>
+          </label>
           <label className="ls-check"><input type="checkbox" checked={object.door.isExit} onChange={(e) => onUpdate((current) => ({ ...current, door: { ...current.door!, isExit: e.target.checked } }))} /> Is exit</label>
         </>
       )}

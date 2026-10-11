@@ -6,7 +6,7 @@ describe('questionnaire regressions', () => {
   it('selects a filtered group atomically without losing existing or zero run counts', () => {
     const selected = selectProtocols({ operations: ['outside', 'a'], protocol_runs_per_week: { outside: 7, a: 0 } }, [{ value: 'a' }, { value: 'b', operationId: 'miniprep' }], true);
     expect(selected.operations).toEqual(['outside', 'a', 'b']);
-    expect(selected.protocol_runs_per_week).toEqual({ outside: 7, a: 0, b: 1 });
+    expect(selected.protocol_runs_per_week).toEqual({ outside: 7, a: 0, b: 5 });
     expect(selected.protocol_operation_by_id).toEqual({ b: 'miniprep' });
     const cleared = selectProtocols(selected, [{ value: 'a' }, { value: 'b' }], false);
     expect(cleared.operations).toEqual(['outside']);

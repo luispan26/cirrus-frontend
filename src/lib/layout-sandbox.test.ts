@@ -26,6 +26,8 @@ import {
   buildBenchPlacementGeometryInput,
   buildLayoutGeometryInput,
   centeredRectFootprint,
+  computeDoorSwing,
+  doorHingeClearanceRectFt,
   fixtureFootprint,
   sandboxFixturesFromBenchPlacement,
   parseSandboxLayout,
@@ -418,5 +420,45 @@ describe('6" sandbox grid', () => {
     const layout: SandboxLayout = { ...structuredClone(EMPTY_SANDBOX_LAYOUT), fixtures: [bench('east', (40 - 6) / SANDBOX_GRID_FT, 10)] };
     const resized = resizeRoom(layout, { widthFt: 44, heightFt: 30 });
     expect(resized.fixtures[0].x * SANDBOX_GRID_FT + 6).toBe(44);
+  });
+});
+
+describe('door hinge', () => {
+  const door = (id: string, left: number, top: number, right: number, bottom: number, hinge?: 'start' | 'end'): SandboxBaseObject => ({
+    id, kind: 'door', name: id, footprint: { points: [{ x: left, y: top }, { x: right, y: top }, { x: right, y: bottom }, { x: left, y: bottom }] }, door: { clearWidthIn: 36, isExit: true, hinge },
+  });
+  const room = ONE_FOOT_ROOM;
+
+  test('the swing is hinged at the chosen end; a door with no hinge keeps the old start-end drawing', () => {
+    const north = door('n', 12, 0, 15, 0.5);
+    expect(computeDoorSwing(north, room)!.hinge).toEqual({ x: 12, y: 0 });
+    expect(computeDoorSwing({ ...north, door: { ...north.door!, hinge: 'end' } }, room)!.hinge).toEqual({ x: 15, y: 0 });
+    const east = door('e', 39.5, 20, 40, 23, 'end');
+    expect(computeDoorSwing(east, room)!.hinge).toEqual({ x: 40, y: 23 });
+  });
+
+  test('1.5 ft beside the hinge, as deep as the door is wide', () => {
+    expect(doorHingeClearanceRectFt(door('n', 12, 0, 15, 0.5, 'start'), room)).toEqual({ left: 10.5, right: 12, top: 0, bottom: 3 });
+    expect(doorHingeClearanceRectFt(door('s', 12, 29.5, 15, 30, 'end'), room)).toEqual({ left: 15, right: 16.5, top: 27, bottom: 30 });
+    expect(doorHingeClearanceRectFt(door('e', 39.5, 20, 40, 23, 'start'), room)).toEqual({ left: 37, right: 40, top: 18.5, bottom: 20 });
+  });
+
+  test('a strip that would run past the room corner is cut off', () => {
+    expect(doorHingeClearanceRectFt(door('c', 0.5, 0, 3.5, 0.5, 'start'), room)).toEqual({ left: 0, right: 0.5, top: 0, bottom: 3 });
+    expect(doorHingeClearanceRectFt(door('c', 0, 0, 3, 0.5, 'start'), room)).toBeNull();
+  });
+
+  test('a fixture on the hinge strip is flagged; the same fixture on the other side is not', () => {
+    const bench: SandboxFixture = { instanceId: 'b', kind: 'bench', name: 'Bench', x: 10.5, y: 0.5, widthFt: 1, depthFt: 1, orientation: 0 };
+    const withHinge = (hinge: 'start' | 'end') => validateSandboxLayout({ ...structuredClone(EMPTY_SANDBOX_LAYOUT), room, fixtures: [bench], baseObjects: [door('d', 12, 0, 15, 0.5, hinge)] }).map((v) => v.id);
+    expect(withHinge('start')).toContain('door-hinge-d');
+    expect(withHinge('end')).not.toContain('door-hinge-d');
+  });
+
+  test('the geometry sent to the backend names the hinge of each exit door by one of its cells', () => {
+    const layout: SandboxLayout = { ...structuredClone(EMPTY_SANDBOX_LAYOUT), room, baseObjects: [door('a', 12, 0, 15, 0.5, 'end'), door('b', 39.5, 20, 40, 23)] };
+    const geometry = buildLayoutGeometryInput(layout);
+    expect(geometry.entranceHinges).toEqual([{ cell: 12, hinge: 'end' }, { cell: 20 * 40 + 39, hinge: 'start' }]);
+    for (const { cell } of geometry.entranceHinges) expect(geometry.entranceCells).toContain(cell);
   });
 });

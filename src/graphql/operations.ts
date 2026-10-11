@@ -613,6 +613,21 @@ export const REMOVE_STEP_EQUIPMENT_MAPPING_MUTATION = gql`
   }
 `;
 
+// Every selected protocol's mapped equipment and per-run seconds on it, for
+// the questionnaire's equipment step (lib/zone-equipment.ts).
+export const EQUIPMENT_USAGE_FOR_PROTOCOLS_QUERY = gql`
+  query EquipmentUsageForProtocols($protocolIds: [ID!]!) {
+    equipmentUsageForProtocols(protocolIds: $protocolIds) {
+      protocolId
+      durationsAvailable
+      usage {
+        equipmentId
+        totalDurationSeconds
+      }
+    }
+  }
+`;
+
 export const EQUIPMENT_USAGE_FOR_PROTOCOL_QUERY = gql`
   query EquipmentUsageForProtocol($protocolId: ID!) {
     equipmentUsageForProtocol(protocolId: $protocolId) {

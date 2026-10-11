@@ -43,13 +43,22 @@ export interface UtilityMeta {
 // actually tie into — a laminar-flow hood usually doesn't need room exhaust,
 // and a BSC may recirculate rather than exhaust at all.
 export type VentilationCategory = 'hvac_supply' | 'hvac_return' | 'general_exhaust' | 'local_exhaust_connection';
+// Which end of a door its hinge is on, along the wall: 'start' = the end with
+// the lower x (top/bottom walls) or lower y (left/right walls), 'end' = the
+// other. Same meaning as the backend's DoorHinge. A door saved before hinges
+// existed was always drawn hinged at its start end, so a missing hinge means
+// 'start'.
+export type DoorHinge = 'start' | 'end';
+export function doorHinge(object: SandboxBaseObject): DoorHinge {
+  return object.door?.hinge === 'end' ? 'end' : 'start';
+}
 export interface SandboxBaseObject {
   id: string;
   kind: 'wall' | 'column' | 'shaft' | 'casework' | 'door' | 'window' | 'sink' | 'fume_hood' | 'bsc' | 'electrical_panel' | 'utility_connection' | 'electrical_point' | 'plumbing_point' | 'ventilation_point' | 'restricted_region';
   name: string;
   footprint: SandboxPolygon;
   utility?: UtilityMeta;
-  door?: { clearWidthIn: number; isExit: boolean };
+  door?: { clearWidthIn: number; isExit: boolean; hinge?: DoorHinge };
   electrical?: { voltage: 120 | 208 | 240 | 'other'; voltageOther?: string; amperage: number; phase: 'single' | 'three'; receptacleCount: number; dedicated: boolean; emergencyPower: boolean };
   plumbing?: { coldWater: boolean; hotWater: boolean; drain: boolean; diWater: boolean; processWaste: boolean; flowGpm?: number };
   ventilation?: { category: VentilationCategory; cfm?: number; ducted: boolean };
@@ -199,6 +208,30 @@ export function doorClearanceRectFt(door: SandboxBaseObject, room: { widthFt: nu
     case 'bottom': return { left: a0, right: a1, top: room.heightFt - depth, bottom: room.heightFt };
     case 'left': return { left: 0, right: depth, top: a0, bottom: a1 };
     case 'right': return { left: room.widthFt - depth, right: room.widthFt, top: a0, bottom: a1 };
+  }
+}
+
+// Kept clear beside a door's hinge (the swinging side): this wide along the
+// wall past the hinge end, and as deep as the door is wide — the same strip
+// the backend keeps free of benches (room-circulation.ts
+// computeHingeClearance). The part outside the room is cut off.
+export const DOOR_HINGE_CLEARANCE_FT = 1.5;
+export function doorHingeClearanceRectFt(door: SandboxBaseObject, room: { widthFt: number; heightFt: number }): RectFt | null {
+  if (!door.footprint.points.length) return null;
+  const b = polygonBounds(door.footprint);
+  const side = wallSideOfBounds(b, room);
+  const alongWall = side === 'top' || side === 'bottom';
+  const span = alongWall ? b.right - b.left : b.bottom - b.top;
+  const a0 = alongWall ? b.left : b.top, a1 = alongWall ? b.right : b.bottom;
+  const roomLength = alongWall ? room.widthFt : room.heightFt;
+  const from = Math.max(0, doorHinge(door) === 'start' ? a0 - DOOR_HINGE_CLEARANCE_FT : a1);
+  const to = Math.min(roomLength, doorHinge(door) === 'start' ? a0 : a1 + DOOR_HINGE_CLEARANCE_FT);
+  if (to <= from) return null;
+  switch (side) {
+    case 'top': return { left: from, right: to, top: 0, bottom: span };
+    case 'bottom': return { left: from, right: to, top: room.heightFt - span, bottom: room.heightFt };
+    case 'left': return { left: 0, right: span, top: from, bottom: to };
+    case 'right': return { left: room.widthFt - span, right: room.widthFt, top: from, bottom: to };
   }
 }
 
@@ -395,8 +428,10 @@ export function computeDoorSwing(object: SandboxBaseObject, room: RoomSize): Doo
   const normal = side === 'top' ? { x: 0, y: 1 } : side === 'bottom' ? { x: 0, y: -1 } : side === 'left' ? { x: 1, y: 0 } : { x: -1, y: 0 };
   const wallCoord = side === 'top' ? 0 : side === 'bottom' ? room.heightFt : side === 'left' ? 0 : room.widthFt;
   const center = alongWall ? { x: centerAlong, y: wallCoord } : { x: wallCoord, y: centerAlong };
-  const hinge = { x: center.x - (dir.x * doorWidthFt) / 2, y: center.y - (dir.y * doorWidthFt) / 2 };
-  const jamb = { x: center.x + (dir.x * doorWidthFt) / 2, y: center.y + (dir.y * doorWidthFt) / 2 };
+  // 'start' hinges at the lower-coordinate end of the opening, 'end' at the other.
+  const hingeSign = doorHinge(object) === 'start' ? -1 : 1;
+  const hinge = { x: center.x + hingeSign * (dir.x * doorWidthFt) / 2, y: center.y + hingeSign * (dir.y * doorWidthFt) / 2 };
+  const jamb = { x: center.x - hingeSign * (dir.x * doorWidthFt) / 2, y: center.y - hingeSign * (dir.y * doorWidthFt) / 2 };
   const leafTip = { x: hinge.x + normal.x * doorWidthFt, y: hinge.y + normal.y * doorWidthFt };
   return { hinge, leafTip, jamb, arcPoints: arcBetween(hinge, leafTip, jamb, doorWidthFt) };
 }
@@ -600,6 +635,9 @@ export interface LayoutGeometryInput {
   roomHeight: number;
   blockedCells: number[];
   entranceCells: number[];
+  // The hinge end of each exit door, naming one cell of it — the backend
+  // keeps a strip beside every hinge clear.
+  entranceHinges: Array<{ cell: number; hinge: DoorHinge }>;
   sinkCells: number[];
 }
 
@@ -643,13 +681,16 @@ export function buildLayoutGeometryInput(layout: SandboxLayout): LayoutGeometryI
 
   const blockedCells = new Set<number>();
   const entranceCells = new Set<number>();
+  const entranceHinges: LayoutGeometryInput['entranceHinges'] = [];
   const sinkCells = new Set<number>();
 
   for (const object of layout.baseObjects) {
     if (object.kind === 'door' && object.door?.isExit) {
       // An exit door is the way through the wall it's set into — it must
       // stay clear, not become another obstacle.
-      cellsCoveredBy(object).forEach((c) => entranceCells.add(c));
+      const doorCells = cellsCoveredBy(object);
+      doorCells.forEach((c) => entranceCells.add(c));
+      if (doorCells.length > 0) entranceHinges.push({ cell: doorCells[0], hinge: doorHinge(object) });
       continue;
     }
     if (blocksFloorSpace(object.kind)) {
@@ -667,6 +708,7 @@ export function buildLayoutGeometryInput(layout: SandboxLayout): LayoutGeometryI
     roomHeight,
     blockedCells: [...blockedCells],
     entranceCells: [...entranceCells],
+    entranceHinges,
     sinkCells: [...sinkCells],
   };
 }
@@ -735,6 +777,11 @@ export function validateSandboxLayout(layout: SandboxLayout): LayoutViolation[] 
     const intruders = layout.fixtures.filter((fixture) => overlaps(zone, fixtureRectFt(fixture, gridFt)));
     if (intruders.length > 0) {
       violations.push({ id: `door-${door.id}`, severity: 'error', layer: 'validation', objectIds: intruders.map((f) => f.instanceId), message: `${intruders.map((f) => f.name).join(', ')} ${intruders.length === 1 ? 'sits' : 'sit'} in ${door.name}'s clearance (swing + ${DOOR_LANDING_FT} ft landing).` });
+    }
+    const hingeZone = doorHingeClearanceRectFt(door, layout.room);
+    const hingeIntruders = hingeZone ? layout.fixtures.filter((fixture) => overlaps(hingeZone, fixtureRectFt(fixture, gridFt))) : [];
+    if (hingeIntruders.length > 0) {
+      violations.push({ id: `door-hinge-${door.id}`, severity: 'error', layer: 'validation', objectIds: hingeIntruders.map((f) => f.instanceId), message: `${hingeIntruders.map((f) => f.name).join(', ')} ${hingeIntruders.length === 1 ? 'sits' : 'sit'} beside ${door.name}'s hinge (${DOOR_HINGE_CLEARANCE_FT} ft clearance on the swinging side).` });
     }
   }
   return violations;

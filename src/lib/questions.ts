@@ -3,6 +3,10 @@ export type QuestionType = 'radio' | 'protocol_plan' | 'space' | 'budget' | 'che
 // Mirrors the backend's WallSide (layout-generation/intake-payload.type.ts)
 // — kept in sync by hand, same convention as GENERAL_LAB_LIST_KEY etc. below.
 export type WallSide = 'N' | 'S' | 'E' | 'W';
+// Which end of the door its hinge is on, along the wall (mirrors the
+// backend's DoorHinge): 'start' = the west end of a north/south wall door or
+// the north end of an east/west wall door, 'end' = the other end.
+export type DoorHinge = 'start' | 'end';
 
 export interface QuestionOption {
   v: string;
@@ -42,8 +46,10 @@ export interface Question {
 
 export type Answers = Record<string, unknown>;
 
-// Budget -> biosafety -> biomaterials -> equipment -> space -> protocols ->
-// layout preferences. Budget warnings are advisory. Arrangement settings
+// Budget -> biosafety -> biomaterials -> protocols -> equipment -> space ->
+// layout preferences. Equipment comes after protocols because every
+// selected protocol's equipment is placed in its zone there (see
+// zone-equipment.ts). Budget warnings are advisory. Arrangement settings
 // round-trip through the sandbox; other preferences remain in the form.
 // Protocol selections are keyed by protocol ID, with frequencies kept per
 // protocol and aggregated to catalog operations in buildFinalIntakeJson.
@@ -198,13 +204,13 @@ export const QS: Question[] = [
   { id: 'budget', n: 1, t: 'What is your equipment budget?', h: 'Set a desired spend and an absolute maximum for new equipment.', type: 'budget' },
   { id: 'biosafety_level', n: 2, t: 'What biosafety level is your labspace compliant with?', h: 'Adds that level\'s required equipment to your Basic Lab Equipment List', type: 'radio', opts: BIOSAFETY_LEVEL_OPTS },
   { id: 'biomaterials', n: 3, t: 'What type of biomaterials would you like to work with?', h: 'Each one adds its own basic equipment set to your Basic Lab Equipment List', type: 'checklist', opts: BIOMATERIAL_OPTS },
-  { id: 'basic_lab_equipment', n: 4, t: 'Plan your Basic Lab Equipment', h: 'Add anything you already own or still need, then review the computed Basic Lab Equipment List — adjust quantities or remove anything you don’t need', type: 'equipment_plan' },
-  { id: 'space', n: 5, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
   {
-    id: 'operations', n: 6, t: 'Plan your Protocols',
+    id: 'operations', n: 4, t: 'Plan your Protocols',
     h: 'Recommended protocols for your selected biomaterials are added automatically — add or remove any protocol below, and set expected weekly runs for each.',
     type: 'protocol_plan', opts: OPERATION_OPTS,
   },
+  { id: 'basic_lab_equipment', n: 5, t: 'Plan your equipment', h: 'Your equipment by zone — from your biomaterials, biosafety level and protocols. Add anything you already own or still need, adjust quantities, or replace a protocol’s equipment.', type: 'equipment_plan' },
+  { id: 'space', n: 6, t: 'Define your space', h: 'Upload a floor plan, or build the room in the layout sandbox', type: 'space' },
   {
     id: 'layout_prefs', n: 7, t: 'Layout preferences', type: 'layout_prefs',
     h: 'Optional — tune how the generator lays out benches, and where the door goes. Leave anything here alone and the generator decides.',
@@ -219,20 +225,27 @@ export const INTAKE_FIELD_KEYS = [
   'operations', 'protocol_runs_per_week', 'protocol_operation_by_id',
   'protocol_essential_removed', 'protocol_manual_ids',
   'budget_desired', 'budget_max', 'budget_scope',
-  'door_wall', 'door_offset_ft',
+  'door_wall', 'door_offset_ft', 'door_hinge',
   // The room built in the sandbox (see LayoutSandboxPage's useInIntake):
   // its drawn objects, and the same room as grid cells for the generator.
   'space_sandbox_layout', 'space_geometry',
   // How the generator lays out benches (Layout preferences step).
   'layout_mode', 'layout_main_wall', 'layout_same_direction', 'layout_wall_benches', 'layout_working_space_pct',
   'layout_separate_zones', 'layout_optimizer_balance',
-  // Per-equipment zone reassignment and "fixed" flags (equipment step).
-  'equipment_zones', 'equipment_fixed',
+  // Per-equipment zone reassignment and "fixed" flags (equipment step):
+  // equipment_zones is the zone of each Owned / New pick,
+  // equipment_zone_moves moves basic-list items (see zone-equipment.ts).
+  'equipment_zones', 'equipment_fixed', 'equipment_zone_moves',
+  // Equipment swapped into a selected protocol for this lab only, and the
+  // protocols basic_lab_equipment_final was last computed for.
+  'protocol_equipment_replacements', 'basic_lab_equipment_protocol_ids',
 ];
 
 // Defaults for the generator's layout settings — the same defaults the
 // backend applies (resolvePlanOptions in layout-generator.service.ts).
 export const DEFAULT_WORKING_SPACE_PCT = 35;
+// Weekly runs every protocol starts with when it enters the selection.
+export const DEFAULT_RUNS_PER_WEEK = 5;
 export const LAYOUT_SETTING_DEFAULTS = { mode: 'max_fit' as const, sameDirection: true, wallBenches: false, workingSpacePct: DEFAULT_WORKING_SPACE_PCT, separateZones: false, optimizerBalance: 0.5 };
 
 // No steps are skipped today — there used to be a gating "does your space
@@ -296,7 +309,13 @@ export interface FinalIntakeJson {
   // computeBasicLabEquipment/applyBasicLabEquipmentOverrides below. sources
   // mirrors BasicLabEquipmentRow.sources, threaded through so the Lab
   // Design Report's BOM can reuse Q5's color-coded-by-source grouping.
-  basic_lab_equipment: { equipment_id: string; name: string; quantity: number; sources: string[] }[];
+  // Since Oct 2026 every line also carries its zone and the selected
+  // protocols using it there, and the list includes protocol equipment —
+  // the backend then uses it as the whole bill of materials (see
+  // finalEquipmentLines in zone-equipment.ts).
+  basic_lab_equipment: { equipment_id: string; name: string; quantity: number; sources: string[]; zone?: string; protocol_ids?: string[] }[];
+  // protocolId -> (mapped equipment -> replacement), for this lab only.
+  protocol_equipment_replacements: Record<string, Record<string, string>>;
   operations: string[];
   // Every protocol in Q5's final selection (essential-derived plus
   // manually-added, minus anything removed — see ComputedProtocolList in
@@ -360,7 +379,7 @@ export interface FinalIntakeJson {
   // (offsetFt, not offset_ft) — unlike the rest of this JSON, it is passed
   // straight through to LayoutGeneratorService's DoorSpec
   // (layout-generation/intake-payload.type.ts), not re-parsed in between.
-  door?: { wall: WallSide; offsetFt: number };
+  door?: { wall: WallSide; offsetFt: number; hinge: DoorHinge };
 }
 
 export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
@@ -397,7 +416,8 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
     bsl: 'BSL-1',
     biosafety_level: (a.biosafety_level as string) || null,
     biomaterials: ((a.biomaterials as string[]) || []).filter((id) => BIOMATERIAL_OPTS.some((option) => option.v === id)),
-    basic_lab_equipment: (a.basic_lab_equipment_final as { equipment_id: string; name: string; quantity: number; sources: string[] }[]) || [],
+    basic_lab_equipment: (a.basic_lab_equipment_final as FinalIntakeJson['basic_lab_equipment']) || [],
+    protocol_equipment_replacements: (a.protocol_equipment_replacements as Record<string, Record<string, string>>) || {},
     operations: resolveOperations(a),
     selected_protocols: rawSelectedProtocolIds.map((protocolId) => ({ protocol_id: protocolId, runs_per_week: rawRunsPerWeek[protocolId] ?? 0 })),
     existing_equipment: Object.entries(existingMeta).map(([equipment_id, meta]) => ({ equipment_id, name: meta.name, count: Math.max(1, meta.count ?? 1) })),
@@ -442,7 +462,9 @@ function buildLayoutPrefsJson(a: Answers): Pick<FinalIntakeJson, 'door'> {
 
   const doorWall = a.door_wall as WallSide | undefined;
   if (doorWall) {
-    result.door = { wall: doorWall, offsetFt: Number(a.door_offset_ft) || 0 };
+    // The generator keeps 1.5 ft clear beside the hinge; with no choice made
+    // the hinge is at the start end, the way the sandbox draws a new door.
+    result.door = { wall: doorWall, offsetFt: Number(a.door_offset_ft) || 0, hinge: a.door_hinge === 'end' ? 'end' : 'start' };
   }
 
   return result;

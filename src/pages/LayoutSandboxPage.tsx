@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@apollo/client/react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { LAYOUT_SANDBOX_CAPABILITIES_QUERY, MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION } from '../graphql/operations';
-import { isAutoPlacedBench, BENCH_DEPTH_FT, BENCH_WIDTH_FT, EMPTY_SANDBOX_LAYOUT, buildBenchPlacementGeometryInput, canPlaceBaseObject, canPlaceFixture, centeredRectFootprint, computePlacementAvailability, fixtureFootprint, fixtureRectFt, offsetAlongWall, parseSandboxLayout, pointOnWall, polygonBounds, resizeRoom, SANDBOX_GRID_FT, sandboxFixturesFromBenchPlacement, validateSandboxLayout, wallRectFootprint, wallSideOfBounds, withGridFt, type FixtureClearance, type FixtureKind, type FixtureOrientation, type SandboxBaseObject, type SandboxFixture, type SandboxLayer, type SandboxLayout, type SandboxPolygon, type WallSide } from '../lib/layout-sandbox';
+import { isAutoPlacedBench, BENCH_DEPTH_FT, BENCH_WIDTH_FT, EMPTY_SANDBOX_LAYOUT, buildBenchPlacementGeometryInput, canPlaceBaseObject, canPlaceFixture, centeredRectFootprint, computePlacementAvailability, doorHinge, fixtureFootprint, fixtureRectFt, offsetAlongWall, parseSandboxLayout, pointOnWall, polygonBounds, resizeRoom, SANDBOX_GRID_FT, sandboxFixturesFromBenchPlacement, validateSandboxLayout, wallRectFootprint, wallSideOfBounds, withGridFt, type DoorHinge, type FixtureClearance, type FixtureKind, type FixtureOrientation, type SandboxBaseObject, type SandboxFixture, type SandboxLayer, type SandboxLayout, type SandboxPolygon, type WallSide } from '../lib/layout-sandbox';
 import { Logo } from '../components/Logo';
 import { CanvasLayers } from '../components/sandbox/CanvasLayers';
 import { FixtureDetailsPanel } from '../components/sandbox/FixtureDetailsPanel';
@@ -399,7 +399,7 @@ export function LayoutSandboxPage() {
     const roomLayout = { ...layout, fixtures: keptFixtures };
     const geometry = { ...buildBenchPlacementGeometryInput(layout), cellSizeInches: Math.round(layout.room.gridFt * 12) };
     const exitDoor = layout.baseObjects.find((object) => object.kind === 'door' && object.door?.isExit && object.footprint.points.length > 0);
-    let door: { wall: 'N' | 'S' | 'E' | 'W'; offsetFt: number } | undefined;
+    let door: { wall: 'N' | 'S' | 'E' | 'W'; offsetFt: number; hinge: DoorHinge } | undefined;
     if (exitDoor) {
       const bounds = polygonBounds(exitDoor.footprint);
       const side = wallSideOfBounds(bounds, layout.room);
@@ -410,7 +410,7 @@ export function LayoutSandboxPage() {
       // (x for top/bottom <-> N/S, y for left/right <-> W/E), so it carries
       // over unchanged; only the label needs translating.
       const SANDBOX_WALL_TO_INTAKE: Record<WallSide, 'N' | 'S' | 'E' | 'W'> = { top: 'N', bottom: 'S', left: 'W', right: 'E' };
-      door = { wall: SANDBOX_WALL_TO_INTAKE[side], offsetFt: Math.round(offsetAlongWall(side, center) * 100) / 100 };
+      door = { wall: SANDBOX_WALL_TO_INTAKE[side], offsetFt: Math.round(offsetAlongWall(side, center) * 100) / 100, hinge: doorHinge(exitDoor) };
     }
     navigate('/questions', { state: { spaceFromSandbox: { width_ft: layout.room.widthFt, height_ft: layout.room.heightFt, door, layout: roomLayout, geometry, arrangement } } });
   }
@@ -424,7 +424,7 @@ export function LayoutSandboxPage() {
     setBackendNotice({ kind: 'progress', text: 'Fitting benches…' });
     try {
       const response = await maximizeZonesAndBenchesForSandbox({
-        variables: { input: { roomWidth: geometry.roomWidth, roomHeight: geometry.roomHeight, blockedCells: geometry.blockedCells, entranceCells: geometry.entranceCells, sinkCells: geometry.sinkCells, cellSizeInches: Math.round(layout.room.gridFt * 12), options: { mode: arrangement.layout_mode, mainWall: arrangement.layout_main_wall, sameDirection: arrangement.layout_same_direction, wallBenches: arrangement.layout_wall_benches } } },
+        variables: { input: { roomWidth: geometry.roomWidth, roomHeight: geometry.roomHeight, blockedCells: geometry.blockedCells, entranceCells: geometry.entranceCells, entranceHinges: geometry.entranceHinges, sinkCells: geometry.sinkCells, cellSizeInches: Math.round(layout.room.gridFt * 12), options: { mode: arrangement.layout_mode, mainWall: arrangement.layout_main_wall, sameDirection: arrangement.layout_same_direction, wallBenches: arrangement.layout_wall_benches } } },
       });
       const result = response.data?.maximizeZonesAndBenchesForSandbox;
       if (!result) throw new Error('The server did not return a result');
@@ -476,7 +476,7 @@ export function LayoutSandboxPage() {
     let object: SandboxBaseObject;
     if (kind === 'door' || kind === 'window') {
       const { footprint } = wallRectFootprint(point, room, 3, kind === 'door' ? .5 : .3);
-      object = { id: `${kind}-${Date.now()}`, kind, name: kind === 'door' ? 'Door' : 'Window', footprint, door: kind === 'door' ? { clearWidthIn: 36, isExit: true } : undefined };
+      object = { id: `${kind}-${Date.now()}`, kind, name: kind === 'door' ? 'Door' : 'Window', footprint, door: kind === 'door' ? { clearWidthIn: 36, isExit: true, hinge: 'start' } : undefined };
     } else {
       const footprint = centeredRectFootprint(point, 2, 2);
       object = { id: `${kind}-${Date.now()}`, kind, name: kind === 'restricted_region' ? 'Restricted region' : 'Column', footprint };
