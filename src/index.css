@@ -402,6 +402,7 @@ h1,h2,h3,h4,h5,h6{font-family:var(--head);font-weight:500;letter-spacing:-.01em}
 .plan-zone-equipment summary { cursor: pointer; color: var(--dark); }
 .plan-zone-equipment ul { margin: 4px 0 0; padding-left: 16px; line-height: 1.6; }
 .plan-fixed { margin-left: 6px; font-size: 10px; color: #7B4FD6; border: 1px solid #7B4FD6; border-radius: 8px; padding: 0 5px; }
+.plan-unplaced { font-size: 11px; color: #b42318; border: 1px solid #b42318; border-radius: 8px; padding: 0 6px; margin-right: 4px; }
 .plan-add-zone { padding: 7px 12px; font-size: 12px; }
 .plan-settings { display: flex; flex-direction: column; gap: 7px; border: 1px solid var(--br); border-radius: 10px; padding: 10px 11px; background: #fff; }
 .plan-range { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--dark); }

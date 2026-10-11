@@ -3,8 +3,11 @@ import { INFRA_PALETTE } from './constants';
 import { baseObjectLayer } from './helpers';
 
 // The sandbox's top-level placement categories, walked in this order by the
-// guided flow's "first unanswered" CTA.
-export type PlacementCategory = 'infrastructure' | 'fixtures';
+// guided flow's "first unanswered" CTA. floorEquipment is the last
+// question, asked only when there is floor-standing equipment to place:
+// 'manual' = place it before generation (its list shows in the sidebar),
+// 'derived' = after generation (the report offers it then).
+export type PlacementCategory = 'infrastructure' | 'fixtures' | 'floorEquipment';
 export type PlacementMode = 'unanswered' | 'manual' | 'derived';
 export type CategoryModeState = Record<PlacementCategory, PlacementMode>;
 // Per-category subgroup keys: infrastructure uses INFRA_PALETTE's layer keys
@@ -13,33 +16,40 @@ export type CategoryModeState = Record<PlacementCategory, PlacementMode>;
 // space) — every key starts absent, which reads as false.
 export type SubSelectionState = Record<PlacementCategory, Record<string, boolean>>;
 
-export const CATEGORY_ORDER: PlacementCategory[] = ['infrastructure', 'fixtures'];
+export const CATEGORY_ORDER: PlacementCategory[] = ['infrastructure', 'fixtures', 'floorEquipment'];
+
+// The questions this sandbox asks: floor equipment only when there is some.
+export function categoryOrder(hasFloorEquipment: boolean): PlacementCategory[] {
+  return CATEGORY_ORDER.filter((category) => category !== 'floorEquipment' || hasFloorEquipment);
+}
 
 export const CATEGORY_LABELS: Record<PlacementCategory, string> = {
   infrastructure: 'Infrastructure',
   fixtures: 'Fixtures',
+  floorEquipment: 'Floor equipment',
 };
 
 export const CATEGORY_QUESTIONS: Record<PlacementCategory, string> = {
   infrastructure: 'Do you already know where your doors, windows and columns go?',
   fixtures: 'Do you already know where your benches and other fixtures go?',
+  floorEquipment: 'When do you want to place your floor-standing equipment (cold storage, hoods)?',
 };
 
 export const CATEGORY_CTA_VERB: Record<PlacementCategory, string> = {
-  infrastructure: 'Place', fixtures: 'Place',
+  infrastructure: 'Place', fixtures: 'Place', floorEquipment: 'Plan',
 };
 
 export const FIXTURE_SUBGROUP_KINDS: FixtureKind[] = ['bench', 'laminarHood', 'sink', 'cabinet', 'refrigerator', 'door', 'waste'];
 
 export function emptyCategoryModeState(): CategoryModeState {
-  return { infrastructure: 'unanswered', fixtures: 'unanswered' };
+  return { infrastructure: 'unanswered', fixtures: 'unanswered', floorEquipment: 'unanswered' };
 }
 export function emptySubSelectionState(): SubSelectionState {
-  return { infrastructure: {}, fixtures: {} };
+  return { infrastructure: {}, fixtures: {}, floorEquipment: {} };
 }
 
-export function firstUnanswered(modes: CategoryModeState): PlacementCategory | null {
-  return CATEGORY_ORDER.find((category) => modes[category] === 'unanswered') ?? null;
+export function firstUnanswered(modes: CategoryModeState, order: PlacementCategory[] = CATEGORY_ORDER): PlacementCategory | null {
+  return order.find((category) => (modes[category] ?? 'unanswered') === 'unanswered') ?? null;
 }
 
 // Whether a category's palette should render in the left sidebar at all —
@@ -77,11 +87,14 @@ export function seedCategoryModesFrom(layout: SandboxLayout): { modes: CategoryM
     for (const group of INFRA_PALETTE) if (infraLayers.has(group.layer)) subSelection.infrastructure[group.layer] = true;
   }
 
-  const fixtureKinds = new Set(layout.fixtures.map((fixture) => fixture.kind));
+  const fixtureKinds = new Set(layout.fixtures.filter((fixture) => !fixture.equipmentId).map((fixture) => fixture.kind));
   if (fixtureKinds.size > 0) {
     modes.fixtures = 'manual';
     for (const kind of fixtureKinds) subSelection.fixtures[kind] = true;
   }
+
+  // Floor equipment already in the room was placed before generation.
+  if (layout.fixtures.some((fixture) => fixture.equipmentId)) modes.floorEquipment = 'manual';
 
   return { modes, subSelection };
 }

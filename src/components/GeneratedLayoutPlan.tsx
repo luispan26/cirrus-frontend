@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation } from '@apollo/client/react';
 import { BENCH_SURFACE_AREA_SQFT, parseSandboxLayout, type SandboxLayout } from '../lib/layout-sandbox';
 import { benchContents, readLabPlan, WALL_LABELS, zoneColor, type LabPlan, type PlanOptions, type PlanWall } from '../lib/lab-plan';
-import { UPDATE_REPORT_LAYOUT_MUTATION } from '../graphql/operations';
+import { DISMISS_FLOOR_EQUIPMENT_PROMPT_MUTATION, UPDATE_REPORT_LAYOUT_MUTATION } from '../graphql/operations';
 import { LayoutFloorPlan } from './LayoutFloorPlan';
 
 type LegacyDecisionReport = {
@@ -24,13 +24,16 @@ export type GeneratedLayout = {
 // The report's generated floor plan. Layouts generated with workflow zones
 // (layout.plan present) get the zone editor; older reports still show the
 // station-colored plan they were generated with.
-export function GeneratedLayoutPlan({ value, reportId, onUpdated }: { value: unknown; reportId?: string | null; onUpdated?: (generated: GeneratedLayout, reportData?: Record<string, unknown>) => void }) {
+// floorPromptPending: the user chose to place floor equipment after
+// generation (or never answered) and hasn't been asked yet — the report
+// asks once, in a pop-up.
+export function GeneratedLayoutPlan({ value, reportId, onUpdated, floorPromptPending }: { value: unknown; reportId?: string | null; onUpdated?: (generated: GeneratedLayout, reportData?: Record<string, unknown>) => void; floorPromptPending?: boolean }) {
   const generated = value && typeof value === 'object' ? value as GeneratedLayout : null;
   const layout = parseSandboxLayout(generated?.data);
   const plan = readLabPlan(generated?.data);
   if (!generated || !layout) return null;
   if (!plan) return <LegacyLayoutPlan generated={generated} layout={layout} />;
-  return <ZonedLayoutPlan generated={generated} layout={layout} plan={plan} reportId={reportId ?? null} onUpdated={onUpdated} />;
+  return <ZonedLayoutPlan generated={generated} layout={layout} plan={plan} reportId={reportId ?? null} onUpdated={onUpdated} floorPromptPending={!!floorPromptPending} />;
 }
 
 interface EditableZone {
@@ -52,7 +55,7 @@ function settingsFromPlan(plan: LabPlan): SettingsDraft {
   return { mode, mainWall, sameDirection, wallBenches, workingSpacePct, zoneHeadroom: zoneHeadroom ?? 1.25, separateZonesWithAisles, optimizerBalance: optimizerBalance ?? 0.5 };
 }
 
-function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { generated: GeneratedLayout; layout: SandboxLayout; plan: LabPlan; reportId: string | null; onUpdated?: (generated: GeneratedLayout, reportData?: Record<string, unknown>) => void }) {
+function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated, floorPromptPending }: { generated: GeneratedLayout; layout: SandboxLayout; plan: LabPlan; reportId: string | null; onUpdated?: (generated: GeneratedLayout, reportData?: Record<string, unknown>) => void; floorPromptPending: boolean }) {
   const navigate = useNavigate();
   // Unplaced units with no zone are floor-standing equipment (placed by hand
   // in the sandbox); placements with no bench are the ones already placed.
@@ -68,6 +71,18 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
   const [settings, setSettings] = useState<SettingsDraft>(() => settingsFromPlan(plan));
   const [error, setError] = useState<string | null>(null);
   const [updateReportLayout, { loading: saving }] = useMutation<{ updateReportLayout: { id: string; data: Record<string, unknown> } }>(UPDATE_REPORT_LAYOUT_MUTATION);
+  const [dismissFloorPrompt] = useMutation(DISMISS_FLOOR_EQUIPMENT_PROMPT_MUTATION);
+  const floorToPlace = plan.floorItems.reduce((n, e) => n + Math.max(0, e.quantity - floorPlaced(e.equipmentId)), 0);
+  const [showFloorPrompt, setShowFloorPrompt] = useState(floorPromptPending && floorToPlace > 0 && !!reportId);
+  // Floor equipment is placed on the generated layout as it is: benches
+  // stay, the sandbox only takes floor equipment, and Done saves it here.
+  const location = useLocation();
+  const placeFloorEquipment = () => navigate('/layout-sandbox', { state: { loadLayout: generated.data, placeFloorForReport: reportId, returnState: location.state } });
+  async function answerFloorPrompt(placeNow: boolean) {
+    setShowFloorPrompt(false);
+    if (reportId) await dismissFloorPrompt({ variables: { reportId } }).catch(() => undefined);
+    if (placeNow) placeFloorEquipment();
+  }
 
   // A new plan (after a re-run, or a different report) resets every draft.
   useEffect(() => {
@@ -123,7 +138,9 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
         variables: {
           reportId,
           edit: {
-            options: settingsChanged ? { ...settings, mainWall: settings.mode === 'main_wall' ? settings.mainWall : null } : undefined,
+            // "Maximum fit" is no longer offered: any settings change runs
+            // rows from a main wall (none picked = the main door's wall).
+            options: settingsChanged ? { ...settings, mode: 'main_wall', mainWall: settings.mainWall } : undefined,
             zones: zones.map((z) => ({ id: z.id, name: z.name, workflows: z.workflows, benchIds: z.benchIds, mergedFrom: z.mergedFrom.length ? z.mergedFrom : undefined })),
           },
         },
@@ -239,20 +256,14 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
               <>
                 <div className="plan-side-title">Layout settings</div>
                 <div className="plan-settings">
-                  <label className="plan-radio"><input type="radio" checked={settings.mode === 'max_fit'} onChange={() => setSettings({ ...settings, mode: 'max_fit' })} />Maximum fit</label>
-                  {settings.mode === 'max_fit' && (
-                    <label className="plan-check"><input type="checkbox" checked={settings.sameDirection} onChange={(e) => setSettings({ ...settings, sameDirection: e.target.checked })} />All islands run the same direction</label>
-                  )}
-                  <label className="plan-radio"><input type="radio" checked={settings.mode === 'main_wall'} onChange={() => setSettings({ ...settings, mode: 'main_wall', mainWall: settings.mainWall ?? 'S' })} />Main wall</label>
-                  {settings.mode === 'main_wall' && (
-                    <>
-                      <select value={settings.mainWall ?? 'S'} onChange={(e) => setSettings({ ...settings, mainWall: e.target.value as PlanWall })} aria-label="Main wall">
-                        {(Object.keys(WALL_LABELS) as PlanWall[]).map((w) => <option key={w} value={w}>{WALL_LABELS[w]}</option>)}
-                      </select>
-                      <p className="plan-note">Rows of benches run straight out from the wall you pick (for example the wall with your main entrance), so every aisle leads toward it.</p>
-                    </>
-                  )}
-                  <label className="plan-check"><input type="checkbox" checked={settings.wallBenches} onChange={(e) => setSettings({ ...settings, wallBenches: e.target.checked })} />Also line the walls with benches</label>
+                  <label className="plan-range">
+                    Main wall
+                    <select value={settings.mode === 'main_wall' ? settings.mainWall ?? '' : ''} onChange={(e) => setSettings({ ...settings, mode: 'main_wall', mainWall: (e.target.value || null) as PlanWall | null })} aria-label="Main wall">
+                      <option value="">Wall with the main door</option>
+                      {(Object.keys(WALL_LABELS) as PlanWall[]).map((w) => <option key={w} value={w}>{WALL_LABELS[w]}</option>)}
+                    </select>
+                  </label>
+                  <p className="plan-note">Rows of benches run straight out from this wall, so every aisle leads toward it. Benches go along the walls only when the islands alone can't give every zone its space.</p>
                   <label className="plan-range">
                     Working space kept free on every bench: <b>{settings.workingSpacePct}%</b>
                     <input type="range" min={20} max={50} step={1} value={settings.workingSpacePct} onChange={(e) => setSettings({ ...settings, workingSpacePct: Number(e.target.value) })} />
@@ -293,14 +304,28 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated }: { gen
             <ul>{plan.floorItems.map((e) => {
               const placed = floorPlaced(e.equipmentId);
               const reason = floorUnplaced.find((u) => u.equipmentId === e.equipmentId)?.reason;
-              return <li key={e.equipmentId}>{e.name}{e.placeholderSize ? '' : ` (${e.widthFt} × ${e.depthFt} ft)`}: {placed >= e.quantity ? `placed${e.quantity > 1 ? ` (${e.quantity})` : ''}` : <>{placed} of {e.quantity} placed{reason && placed > 0 ? ` — ${reason}` : ''}</>}</li>;
+              return <li key={e.equipmentId}>{e.name}{e.placeholderSize ? '' : ` (${e.widthFt} × ${e.depthFt} ft)`}: {placed >= e.quantity ? `placed${e.quantity > 1 ? ` (${e.quantity})` : ''}` : <><b className="plan-unplaced">Unplaced</b> {placed} of {e.quantity} placed{reason ? ` — ${reason}` : ''}</>}</li>;
             })}</ul>
-            {plan.floorItems.some((e) => floorPlaced(e.equipmentId) < e.quantity) && (
+            {floorToPlace > 0 && (
               <p style={{ margin: '6px 0 0' }}>
-                Place these in the layout sandbox (Floor equipment, in its sidebar), use the room in your intake, then generate again.{' '}
-                <button type="button" className="btn-out" style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => navigate('/layout-sandbox', { state: { loadLayout: generated.data } })}>Place in sandbox</button>
+                Unplaced floor equipment can be placed on this layout's open floor — benches stay where they are.{' '}
+                {reportId && <button type="button" className="btn-out" style={{ padding: '2px 10px', fontSize: 12 }} onClick={placeFloorEquipment}>Place floor equipment</button>}
               </p>
             )}
+          </div>
+        )}
+        {showFloorPrompt && (
+          <div className="ls-placement-backdrop" role="dialog" aria-modal="true" aria-labelledby="floor-prompt-title">
+            <div className="ls-placement-question">
+              <div className="ls-placement-question-header" id="floor-prompt-title">Place your floor equipment</div>
+              <p className="ls-placement-question-text">
+                {floorToPlace} floor-standing unit{floorToPlace === 1 ? '' : 's'} (cold storage, hoods) {floorToPlace === 1 ? 'isn\u2019t' : 'aren\u2019t'} placed yet. Place {floorToPlace === 1 ? 'it' : 'them'} on this layout now? Benches stay where they are; anything you don’t place is listed as unplaced.
+              </p>
+              <div className="ls-placement-question-actions">
+                <button type="button" className="ls-qb-manual active" onClick={() => void answerFloorPrompt(true)}>Place my floor equipment now</button>
+                <button type="button" className="ls-qb-derive" onClick={() => void answerFloorPrompt(false)}>Skip</button>
+              </div>
+            </div>
           </div>
         )}
         <p className="generated-layout-caption">Cirrus places equipment on benches within its assigned zone, keeping the requested working space free. The optimizer can refine this starting arrangement. Every bench's working aisle, the aisles between rows and the cross-aisles form one connected walking area.</p>

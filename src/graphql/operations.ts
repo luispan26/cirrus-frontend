@@ -323,6 +323,27 @@ export const FLOOR_EQUIPMENT_FOR_INTAKE_QUERY = gql`
 
 // Zone and layout-setting edits from the report's floor plan; returns the
 // report with its re-run generated layout.
+// Floor-standing equipment placed in the sandbox after generation, saved
+// onto the report's layout (benches stay as generated). x/y count on a
+// gridFt grid (the sandbox's).
+export const PLACE_REPORT_FLOOR_EQUIPMENT_MUTATION = gql`
+  mutation PlaceReportFloorEquipment($reportId: ID!, $fixtures: JSON!, $gridFt: Float!) {
+    placeReportFloorEquipment(reportId: $reportId, fixtures: $fixtures, gridFt: $gridFt) {
+      id
+      data
+    }
+  }
+`;
+
+// Closes the report's "place your floor equipment now?" pop-up for good.
+export const DISMISS_FLOOR_EQUIPMENT_PROMPT_MUTATION = gql`
+  mutation DismissFloorEquipmentPrompt($reportId: ID!) {
+    dismissFloorEquipmentPrompt(reportId: $reportId) {
+      id
+    }
+  }
+`;
+
 export const UPDATE_REPORT_LAYOUT_MUTATION = gql`
   mutation UpdateReportLayout($reportId: ID!, $edit: LayoutEditInput!) {
     updateReportLayout(reportId: $reportId, edit: $edit) {

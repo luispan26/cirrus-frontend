@@ -16,7 +16,7 @@ export interface PlacementSubgroup {
 // centered overlay (see .ls-placement-backdrop in index.css) so it reads as
 // a real step in the flow, not a tooltip pinned to the canvas.
 export function PlacementQuestionBox({
-  category, index, subgroups, selected, onToggleSubgroup, onSelectAll, hoveredSubgroup, onHoverSubgroup, note, onCommit,
+  category, index, subgroups, selected, onToggleSubgroup, onSelectAll, hoveredSubgroup, onHoverSubgroup, note, onCommit, choices,
 }: {
   category: PlacementCategory;
   index: number;
@@ -28,6 +28,9 @@ export function PlacementQuestionBox({
   onHoverSubgroup: (key: string | null) => void;
   note?: string;
   onCommit: (mode: 'manual' | 'derived') => void;
+  // Own wording for the two buttons and the line under them (the floor
+  // equipment question: before / after generation).
+  choices?: { manual: string; derived: string; hint: string };
 }) {
   const hasGrid = subgroups.length > 0;
   const anySelected = !hasGrid || subgroups.some((s) => selected[s.key]);
@@ -63,10 +66,10 @@ export function PlacementQuestionBox({
         )}
         {note && <p className="ls-help">{note}</p>}
         <div className="ls-placement-question-actions">
-          <button type="button" className={`ls-qb-manual ${anySelected ? 'active' : ''}`} disabled={!anySelected} onClick={() => onCommit('manual')}>Manually place</button>
-          <button type="button" className="ls-qb-derive" disabled={allSelected} onClick={() => onCommit('derived')}>Derive from unassigned space</button>
+          <button type="button" className={`ls-qb-manual ${anySelected ? 'active' : ''}`} disabled={!anySelected} onClick={() => onCommit('manual')}>{choices?.manual ?? 'Manually place'}</button>
+          <button type="button" className="ls-qb-derive" disabled={allSelected} onClick={() => onCommit('derived')}>{choices?.derived ?? 'Derive from unassigned space'}</button>
         </div>
-        <p className="ls-help ls-placement-verb-hint">{hasGrid ? `${CATEGORY_CTA_VERB[category]} what you selected yourself — everything else is derived from unassigned space.` : 'Cirrus calculates and generates whatever you leave derived.'}</p>
+        <p className="ls-help ls-placement-verb-hint">{choices?.hint ?? (hasGrid ? `${CATEGORY_CTA_VERB[category]} what you selected yourself — everything else is derived from unassigned space.` : 'Cirrus calculates and generates whatever you leave derived.')}</p>
       </div>
     </div>
   );

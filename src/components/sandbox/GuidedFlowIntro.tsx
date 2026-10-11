@@ -2,13 +2,15 @@
 // the mechanics (green = you'll place it, red = Cirrus derives it, click
 // "Place <next category>" to move on) once, up front, instead of making the
 // user infer the flow from the first question box alone.
-export function GuidedFlowIntro({ onDismiss }: { onDismiss: () => void }) {
+// withFloorEquipment: a third, last question asks when to place the
+// floor-standing equipment (before or after generation).
+export function GuidedFlowIntro({ onDismiss, withFloorEquipment = false }: { onDismiss: () => void; withFloorEquipment?: boolean }) {
   return (
     <div className="ls-placement-backdrop">
       <div className="ls-placement-question ls-placement-intro">
         <div className="ls-placement-question-header">Building this room</div>
         <p className="ls-placement-question-text">
-          Cirrus will ask you two quick questions — infrastructure and fixtures.
+          Cirrus will ask you {withFloorEquipment ? 'three quick questions — infrastructure, fixtures, and when to place your floor equipment' : 'two quick questions — infrastructure and fixtures'}.
           For each one, mark what you already know the placement of. Anything you leave unmarked is derived: Cirrus calculates and generates those placements for you automatically, so you never have to place everything by hand.
         </p>
         <p className="ls-placement-question-text">

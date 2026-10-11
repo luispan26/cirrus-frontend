@@ -224,7 +224,7 @@ export function ReportView({ data, reportId, onLayoutUpdated }: { data: Record<s
         </>
       )}
 
-      <GeneratedLayoutPlan value={data.generated_layout} reportId={reportId} onUpdated={onLayoutUpdated} />
+      <GeneratedLayoutPlan value={data.generated_layout} reportId={reportId} onUpdated={onLayoutUpdated} floorPromptPending={data.floor_equipment_prompt === 'pending'} />
 
       <LayoutOptimization value={data.optimization} />
 

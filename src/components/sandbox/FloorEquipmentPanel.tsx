@@ -17,7 +17,10 @@ export function floorFixtureKind(item: { equipmentId: string; name: string }): F
   return 'cabinet';
 }
 
-export function FloorEquipmentPanel({ items, placedCount, startDrag, moveDrag, finishDrag, cancelDrag }: {
+// afterGeneration: placed on a report's generated layout (benches stay),
+// saved with the sandbox's Done button rather than used in the intake.
+export function FloorEquipmentPanel({ items, placedCount, startDrag, moveDrag, finishDrag, cancelDrag, afterGeneration = false }: {
+  afterGeneration?: boolean;
   items: FloorEquipmentItem[];
   placedCount: (equipmentId: string) => number;
   startDrag: (event: React.PointerEvent<HTMLDivElement>, spec: FloorEquipmentDragSpec) => void;
@@ -30,9 +33,13 @@ export function FloorEquipmentPanel({ items, placedCount, startDrag, moveDrag, f
   return <>
     <div className="ls-section-title">Floor equipment</div>
     <p className="ls-help">
-      {remaining > 0
-        ? <>Drag each item into the room. Put one side against where an aisle will run (not boxed in by walls or benches) so it can be walked to. Then use this room in your intake and generate again.</>
-        : <>All floor equipment is in the room. Use this room in your intake and generate again to plan around it.</>}
+      {afterGeneration
+        ? (remaining > 0
+          ? <>Drag each item onto open floor. Against a wall it needs 2 ft clear beside each side and 3 ft in front. Then click Done.</>
+          : <>All floor equipment is in the room. Click Done to save it to your report.</>)
+        : remaining > 0
+          ? <>Drag each item into the room. Against a wall, benches keep 2 ft clear beside each side and 3 ft in front of it. Anything you don’t place is listed as unplaced on your report.</>
+          : <>All floor equipment is in the room. Use this room in your intake — benches are planned around it.</>}
     </p>
     {items.map((item) => {
       const placed = placedCount(item.equipmentId);

@@ -51,6 +51,7 @@ export interface PlanEquipment {
   fixed: boolean;
   placeholderSize: boolean;
   sources: string[];
+  coldStorage?: boolean; // floor item tagged "Cold Storage" (fridge, freezer)
 }
 
 export interface PlanZone {

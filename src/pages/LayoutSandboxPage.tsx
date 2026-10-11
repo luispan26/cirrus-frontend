@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@apollo/client/react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LAYOUT_SANDBOX_CAPABILITIES_QUERY, MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION } from '../graphql/operations';
+import { LAYOUT_SANDBOX_CAPABILITIES_QUERY, MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION, PLACE_REPORT_FLOOR_EQUIPMENT_MUTATION } from '../graphql/operations';
 import { isAutoPlacedBench, BENCH_DEPTH_FT, BENCH_WIDTH_FT, EMPTY_SANDBOX_LAYOUT, buildBenchPlacementGeometryInput, canPlaceBaseObject, canPlaceFixture, centeredRectFootprint, computePlacementAvailability, doorHinge, fixtureFootprint, fixtureRectFt, offsetAlongWall, parseSandboxLayout, pointOnWall, polygonBounds, resizeRoom, SANDBOX_GRID_FT, sandboxFixturesFromBenchPlacement, validateSandboxLayout, wallRectFootprint, wallSideOfBounds, withGridFt, type DoorHinge, type FixtureClearance, type FixtureKind, type FixtureOrientation, type SandboxBaseObject, type SandboxFixture, type SandboxLayer, type SandboxLayout, type SandboxPolygon, type WallSide } from '../lib/layout-sandbox';
 import { Logo } from '../components/Logo';
 import { CanvasLayers } from '../components/sandbox/CanvasLayers';
@@ -17,8 +17,15 @@ import { DEFAULT_CLEARANCE, FIXTURE_DEFAULTS, INFRA_PALETTE, ZONE_FAMILY_COLORS,
 import type { ZoneRequirementSummary, ZoningOverlay } from '../components/sandbox/types';
 import { PlacementQuestionBox, type PlacementSubgroup } from '../components/sandbox/PlacementQuestionBox';
 import { GuidedFlowIntro } from '../components/sandbox/GuidedFlowIntro';
-import { CATEGORY_CTA_VERB, CATEGORY_LABELS, CATEGORY_ORDER, FIXTURE_SUBGROUP_KINDS, emptyCategoryModeState, emptySubSelectionState, firstUnanswered, paletteVisible, seedCategoryModesFrom, subgroupVisible, type CategoryModeState, type PlacementCategory, type SubSelectionState } from '../components/sandbox/guidedFlow';
+import { CATEGORY_CTA_VERB, CATEGORY_LABELS, CATEGORY_ORDER, FIXTURE_SUBGROUP_KINDS, categoryOrder, emptyCategoryModeState, emptySubSelectionState, firstUnanswered, paletteVisible, seedCategoryModesFrom, subgroupVisible, type CategoryModeState, type PlacementCategory, type SubSelectionState } from '../components/sandbox/guidedFlow';
 import { SANDBOX_LAYOUT_STORAGE_KEY } from '../lib/session';
+
+// The floor equipment question's two answers.
+const FLOOR_TIMING_CHOICES = {
+  manual: 'Before generation',
+  derived: 'After generation (recommended)',
+  hint: 'Before: place it now and benches are planned around it. After (recommended): see the generated benches first, then place it on the open floor — the report asks you. Either way, anything not placed is listed as unplaced on the report, and fridges and freezers left unplaced are put against a wall automatically where they fit.',
+};
 
 interface LayoutCapabilities { schemaVersion: number; layers: string[]; fixtureKinds: string[]; collections: string[]; }
 
@@ -62,6 +69,14 @@ interface PersistedSandboxState {
   subSelection: SubSelectionState;
   activeCategory: PlacementCategory | null;
 }
+// Floor-standing equipment to place in this layout: the questionnaire's
+// current list when opened from the intake, else that of the report the
+// layout came from.
+function floorItemsOf(layout: SandboxLayout) {
+  return layout.floorEquipment ?? readLabPlan(layout)?.floorItems ?? [];
+}
+const questionOrderFor = (layout: SandboxLayout) => categoryOrder(floorItemsOf(layout).length > 0);
+
 function readPersistedState(): PersistedSandboxState | null {
   try {
     const raw = localStorage.getItem(SANDBOX_LAYOUT_STORAGE_KEY);
@@ -78,12 +93,13 @@ function readPersistedState(): PersistedSandboxState | null {
     // have a layout — re-derive the answers from its content, same as any
     // other freshly-loaded layout, rather than losing it entirely.
     const seeded = seedCategoryModesFrom(layout);
-    const categoryMode = data?.categoryMode ?? seeded.modes;
+    // Saves from before the floor equipment question lack its answer.
+    const categoryMode = { ...emptyCategoryModeState(), ...(data?.categoryMode ?? seeded.modes) };
     return {
       layout,
       arrangement: data?.arrangement,
       categoryMode,
-      subSelection: data?.subSelection ?? seeded.subSelection,
+      subSelection: { ...emptySubSelectionState(), ...(data?.subSelection ?? seeded.subSelection) },
       activeCategory: data?.activeCategory ?? (CATEGORY_ORDER.find((category) => categoryMode[category] === 'manual') ?? null),
     };
   } catch {
@@ -134,7 +150,7 @@ export function LayoutSandboxPage() {
   const [zoning, setZoning] = useState<ZoningOverlay | null>(null);
   const [dragPreview, setDragPreview] = useState<{ id: string; x: number; y: number } | null>(null);
   const [paletteDragPos, setPaletteDragPos] = useState<{ kind: FixtureKind; widthFt: number; depthFt: number; x: number; y: number; onCanvas: boolean; floorItem?: FloorEquipmentDragSpec } | null>(null);
-  const [placementPreview, setPlacementPreview] = useState<{ widthFt: number; depthFt: number; orientation: FixtureOrientation; excludeInstanceId?: string } | null>(null);
+  const [placementPreview, setPlacementPreview] = useState<{ widthFt: number; depthFt: number; orientation: FixtureOrientation; excludeInstanceId?: string; equipmentId?: string } | null>(null);
   const [selectedOverlay, setSelectedOverlay] = useState<string | null>(null);
   const [placingKind, setPlacingKind] = useState<PlaceableBaseKind | null>(null);
   const [backendNotice, setBackendNotice] = useState<{ kind: 'progress' | 'error'; text: string } | null>(null);
@@ -151,7 +167,12 @@ export function LayoutSandboxPage() {
   // already placed can vanish when a category's mode changes.
   const [categoryMode, setCategoryMode] = useState<CategoryModeState>(() => initialPersistedState().categoryMode);
   const [subSelection, setSubSelection] = useState<SubSelectionState>(() => initialPersistedState().subSelection);
-  const [openQuestion, setOpenQuestion] = useState<PlacementCategory | null>(() => firstUnanswered(initialPersistedState().categoryMode));
+  const [openQuestion, setOpenQuestion] = useState<PlacementCategory | null>(() => firstUnanswered(initialPersistedState().categoryMode, questionOrderFor(initialPersistedState().layout)));
+  // Opened from a report's "Place floor equipment" (after generation): the
+  // generated layout as it is — benches locked, only floor equipment moves,
+  // and Done saves it onto that report (no guided questions).
+  const [placeFloor, setPlaceFloor] = useState<{ reportId: string; returnState: unknown } | null>(null);
+  const [placeReportFloorEquipment, { loading: savingFloor }] = useMutation<{ placeReportFloorEquipment: { id: string; data: Record<string, unknown> } }>(PLACE_REPORT_FLOOR_EQUIPMENT_MUTATION);
   const [hoveredSubgroup, setHoveredSubgroup] = useState<string | null>(null);
   // Only one category's palette shows in the sidebar at a time — the one
   // most recently answered manual — so the sidebar always reflects just the
@@ -174,17 +195,30 @@ export function LayoutSandboxPage() {
   const selectedBaseObject = selectedOverlay ? layout.baseObjects.find((object) => object.id === selectedOverlay) ?? null : null;
   const utilization = useMemo(() => Math.round(layout.fixtures.reduce((sum, f) => { const size = fixtureFootprint(f, layout.room.gridFt); return sum + size.width * size.height; }, 0) / (columns * rows) * 100), [layout, columns, rows]);
   const violations = useMemo(() => validateSandboxLayout(layout), [layout]);
-  // Floor-standing equipment to place: the questionnaire's current list when
-  // opened from the intake, else that of the report this layout came from.
-  const floorItems = useMemo(() => layout.floorEquipment ?? readLabPlan(layout)?.floorItems ?? [], [layout]);
+  const floorItems = useMemo(() => floorItemsOf(layout), [layout]);
+  const questionOrder = categoryOrder(floorItems.length > 0);
+  // After generation, cold storage may stand where an empty wall bench is
+  // (that bench is taken away when saved — the backend checks the zone
+  // keeps its need); everything else keeps clear of benches.
+  const coldStorageIds = useMemo(() => new Set(floorItems.filter((e) => 'coldStorage' in e && e.coldStorage).map((e) => e.equipmentId)), [floorItems]);
+  const swappableBenchFixtures = useMemo(() => {
+    const plan = placeFloor ? readLabPlan(layout) : null;
+    if (!plan) return new Set<string>();
+    const used = new Set((plan.initialEquipment?.placements ?? []).map((p) => p.benchId));
+    return new Set(plan.benches.filter((b) => b.kind === 'wall' && !used.has(b.id)).map((b) => b.fixtureId));
+  }, [placeFloor, layout]);
+  const othersFor = (equipmentId?: string) => (placeFloor && equipmentId && coldStorageIds.has(equipmentId) ? layout.fixtures.filter((f) => !swappableBenchFixtures.has(f.instanceId)) : layout.fixtures);
+  const onSwappableBench = (fixture: SandboxFixture) => placeFloor && fixture.equipmentId && coldStorageIds.has(fixture.equipmentId) && !canPlaceFixture(fixture, layout.fixtures, layout.baseObjects, layout.room.gridFt);
+  const lockedInPlaceFloor = (fixture: SandboxFixture) => !!placeFloor && !fixture.equipmentId;
   // Only computed while a fixture is actively being picked up or dragged —
   // the whole room's green/red availability for that exact footprint, not
   // just a single cell under the cursor, so the user can see every open
   // spot at a glance instead of guessing and checking one position at a
   // time.
   const placementHeatmap = useMemo(
-    () => placementPreview ? computePlacementAvailability(placementPreview, layout.fixtures, layout.baseObjects, layout.room.gridFt, columns, rows, placementPreview.excludeInstanceId) : null,
-    [placementPreview, layout.fixtures, layout.baseObjects, layout.room.gridFt, columns, rows],
+    () => placementPreview ? computePlacementAvailability(placementPreview, othersFor(placementPreview.equipmentId), layout.baseObjects, layout.room.gridFt, columns, rows, placementPreview.excludeInstanceId) : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [placementPreview, layout.fixtures, layout.baseObjects, layout.room.gridFt, columns, rows, swappableBenchFixtures],
   );
   useEffect(() => setCanvasNode(canvasRef.current), []);
   // Keeps the last-edited layout AND guided-flow answers resumable on the
@@ -195,7 +229,7 @@ export function LayoutSandboxPage() {
     try { localStorage.setItem(SANDBOX_LAYOUT_STORAGE_KEY, JSON.stringify({ layout, arrangement, categoryMode, subSelection, activeCategory })); } catch { /* private browsing, quota, etc — resuming is a convenience, not a guarantee */ }
   }, [layout, arrangement, categoryMode, subSelection, activeCategory]);
   useEffect(() => {
-    const state = location.state as { loadLayout?: unknown; arrangement?: Answers; floorEquipment?: SandboxLayout['floorEquipment'] } | null;
+    const state = location.state as { loadLayout?: unknown; arrangement?: Answers; floorEquipment?: SandboxLayout['floorEquipment']; placeFloorForReport?: string | null; returnState?: unknown } | null;
     if (state?.arrangement) setArrangement({ ...DEFAULT_ARRANGEMENT, ...state.arrangement });
     else {
       const options = readLabPlan(state?.loadLayout)?.options;
@@ -203,12 +237,22 @@ export function LayoutSandboxPage() {
     }
     const floorEquipment = state?.floorEquipment;
     if (!state?.loadLayout) {
-      if (floorEquipment) { setLayout((previous) => ({ ...previous, floorEquipment })); navigate(location.pathname, { replace: true, state: null }); }
+      if (floorEquipment) {
+        setLayout((previous) => ({ ...previous, floorEquipment }));
+        if (!showIntro) setOpenQuestion(firstUnanswered(categoryMode, categoryOrder(floorEquipment.length > 0)));
+        navigate(location.pathname, { replace: true, state: null });
+      }
       return;
     }
     const loaded = parseSandboxLayout(state.loadLayout);
     const parsed = loaded && withGridFt(loaded, SANDBOX_GRID_FT);
     if (parsed) { const withFloor = floorEquipment ? { ...parsed, floorEquipment } : parsed; setLayout(withFloor); applySeededCategoryModes(withFloor); }
+    if (parsed && state.placeFloorForReport) {
+      setPlaceFloor({ reportId: state.placeFloorForReport, returnState: state.returnState ?? null });
+      setShowIntro(false);
+      setOpenQuestion(null);
+      setMessage('Drag floor equipment onto open floor. Benches stay where they were generated.');
+    }
     navigate(location.pathname, { replace: true, state: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -251,7 +295,7 @@ export function LayoutSandboxPage() {
     setCategoryMode(seeded.modes);
     setSubSelection(seeded.subSelection);
     setActiveCategory(CATEGORY_ORDER.find((category) => seeded.modes[category] === 'manual') ?? null);
-    setOpenQuestion(firstUnanswered(seeded.modes));
+    setOpenQuestion(firstUnanswered(seeded.modes, questionOrderFor(loaded)));
     // A layout loaded from somewhere specific (router state, an imported
     // file) is resumed work, not a blank room — skip the walkthrough.
     if (loaded.fixtures.length > 0 || loaded.baseObjects.length > 0) setShowIntro(false);
@@ -284,7 +328,7 @@ export function LayoutSandboxPage() {
       const green = FIXTURE_SUBGROUP_KINDS.filter((kind) => nextSub.fixtures[kind]);
       if (green.length && !green.includes(newKind)) setKind(green[0]);
     }
-    setOpenQuestion(mode === 'derived' ? firstUnanswered(nextModes) : null);
+    setOpenQuestion(mode === 'derived' ? firstUnanswered(nextModes, questionOrder) : null);
   }
   // Reopens a category's question box for editing (category-selector chip,
   // or the topbar's guided CTA) without touching which palette is currently
@@ -294,6 +338,8 @@ export function LayoutSandboxPage() {
   }
   function subgroupsFor(category: PlacementCategory): PlacementSubgroup[] {
     if (category === 'infrastructure') return INFRA_PALETTE.map((group) => ({ key: group.layer, label: group.title, hoverItems: group.items.map((item) => item.label) }));
+    // Floor equipment is one before/after answer, no subgroups.
+    if (category === 'floorEquipment') return [];
     return FIXTURE_SUBGROUP_KINDS.map((kind) => ({ key: kind, label: FIXTURE_DEFAULTS[kind].name }));
   }
   function updateLayout(fn: (previous: SandboxLayout) => SandboxLayout) { setLayout((previous) => ({ ...fn(previous), updatedAt: new Date().toISOString() })); }
@@ -304,17 +350,19 @@ export function LayoutSandboxPage() {
       // Floor equipment from the report: its own name, catalog size and id.
       ? { instanceId: `${floorItem.kind}-${Date.now()}`, kind: floorItem.kind, name: floorItem.name, x, y, widthFt: floorItem.widthFt, depthFt: floorItem.depthFt, orientation: 0, clearance: floorItem.kind === 'laminarHood' ? { ...DEFAULT_CLEARANCE.laminarHood } : undefined, equipmentId: floorItem.equipmentId }
       : { instanceId: `${newKind}-${Date.now()}`, kind: newKind, name: d.name, x, y, widthFt: newKind === 'bench' ? BENCH_WIDTH_FT : Math.max(.5, newWidth), depthFt: newKind === 'bench' ? BENCH_DEPTH_FT : Math.max(.5, newDepth), orientation: 0, clearance: newKind === 'bench' || newKind === 'laminarHood' ? { ...newClearance } : undefined };
-    if (!canPlaceFixture(fixture, layout.fixtures, layout.baseObjects, layout.room.gridFt)) return setMessage('That fixture overlaps another fixture or object.');
-    updateLayout((p) => ({ ...p, fixtures: [...p.fixtures, fixture] })); setSelectedFixtureId(fixture.instanceId); setMessage(`${fixture.name} placed.`);
+    if (!canPlaceFixture(fixture, othersFor(fixture.equipmentId), layout.baseObjects, layout.room.gridFt)) return setMessage('That fixture overlaps another fixture or object.');
+    updateLayout((p) => ({ ...p, fixtures: [...p.fixtures, fixture] })); setSelectedFixtureId(fixture.instanceId); setMessage(onSwappableBench(fixture) ? `${fixture.name} placed — it replaces the wall bench under it when you save.` : `${fixture.name} placed.`);
   }
   function moveFixture(id: string, x: number, y: number) {
     const fixture = layout.fixtures.find((f) => f.instanceId === id); if (!fixture) return;
+    if (lockedInPlaceFloor(fixture)) return setMessage('Benches stay where they were generated — only floor equipment moves here.');
     const moved = { ...fixture, x, y };
-    if (!canPlaceFixture(moved, layout.fixtures, layout.baseObjects, layout.room.gridFt)) return setMessage('That move overlaps another fixture or object.');
-    updateLayout((p) => ({ ...p, fixtures: p.fixtures.map((f) => f.instanceId === id ? moved : f) })); setSelectedFixtureId(id); setMessage(`${fixture.name} moved.`);
+    if (!canPlaceFixture(moved, othersFor(fixture.equipmentId), layout.baseObjects, layout.room.gridFt)) return setMessage('That move overlaps another fixture or object.');
+    updateLayout((p) => ({ ...p, fixtures: p.fixtures.map((f) => f.instanceId === id ? moved : f) })); setSelectedFixtureId(id); setMessage(onSwappableBench(moved) ? `${fixture.name} moved — it replaces the wall bench under it when you save.` : `${fixture.name} moved.`);
   }
   function startFixtureMove(event: React.PointerEvent<HTMLDivElement>, fixture: SandboxFixture) {
     if (event.button !== 0) return;
+    if (lockedInPlaceFloor(fixture)) { event.stopPropagation(); setSelectedFixtureId(fixture.instanceId); setMessage('Benches stay where they were generated — only floor equipment moves here.'); return; }
     event.preventDefault(); event.stopPropagation(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
     if (group?.fixtures.includes(fixture.instanceId)) { startGroupDrag(event); return; }
     setGroup(null);
@@ -323,7 +371,7 @@ export function LayoutSandboxPage() {
     const pointerY = (event.clientY - rect.top) / rect.height * rows;
     dragState.current = { id: fixture.instanceId, offsetX: pointerX - fixture.x, offsetY: pointerY - fixture.y, x: fixture.x, y: fixture.y };
     setSelectedOverlay(null); setSelectedFixtureId(fixture.instanceId); setDragPreview({ id: fixture.instanceId, x: fixture.x, y: fixture.y });
-    setPlacementPreview({ widthFt: fixture.widthFt, depthFt: fixture.depthFt, orientation: fixture.orientation, excludeInstanceId: fixture.instanceId });
+    setPlacementPreview({ widthFt: fixture.widthFt, depthFt: fixture.depthFt, orientation: fixture.orientation, excludeInstanceId: fixture.instanceId, equipmentId: fixture.equipmentId });
   }
   function previewFixtureMove(event: React.PointerEvent<HTMLDivElement>) {
     if (groupDrag.current) { moveGroup(event); return; }
@@ -370,7 +418,7 @@ export function LayoutSandboxPage() {
     const { x, y } = rect ? paletteCell(event, rect, widthFt, depthFt) : { x: 0, y: 0 };
     const next = { kind, widthFt, depthFt, x, y, onCanvas, floorItem };
     paletteDragState.current = next; setPaletteDragPos(next);
-    setPlacementPreview({ widthFt, depthFt, orientation: 0 });
+    setPlacementPreview({ widthFt, depthFt, orientation: 0, equipmentId: floorItem?.equipmentId });
   }
   function movePaletteDrag(event: React.PointerEvent<HTMLDivElement>) {
     const drag = paletteDragState.current; const rect = canvasRef.current?.getBoundingClientRect(); if (!drag || !rect) return;
@@ -391,7 +439,7 @@ export function LayoutSandboxPage() {
     if (paletteDragFrame.current !== null) { cancelAnimationFrame(paletteDragFrame.current); paletteDragFrame.current = null; }
     setPaletteDragPos(null); setPlacementPreview(null);
   }
-  function rotateSelected() { if (!selectedFixture) return; const rotated: SandboxFixture = { ...selectedFixture, orientation: ((selectedFixture.orientation + 90) % 360) as SandboxFixture['orientation'] }; if (!canPlaceFixture(rotated, layout.fixtures, layout.baseObjects, layout.room.gridFt)) return setMessage('Rotating this fixture would overlap another fixture or object.'); updateLayout((p) => ({ ...p, fixtures: p.fixtures.map((f) => f.instanceId === rotated.instanceId ? rotated : f) })); setMessage(`${rotated.name} rotated to ${rotated.orientation}°.`); }
+  function rotateSelected() { if (!selectedFixture || lockedInPlaceFloor(selectedFixture)) return; const rotated: SandboxFixture = { ...selectedFixture, orientation: ((selectedFixture.orientation + 90) % 360) as SandboxFixture['orientation'] }; if (!canPlaceFixture(rotated, othersFor(rotated.equipmentId), layout.baseObjects, layout.room.gridFt)) return setMessage('Rotating this fixture would overlap another fixture or object.'); updateLayout((p) => ({ ...p, fixtures: p.fixtures.map((f) => f.instanceId === rotated.instanceId ? rotated : f) })); setMessage(`${rotated.name} rotated to ${rotated.orientation}°.`); }
   function updateSelectedClearance(field: keyof FixtureClearance, value: number) {
     if (!selectedFixture || (selectedFixture.kind !== 'bench' && selectedFixture.kind !== 'laminarHood')) return;
     const clearance = { ...(selectedFixture.clearance ?? { frontFt: 0, backFt: 0, sideFt: 0 }), [field]: Math.max(0, value || 0) };
@@ -400,7 +448,7 @@ export function LayoutSandboxPage() {
     updateLayout((p) => ({ ...p, fixtures: p.fixtures.map((f) => f.instanceId === changed.instanceId ? changed : f) }));
     setMessage('Bench clearance updated.');
   }
-  function removeSelected() { if (!selectedFixture) return; updateLayout((p) => ({ ...p, fixtures: p.fixtures.filter((f) => f.instanceId !== selectedFixture.instanceId) })); setSelectedFixtureId(null); setMessage('Fixture removed.'); }
+  function removeSelected() { if (!selectedFixture || lockedInPlaceFloor(selectedFixture)) return; updateLayout((p) => ({ ...p, fixtures: p.fixtures.filter((f) => f.instanceId !== selectedFixture.instanceId) })); setSelectedFixtureId(null); setMessage('Fixture removed.'); }
   // Hands the room back to the intake wizard (QuestionsPage.tsx) via router
   // state — a one-shot hand-off: its size, the exit door (still used when no
   // sandbox room is available), and the whole room — every door, column,
@@ -426,7 +474,31 @@ export function LayoutSandboxPage() {
       const SANDBOX_WALL_TO_INTAKE: Record<WallSide, 'N' | 'S' | 'E' | 'W'> = { top: 'N', bottom: 'S', left: 'W', right: 'E' };
       door = { wall: SANDBOX_WALL_TO_INTAKE[side], offsetFt: Math.round(offsetAlongWall(side, center) * 100) / 100, hinge: doorHinge(exitDoor) };
     }
-    navigate('/questions', { state: { spaceFromSandbox: { width_ft: layout.room.widthFt, height_ft: layout.room.heightFt, door, layout: roomLayout, geometry, arrangement } } });
+    // The last guided question: floor equipment before or after generation
+    // (unanswered = after; the report then offers to place it).
+    const floorTiming = categoryMode.floorEquipment === 'manual' ? 'before' : categoryMode.floorEquipment === 'derived' ? 'after' : undefined;
+    navigate('/questions', { state: { spaceFromSandbox: { width_ft: layout.room.widthFt, height_ft: layout.room.heightFt, door, layout: roomLayout, geometry, arrangement, floorTiming } } });
+  }
+  // The wall the exit door is on (N/S/E/W), for "Wall with the main door";
+  // south when the room has no exit door yet.
+  function exitDoorWall(): 'N' | 'S' | 'E' | 'W' {
+    const exitDoor = layout.baseObjects.find((object) => object.kind === 'door' && object.door?.isExit && object.footprint.points.length > 0);
+    if (!exitDoor) return 'S';
+    const side = wallSideOfBounds(polygonBounds(exitDoor.footprint), layout.room);
+    return ({ top: 'N', bottom: 'S', left: 'W', right: 'E' } as const)[side];
+  }
+  // Saves the floor equipment placed after generation onto its report and
+  // goes back there.
+  async function saveFloorToReport() {
+    if (!placeFloor) return;
+    try {
+      const { data } = await placeReportFloorEquipment({ variables: { reportId: placeFloor.reportId, fixtures: layout.fixtures.filter((f) => f.equipmentId), gridFt: layout.room.gridFt } });
+      const reportData = data?.placeReportFloorEquipment.data;
+      const back = (placeFloor.returnState && typeof placeFloor.returnState === 'object' ? placeFloor.returnState : {}) as Record<string, unknown>;
+      navigate('/report', { state: { ...back, reportData, reportId: placeFloor.reportId } });
+    } catch (err) {
+      setBackendNotice({ kind: 'error', text: err instanceof Error ? err.message : String(err) });
+    }
   }
   // Fills the room with as many benches as fit (no operations needed) and
   // shows the zones they were carved into. Replaces only benches a previous
@@ -438,7 +510,7 @@ export function LayoutSandboxPage() {
     setBackendNotice({ kind: 'progress', text: 'Fitting benches…' });
     try {
       const response = await maximizeZonesAndBenchesForSandbox({
-        variables: { input: { roomWidth: geometry.roomWidth, roomHeight: geometry.roomHeight, blockedCells: geometry.blockedCells, entranceCells: geometry.entranceCells, entranceHinges: geometry.entranceHinges, sinkCells: geometry.sinkCells, cellSizeInches: Math.round(layout.room.gridFt * 12), options: { mode: arrangement.layout_mode, mainWall: arrangement.layout_main_wall, sameDirection: arrangement.layout_same_direction, wallBenches: arrangement.layout_wall_benches } } },
+        variables: { input: { roomWidth: geometry.roomWidth, roomHeight: geometry.roomHeight, blockedCells: geometry.blockedCells, entranceCells: geometry.entranceCells, entranceHinges: geometry.entranceHinges, sinkCells: geometry.sinkCells, cellSizeInches: Math.round(layout.room.gridFt * 12), options: { mode: 'main_wall', mainWall: arrangement.layout_main_wall || exitDoorWall(), sameDirection: arrangement.layout_same_direction, wallBenches: false } } },
       });
       const result = response.data?.maximizeZonesAndBenchesForSandbox;
       if (!result) throw new Error('The server did not return a result');
@@ -593,7 +665,7 @@ export function LayoutSandboxPage() {
   // move leaves them where they are.
   const movesWithGroup = (object: SandboxBaseObject) => object.kind !== 'door' && object.kind !== 'window' && object.utility?.mountingSurface !== 'wall' && object.footprint.points.length > 0;
   function startMarquee(event: React.PointerEvent<HTMLDivElement>) {
-    if (placingKind || event.button !== 0) return;
+    if (placingKind || placeFloor || event.button !== 0) return;
     const start = pointerFt(event); if (!start) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     marqueeStart.current = start;
@@ -692,6 +764,7 @@ export function LayoutSandboxPage() {
     setMessage('Layer object resized.');
   }
   function deleteSelection() {
+    if (placeFloor) { if (selectedFixture) removeSelected(); return; }
     if (group) {
       const fixtures = new Set(group.fixtures), objects = new Set(group.objects);
       updateLayout((current) => ({ ...current, fixtures: current.fixtures.filter((f) => !fixtures.has(f.instanceId)), baseObjects: current.baseObjects.filter((o) => !objects.has(o.id)) }));
@@ -736,32 +809,36 @@ export function LayoutSandboxPage() {
   // The canvas render of layout.fixtures and the portaled CanvasLayers are
   // never gated: anything already placed stays rendered, selectable,
   // draggable, and inspectable regardless of category/subgroup mode.
-  const guidedCategory = firstUnanswered(categoryMode);
+  const guidedCategory = firstUnanswered(categoryMode, questionOrder);
+  const showFloorPanel = !!placeFloor || (activeCategory === 'floorEquipment' && categoryMode.floorEquipment === 'manual');
   const infraVisibleLayers = new Set(INFRA_PALETTE.map((group) => group.layer).filter((layer) => subgroupVisible('infrastructure', layer, categoryMode.infrastructure, subSelection)));
   const fixtureVisibleKinds = FIXTURE_SUBGROUP_KINDS.filter((kind) => subgroupVisible('fixtures', kind, categoryMode.fixtures, subSelection));
 
   return <div className={`screen layout-sandbox ${layers.base ? 'show-base' : 'hide-base'} ${layers.equipment ? 'show-equipment' : 'hide-equipment'} ${layers.circulation ? 'show-circulation' : 'hide-circulation'}`}>
     <div className="ls-control-deck">
-    <div className="ls-category-selector" aria-label="Placement categories">{CATEGORY_ORDER.map((category, index) => <button key={category} className={`ls-category-chip ${categoryMode[category]}`} onClick={() => openCategoryChip(category)}><i className={`ls-category-dot ${categoryMode[category]}`} />{index + 1}. {CATEGORY_LABELS[category]}</button>)}</div>
+    <div className="ls-category-selector" aria-label="Placement categories">{(placeFloor ? [] : questionOrder).map((category, index) => <button key={category} className={`ls-category-chip ${categoryMode[category]}`} onClick={() => openCategoryChip(category)}><i className={`ls-category-dot ${categoryMode[category]}`} />{index + 1}. {CATEGORY_LABELS[category]}</button>)}</div>
     <div className="ls-layer-tools">{placingKind && <span className="ls-derived-note">Click the room to place a {placingKind.replace(/_/g, ' ')} — Esc to cancel</span>}{layers.circulation && !placingKind && <span className="ls-derived-note">Derived from unassigned space</span>}</div>
-    <div className="ls-backend-actions"><button disabled={maximizingLoading} title="No operations needed — keeps door landings clear and fills the room with islands of back-to-back benches on one room-wide grid, with straight aisles, where every bench's working aisle stays reachable." onClick={() => void runMaximizeZonesAndBenches()}>{maximizingLoading ? 'Fitting benches…' : 'Fit as many benches as possible'}</button></div>
+    {!placeFloor && <div className="ls-backend-actions"><button disabled={maximizingLoading} title="No operations needed — keeps door landings clear and fills the room with islands of back-to-back benches on one room-wide grid, with straight aisles, where every bench's working aisle stays reachable." onClick={() => void runMaximizeZonesAndBenches()}>{maximizingLoading ? 'Fitting benches…' : 'Fit as many benches as possible'}</button></div>}
     {backendNotice && <div className={`ls-optimization-notice ${backendNotice.kind}`}><span>{backendNotice.kind === 'progress' ? '⏳' : '⚠'}</span><b>{backendNotice.text}</b>{backendNotice.kind === 'error' && <button onClick={() => setBackendNotice(null)}>×</button>}</div>}
     {zoning && <div className="ls-derived-note" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '4px 0' }}>{[...new Map(zoning.legend.map((z) => [z.family, z])).values()].map((z) => <span key={z.family} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><i style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: ZONE_FAMILY_COLORS[z.family] || '#999' }} />{ZONE_FAMILY_LABELS[z.family] || z.family}</span>)}</div>}
     {canvasNode && createPortal(<CanvasLayers layout={layout} layers={layers} violations={violations} selected={selectedOverlay} groupSelected={group?.objects} placingKind={placingKind} zoning={zoning} onSelect={startOverlayMove} onPlace={placeOnCanvasClick} onDrag={moveOverlay} onDragEnd={finishOverlayMove} />, canvasNode)}
     {layers.validation && violations.length > 0 && <div className="ls-violations">{violations.map((violation) => <div key={violation.id} className={`ls-violation-card ${violation.severity}`} onClick={() => selectViolation(violation)}><b>{violation.severity === 'error' ? 'Hard violation' : 'Recommendation'}</b><span>{violation.message}</span>{violation.fix && <button onClick={(event) => { event.stopPropagation(); applySuggestedFix(violation); }}>✨ {violation.fix.label}</button>}</div>)}</div>}
     </div>
-    <div className="qm-topbar"><div className="logo-mark"><Logo height={40} /></div><div><b>Layout sandbox</b><div className="ls-subtitle">Draw the room, place fixtures, then fit benches</div></div><div style={{ flex: 1 }} /><button className="ls-guided-cta" onClick={guidedCategory ? () => openCategoryChip(guidedCategory) : useInIntake}>{guidedCategory ? <>{CATEGORY_CTA_VERB[guidedCategory]} {CATEGORY_LABELS[guidedCategory]} <span aria-hidden="true">→</span></> : 'Use this room in my intake →'}</button><button className="btn-out" onClick={exportLayout}>Export JSON</button><button className="btn-out" onClick={() => fileInput.current?.click()}>Import</button><input ref={fileInput} hidden type="file" accept="application/json" onChange={(e) => importLayout(e.target.files?.[0])} /><button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>← Dashboard</button></div>
+    <div className="qm-topbar"><div className="logo-mark"><Logo height={40} /></div><div><b>Layout sandbox</b><div className="ls-subtitle">Draw the room, place fixtures, then fit benches</div></div><div style={{ flex: 1 }} />{placeFloor
+      ? <button className="ls-guided-cta" disabled={savingFloor} onClick={() => void saveFloorToReport()}>{savingFloor ? 'Saving…' : 'Done — save to report →'}</button>
+      : <button className="ls-guided-cta" onClick={guidedCategory ? () => openCategoryChip(guidedCategory) : useInIntake}>{guidedCategory ? <>{CATEGORY_CTA_VERB[guidedCategory]} {CATEGORY_LABELS[guidedCategory]} <span aria-hidden="true">→</span></> : 'Use this room in my intake →'}</button>}<button className="btn-out" onClick={exportLayout}>Export JSON</button><button className="btn-out" onClick={() => fileInput.current?.click()}>Import</button><input ref={fileInput} hidden type="file" accept="application/json" onChange={(e) => importLayout(e.target.files?.[0])} /><button className="qm-mode-toggle" onClick={() => navigate('/dashboard')}>← Dashboard</button></div>
     <div className="ls-workspace">
-      <aside className="ls-sidebar"><label className="field-label">Layout name</label><input className="field-input" value={layout.name} onChange={(e) => updateLayout((p) => ({ ...p, name: e.target.value }))} /><div className="ls-room-fields"><label><span className="field-label">Width (ft)</span><input className="field-input" type="number" min="5" value={layout.room.widthFt} onChange={(e) => updateLayout((p) => resizeRoom(p, { widthFt: Math.max(5, Number(e.target.value)), heightFt: p.room.heightFt }))} /></label><label><span className="field-label">Depth (ft)</span><input className="field-input" type="number" min="5" value={layout.room.heightFt} onChange={(e) => updateLayout((p) => resizeRoom(p, { widthFt: p.room.widthFt, heightFt: Math.max(5, Number(e.target.value)) }))} /></label></div>
-        <BenchArrangement value={arrangement} onChange={setArrangement} />
-        <FloorEquipmentPanel items={floorItems} placedCount={(equipmentId) => layout.fixtures.filter((f) => f.equipmentId === equipmentId).length} startDrag={startPaletteDrag} moveDrag={movePaletteDrag} finishDrag={finishPaletteDrag} cancelDrag={cancelPaletteDrag} />
-        {paletteVisible('infrastructure', activeCategory) && <InfraPalette placingKind={placingKind} beginPlacing={beginPlacing} visibleLayers={infraVisibleLayers} />}
-        {paletteVisible('fixtures', activeCategory) && <FixturePalette newKind={newKind} setKind={setKind} newWidth={newWidth} setNewWidth={setNewWidth} newDepth={newDepth} setNewDepth={setNewDepth} newClearance={newClearance} setNewClearance={setNewClearance} startPaletteDrag={startPaletteDrag} movePaletteDrag={movePaletteDrag} finishPaletteDrag={finishPaletteDrag} cancelPaletteDrag={cancelPaletteDrag} visibleKinds={fixtureVisibleKinds} />}
-        {!activeCategory && <p className="ls-help">Answer the placement questions (top right) to start placing things — whatever you leave derived, Cirrus places for you automatically.</p>}
+      <aside className="ls-sidebar"><label className="field-label">Layout name</label><input className="field-input" value={layout.name} onChange={(e) => updateLayout((p) => ({ ...p, name: e.target.value }))} /><div className="ls-room-fields" hidden={!!placeFloor} style={placeFloor ? { display: 'none' } : undefined}><label><span className="field-label">Width (ft)</span><input className="field-input" type="number" min="5" value={layout.room.widthFt} onChange={(e) => updateLayout((p) => resizeRoom(p, { widthFt: Math.max(5, Number(e.target.value)), heightFt: p.room.heightFt }))} /></label><label><span className="field-label">Depth (ft)</span><input className="field-input" type="number" min="5" value={layout.room.heightFt} onChange={(e) => updateLayout((p) => resizeRoom(p, { widthFt: p.room.widthFt, heightFt: Math.max(5, Number(e.target.value)) }))} /></label></div>
+        {!placeFloor && <BenchArrangement value={arrangement} onChange={setArrangement} />}
+        {placeFloor && <p className="ls-help">Place your floor equipment on the open floor of the generated layout. Benches stay where they are. Fridges and freezers may also go on an empty wall bench — that bench is removed when you save. Anything you don’t place is listed as unplaced on the report.</p>}
+        {showFloorPanel && <FloorEquipmentPanel afterGeneration={!!placeFloor} items={floorItems} placedCount={(equipmentId) => layout.fixtures.filter((f) => f.equipmentId === equipmentId).length} startDrag={startPaletteDrag} moveDrag={movePaletteDrag} finishDrag={finishPaletteDrag} cancelDrag={cancelPaletteDrag} />}
+        {!placeFloor && paletteVisible('infrastructure', activeCategory) && <InfraPalette placingKind={placingKind} beginPlacing={beginPlacing} visibleLayers={infraVisibleLayers} />}
+        {!placeFloor && paletteVisible('fixtures', activeCategory) && <FixturePalette newKind={newKind} setKind={setKind} newWidth={newWidth} setNewWidth={setNewWidth} newDepth={newDepth} setNewDepth={setNewDepth} newClearance={newClearance} setNewClearance={setNewClearance} startPaletteDrag={startPaletteDrag} movePaletteDrag={movePaletteDrag} finishPaletteDrag={finishPaletteDrag} cancelPaletteDrag={cancelPaletteDrag} visibleKinds={fixtureVisibleKinds} />}
+        {!placeFloor && !activeCategory && <p className="ls-help">Answer the placement questions (top right) to start placing things — whatever you leave derived, Cirrus places for you automatically.</p>}
       </aside>
       <main className="ls-main"><div className="ls-metrics"><span>{layout.room.widthFt} × {layout.room.heightFt} ft room</span><span>{layout.fixtures.filter((f) => f.kind === 'bench').length} benches</span><span>{utilization}% occupied</span></div><div className="ls-canvas-wrap"><div ref={canvasRef} className={`ls-canvas ${placingKind ? 'placing' : ''}`} style={{ gridTemplateColumns: `repeat(${columns}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)`, aspectRatio: `${columns} / ${rows}`, '--grid-cols': columns, '--grid-rows': rows } as React.CSSProperties} onPointerDown={startMarquee} onPointerMove={moveMarquee} onPointerUp={finishMarquee} onPointerCancel={finishMarquee} onClick={() => { if (suppressCanvasClick.current) { suppressCanvasClick.current = false; return; } if (!placingKind) { setSelectedFixtureId(null); clearGroup(); } }}>{placementHeatmap && placementHeatmap.flatMap((row, y) => row.map((valid, x) => <div key={`ph-${x}-${y}`} className={`ls-placement-cell ${valid ? 'valid' : 'invalid'}`} style={{ gridColumn: `${x + 1} / span 1`, gridRow: `${y + 1} / span 1` }} />))}{layout.fixtures.map((f) => { const position = dragPreview?.id === f.instanceId ? dragPreview : f; const rect = fixtureRectFt({ ...f, x: position.x, y: position.y }, layout.room.gridFt); const cellFt = layout.room.gridFt; return <div key={f.instanceId} tabIndex={0} role="button" aria-label={`${f.name}. Use arrow keys to move.`} className={`ls-fixture ${f.kind} ${selectedFixtureId === f.instanceId || group?.fixtures.includes(f.instanceId) ? 'selected' : ''} ${dragPreview?.id === f.instanceId ? 'dragging' : ''}`} onPointerDown={(e) => startFixtureMove(e, f)} onPointerMove={previewFixtureMove} onPointerUp={finishFixtureMove} onPointerCancel={finishFixtureMove} onKeyDown={(e) => moveFixtureWithKeyboard(e, f)} onClick={(e) => { e.stopPropagation(); if (group?.fixtures.includes(f.instanceId)) return; setSelectedFixtureId(f.instanceId); }} style={{ position: 'absolute', left: `${rect.left / cellFt / columns * 100}%`, top: `${rect.top / cellFt / rows * 100}%`, width: `${(rect.right - rect.left) / cellFt / columns * 100}%`, height: `${(rect.bottom - rect.top) / cellFt / rows * 100}%` }}><b>{f.name}</b><small>{f.widthFt} × {f.depthFt} ft</small></div>; })}{paletteDragPos && paletteDragPos.onCanvas && <div className={`ls-fixture ${paletteDragPos.kind} ls-fixture-ghost`} style={{ gridColumn: `${paletteDragPos.x + 1} / span ${Math.max(1, Math.ceil(paletteDragPos.widthFt / layout.room.gridFt))}`, gridRow: `${paletteDragPos.y + 1} / span ${Math.max(1, Math.ceil(paletteDragPos.depthFt / layout.room.gridFt))}` }}><b>{paletteDragPos.floorItem?.name ?? FIXTURE_DEFAULTS[paletteDragPos.kind].name}</b><small>{paletteDragPos.widthFt} × {paletteDragPos.depthFt} ft</small></div>}{marquee && <div className="ls-marquee" style={{ left: `${marquee.left / (columns * layout.room.gridFt) * 100}%`, top: `${marquee.top / (rows * layout.room.gridFt) * 100}%`, width: `${(marquee.right - marquee.left) / (columns * layout.room.gridFt) * 100}%`, height: `${(marquee.bottom - marquee.top) / (rows * layout.room.gridFt) * 100}%` }} />}</div></div>{group && <div className="ls-group-bar"><span>{group.fixtures.length + group.objects.length} items selected</span><button type="button" onClick={deleteSelection}>Delete selected</button><button type="button" onClick={clearGroup}>Clear selection</button></div>}<div className="ls-status">{message}</div></main>
-      {showIntro && <GuidedFlowIntro onDismiss={() => { setShowIntro(false); setOpenQuestion(firstUnanswered(categoryMode)); }} />}
-      {!showIntro && openQuestion && <PlacementQuestionBox category={openQuestion} index={CATEGORY_ORDER.indexOf(openQuestion) + 1} subgroups={subgroupsFor(openQuestion)} selected={subSelection[openQuestion]} onToggleSubgroup={(key) => toggleSubgroup(openQuestion, key)} onSelectAll={() => selectAllSubgroups(openQuestion)} hoveredSubgroup={hoveredSubgroup} onHoverSubgroup={setHoveredSubgroup} note={openQuestion === 'fixtures' ? 'Any fixtures not placed manually will be derived from unassigned space.' : undefined} onCommit={(mode) => commitCategoryQuestion(openQuestion, mode)} />}
+      {showIntro && <GuidedFlowIntro withFloorEquipment={floorItems.length > 0} onDismiss={() => { setShowIntro(false); setOpenQuestion(firstUnanswered(categoryMode, questionOrder)); }} />}
+      {!showIntro && !placeFloor && openQuestion && <PlacementQuestionBox category={openQuestion} index={questionOrder.indexOf(openQuestion) + 1} choices={openQuestion === 'floorEquipment' ? FLOOR_TIMING_CHOICES : undefined} subgroups={subgroupsFor(openQuestion)} selected={subSelection[openQuestion]} onToggleSubgroup={(key) => toggleSubgroup(openQuestion, key)} onSelectAll={() => selectAllSubgroups(openQuestion)} hoveredSubgroup={hoveredSubgroup} onHoverSubgroup={setHoveredSubgroup} note={openQuestion === 'fixtures' ? 'Any fixtures not placed manually will be derived from unassigned space.' : openQuestion === 'floorEquipment' ? `${floorItems.reduce((n, e) => n + e.quantity, 0)} floor-standing unit(s): ${floorItems.map((e) => e.name).join(', ')}.` : undefined} onCommit={(mode) => commitCategoryQuestion(openQuestion, mode)} />}
       <aside className="ls-sidebar ls-right">
         <FixtureDetailsPanel selectedBaseObject={selectedBaseObject} room={layout.room} updateSelectedBaseObject={updateSelectedBaseObject} updateSelectedBaseFootprint={updateSelectedBaseFootprint} deleteSelection={deleteSelection} selectedFixture={selectedFixture} rotateSelected={rotateSelected} removeSelected={removeSelected} updateSelectedClearance={updateSelectedClearance} />
       </aside>

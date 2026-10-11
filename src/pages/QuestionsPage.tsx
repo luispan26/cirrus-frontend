@@ -111,14 +111,15 @@ export function QuestionsPage() {
   // report's "Edit questionnaire", see ReportPage.tsx).
   useEffect(() => {
     const state = location.state as {
-      spaceFromSandbox?: { width_ft: number; height_ft: number; door?: { wall: WallSide; offsetFt: number; hinge?: DoorHinge }; layout?: unknown; geometry?: unknown; arrangement?: Record<string, unknown> };
+      spaceFromSandbox?: { width_ft: number; height_ft: number; door?: { wall: WallSide; offsetFt: number; hinge?: DoorHinge }; layout?: unknown; geometry?: unknown; arrangement?: Record<string, unknown>; floorTiming?: 'before' | 'after' };
       startAtQuestionId?: string;
       generatedLayout?: unknown;
     } | null;
     if (!state) return;
     if (state.spaceFromSandbox) {
-      const { width_ft, height_ft, door, layout, geometry, arrangement } = state.spaceFromSandbox;
+      const { width_ft, height_ft, door, layout, geometry, arrangement, floorTiming } = state.spaceFromSandbox;
       setField('width_ft', String(width_ft));
+      setField('floor_equipment_timing', floorTiming ?? null);
       setField('height_ft', String(height_ft));
       setField('space_method', 'sandbox');
       for (const [key, value] of Object.entries(arrangement ?? {})) setField(key, value);
@@ -1414,7 +1415,7 @@ function LayoutGenerationSettings({ answers, setField }: { answers: Answers; set
   const zoneHeadroom = Number(answers.layout_zone_headroom) || LAYOUT_SETTING_DEFAULTS.zoneHeadroom;
   return (
     <div className="field-wrap">
-      <p className="q-inline-help">Choose Maximum fit, Main wall, and wall benches in the room sandbox on the Space step.</p>
+      <p className="q-inline-help">Choose the main wall in the room sandbox on the Space step (by default, the wall with the main door). Benches go along the walls only when the islands can’t give every zone its space.</p>
       <label className="field-label" style={{ marginTop: 14 }}>Working space on every bench: {workingSpacePct}%</label>
       <p className="q-inline-help" style={{ marginTop: 0, marginBottom: 6 }}>The share of each bench top kept free for working. Zones are sized so their equipment fills the rest.</p>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

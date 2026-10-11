@@ -234,6 +234,9 @@ export const INTAKE_FIELD_KEYS = [
   'space_sandbox_layout', 'space_geometry',
   // How the generator lays out benches (Layout preferences step).
   'layout_mode', 'layout_main_wall', 'layout_same_direction', 'layout_wall_benches', 'layout_working_space_pct', 'layout_zone_headroom',
+  // The sandbox's last question: place floor equipment before or after
+  // generation ('before' | 'after'; unset = after).
+  'floor_equipment_timing',
   'layout_separate_zones', 'layout_optimizer_balance',
   // Per-equipment zone reassignment and "fixed" flags (equipment step):
   // equipment_zones is the zone of each Owned / New pick,
@@ -249,7 +252,7 @@ export const INTAKE_FIELD_KEYS = [
 export const DEFAULT_WORKING_SPACE_PCT = 35;
 // Weekly runs every protocol starts with when it enters the selection.
 export const DEFAULT_RUNS_PER_WEEK = 5;
-export const LAYOUT_SETTING_DEFAULTS = { mode: 'max_fit' as const, sameDirection: true, wallBenches: false, workingSpacePct: DEFAULT_WORKING_SPACE_PCT, zoneHeadroom: 1.25, separateZones: false, optimizerBalance: 0.5 };
+export const LAYOUT_SETTING_DEFAULTS = { mode: 'main_wall' as const, sameDirection: true, wallBenches: false, workingSpacePct: DEFAULT_WORKING_SPACE_PCT, zoneHeadroom: 1.25, separateZones: false, optimizerBalance: 0.5 };
 
 // The layout zone an item goes to unless reassigned: its biomaterial list's
 // zone (the backend's workflow-zones.ts SOURCE_TO_ZONE), else General.
@@ -304,6 +307,8 @@ export function resolveOperations(a: Answers): string[] {
 }
 
 export interface FinalIntakeJson {
+  // Sandbox's last question; unset = after generation.
+  floor_equipment_timing?: 'before' | 'after';
   scenario: string;
   // Derived from whether existing_equipment_meta has any entries (see
   // hasExistingEquipment below), not asked as its own question anymore.
@@ -447,8 +452,10 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
       ...(a.space_method === 'sandbox' && a.space_geometry ? { layout: a.space_sandbox_layout, geometry: a.space_geometry } : {}),
     },
     layout_options: {
-      mode: a.layout_mode === 'main_wall' ? 'main_wall' : LAYOUT_SETTING_DEFAULTS.mode,
-      main_wall: a.layout_mode === 'main_wall' ? ((a.layout_main_wall as WallSide | undefined) ?? 'S') : null,
+      // Always a main wall now; none picked = the wall with the main door
+      // (the backend works it out from the room).
+      mode: 'main_wall',
+      main_wall: (a.layout_main_wall as WallSide | null | undefined) || null,
       same_direction: (a.layout_same_direction as boolean | undefined) ?? LAYOUT_SETTING_DEFAULTS.sameDirection,
       wall_benches: (a.layout_wall_benches as boolean | undefined) ?? LAYOUT_SETTING_DEFAULTS.wallBenches,
       working_space_pct: Number(a.layout_working_space_pct) || LAYOUT_SETTING_DEFAULTS.workingSpacePct,
@@ -458,6 +465,7 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
     },
     equipment_zones: (a.equipment_zones as Record<string, string>) || {},
     equipment_fixed: (a.equipment_fixed as string[]) || [],
+    ...(a.floor_equipment_timing === 'before' || a.floor_equipment_timing === 'after' ? { floor_equipment_timing: a.floor_equipment_timing } : {}),
     budget: { desired: budgetDesired, max: budgetMax || budgetDesired, scope: 'equipment_only' },
     allocation: { equipment: 1, construction: 0, staffing: 0, consumables: 0, contingency: 0 },
     demand: { runs_per_week_by_operation: runsPerWeekByOperation, protocol_ids_by_operation: protocolIdsByOperation },
