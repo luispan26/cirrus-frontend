@@ -107,6 +107,9 @@ export interface SandboxFixture {
   depthFt: number;
   orientation: FixtureOrientation;
   clearance?: FixtureClearance;
+  // Floor-standing equipment placed by hand: the catalog item this fixture
+  // stands for (one unit of a report's plan.floorItems entry).
+  equipmentId?: string;
 }
 
 export interface SandboxLayout {
@@ -119,6 +122,9 @@ export interface SandboxLayout {
   electricalEndpoints: ElectricalEndpoint[];
   electricalCircuits: ElectricalCircuit[];
   updatedAt: string;
+  // Floor-standing equipment to place by hand (see FloorEquipmentPanel),
+  // from the questionnaire's equipment step when opened from the intake.
+  floorEquipment?: { equipmentId: string; name: string; quantity: number; widthFt: number; depthFt: number; placeholderSize?: boolean }[];
 }
 
 // The sandbox grid: 6", so every bench edge (6 × 2.5 ft, placed on the

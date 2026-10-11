@@ -1,11 +1,11 @@
-// The equipment step's list, grouped into the three workflow zones the
-// floor plan and the equipment optimizer use (General, Microbial,
-// Mammalian). Every item comes from one of:
+// The equipment step's list, grouped into the workflow zones the floor plan
+// and the equipment optimizer use (General, Bacterial, Yeast, Mammalian).
+// Every item comes from one of:
 //   - a basic list (General Lab, Biosafety-Required, Bacterial/Yeast/
 //     Mammalian Basic) — goes to that list's zone (General Lab and
 //     Biosafety-Required -> General), one unit per list, so an item on the
 //     General Lab and Bacterial Basic lists gets one unit in General and one
-//     in Microbial;
+//     in Bacterial;
 //   - a selected protocol (Protocols step) — every piece of equipment
 //     mapped to its steps goes to the protocol's zone, after the user's
 //     replacements for this lab. Protocols in one zone share equipment:
@@ -22,24 +22,34 @@ import {
   type Answers, type EquipmentCatalogEntry, type EquipmentListSummary,
 } from './questions';
 
-export type ZoneId = 'general' | 'microbial' | 'mammalian';
+export type ZoneId = 'general' | 'bacterial' | 'yeast' | 'mammalian';
 
+// Same colors as the report's floor plan (lab-plan.ts ZONE_COLORS).
 export const EQUIPMENT_ZONES: { id: ZoneId; label: string; color: string }[] = [
-  { id: 'general', label: 'General', color: '#00A3A3' },
-  { id: 'microbial', label: 'Microbial', color: '#3D8B3D' },
-  { id: 'mammalian', label: 'Mammalian', color: '#7B4FD6' },
+  { id: 'general', label: 'General', color: '#69707F' },
+  { id: 'bacterial', label: 'Bacterial', color: '#049295' },
+  { id: 'yeast', label: 'Yeast', color: '#8C7CFF' },
+  { id: 'mammalian', label: 'Mammalian', color: '#FF3FA4' },
 ];
 
 export function isZoneId(value: unknown): value is ZoneId {
-  return value === 'general' || value === 'microbial' || value === 'mammalian';
+  return value === 'general' || value === 'bacterial' || value === 'yeast' || value === 'mammalian';
+}
+
+// A zone saved before Microbial was split into Bacterial and Yeast goes to
+// Bacterial unless only yeast was picked (same rule as the backend's
+// legacyMicrobialZone in workflow-zones.ts).
+function savedZone(value: unknown, biomaterials: string[]): ZoneId | undefined {
+  if (value === 'microbial') return biomaterials.includes('yeast') && !biomaterials.includes('bacteria') ? 'yeast' : 'bacterial';
+  return isZoneId(value) ? value : undefined;
 }
 
 // Basic-list category keys and protocol cell types -> zone.
 export const ZONE_BY_SOURCE: Record<string, ZoneId> = {
   general: 'general',
   bsl: 'general',
-  bacteria: 'microbial',
-  yeast: 'microbial',
+  bacteria: 'bacterial',
+  yeast: 'yeast',
   mammalian_adherent: 'mammalian',
   mammalian_suspension: 'mammalian',
 };
@@ -73,8 +83,8 @@ export interface ProtocolEquipmentInput {
 }
 
 // The zone(s) a protocol's equipment goes in, from its Validated Protocol
-// cell types: bacteria/yeast -> Microbial, mammalian -> Mammalian, general
-// -> General. Only cell types the user picked as biomaterials (or
+// cell types: bacteria -> Bacterial, yeast -> Yeast, mammalian -> Mammalian,
+// general -> General. Only cell types the user picked as biomaterials (or
 // 'general') count; a protocol added by hand for a biomaterial that isn't
 // picked uses all its cell types; none at all -> General. A protocol tagged
 // for two families gets a copy in each zone (same rule as basic lists).
@@ -208,8 +218,8 @@ export function computeZoneEquipment(
     if (!list) return;
     const listZone = ZONE_BY_SOURCE[sourceKey];
     for (const equipmentId of list.equipmentIds) {
-      const moved = moves[`${listZone}:${equipmentId}`];
-      const c = cell(isZoneId(moved) ? moved : listZone, equipmentId);
+      const moved = savedZone(moves[`${listZone}:${equipmentId}`], biomaterials);
+      const c = cell(moved ?? listZone, equipmentId);
       c.listQuantity += 1;
       pushUnique(c.listSources, sourceKey);
       if (locked) c.locked = true;
@@ -237,11 +247,11 @@ export function computeZoneEquipment(
   const ownedMeta = (answers.existing_equipment_meta as Record<string, { name: string; count: number }>) || {};
   const neededMeta = (answers.needed_equipment_meta as Record<string, { name: string; count: number }>) || {};
   for (const [equipmentId, meta] of Object.entries(ownedMeta)) {
-    const zone = isZoneId(pickZones[equipmentId]) ? pickZones[equipmentId] as ZoneId : 'general';
+    const zone = savedZone(pickZones[equipmentId], biomaterials) ?? 'general';
     cell(zone, equipmentId).ownedQuantity = Math.max(1, Math.round(meta.count) || 1);
   }
   for (const [equipmentId, meta] of Object.entries(neededMeta)) {
-    const zone = isZoneId(pickZones[equipmentId]) ? pickZones[equipmentId] as ZoneId : 'general';
+    const zone = savedZone(pickZones[equipmentId], biomaterials) ?? 'general';
     cell(zone, equipmentId).neededQuantity = Math.max(1, Math.round(meta.count) || 1);
   }
 

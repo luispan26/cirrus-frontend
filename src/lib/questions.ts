@@ -51,6 +51,9 @@ export type Answers = Record<string, unknown>;
 // selected protocol's equipment is placed in its zone there (see
 // zone-equipment.ts). Budget warnings are advisory. Arrangement settings
 // round-trip through the sandbox; other preferences remain in the form.
+// The protocols step pre-selects essential protocols for the selected
+// biomaterials (computeEssentialProtocolIds below; ProtocolPlanBody in
+// QuestionsPage.tsx) and lets the user add/remove on top of that.
 // Protocol selections are keyed by protocol ID, with frequencies kept per
 // protocol and aggregated to catalog operations in buildFinalIntakeJson.
 export const OPERATION_OPTS: QuestionOption[] = [
@@ -230,7 +233,7 @@ export const INTAKE_FIELD_KEYS = [
   // its drawn objects, and the same room as grid cells for the generator.
   'space_sandbox_layout', 'space_geometry',
   // How the generator lays out benches (Layout preferences step).
-  'layout_mode', 'layout_main_wall', 'layout_same_direction', 'layout_wall_benches', 'layout_working_space_pct',
+  'layout_mode', 'layout_main_wall', 'layout_same_direction', 'layout_wall_benches', 'layout_working_space_pct', 'layout_zone_headroom',
   'layout_separate_zones', 'layout_optimizer_balance',
   // Per-equipment zone reassignment and "fixed" flags (equipment step):
   // equipment_zones is the zone of each Owned / New pick,
@@ -246,7 +249,15 @@ export const INTAKE_FIELD_KEYS = [
 export const DEFAULT_WORKING_SPACE_PCT = 35;
 // Weekly runs every protocol starts with when it enters the selection.
 export const DEFAULT_RUNS_PER_WEEK = 5;
-export const LAYOUT_SETTING_DEFAULTS = { mode: 'max_fit' as const, sameDirection: true, wallBenches: false, workingSpacePct: DEFAULT_WORKING_SPACE_PCT, separateZones: false, optimizerBalance: 0.5 };
+export const LAYOUT_SETTING_DEFAULTS = { mode: 'max_fit' as const, sameDirection: true, wallBenches: false, workingSpacePct: DEFAULT_WORKING_SPACE_PCT, zoneHeadroom: 1.25, separateZones: false, optimizerBalance: 0.5 };
+
+// The layout zone an item goes to unless reassigned: its biomaterial list's
+// zone (the backend's workflow-zones.ts SOURCE_TO_ZONE), else General.
+const SOURCE_TO_LAYOUT_ZONE: Record<string, string> = { bacteria: 'bacterial', yeast: 'yeast', mammalian_adherent: 'mammalian', mammalian_suspension: 'mammalian' };
+export function naturalLayoutZone(sources: string[]): string {
+  for (const source of sources) if (SOURCE_TO_LAYOUT_ZONE[source]) return SOURCE_TO_LAYOUT_ZONE[source];
+  return 'general';
+}
 
 // No steps are skipped today — there used to be a gating "does your space
 // already have equipment?" question with a conditional step behind it,
@@ -347,7 +358,7 @@ export interface FinalIntakeJson {
   // separate_zones: contamination control (an aisle between different
   // zones). optimizer_balance: for the equipment optimizer only — 0 = favor
   // meeting soft constraints, 1 = favor minimizing walking distance.
-  layout_options: { mode: 'max_fit' | 'main_wall'; main_wall: WallSide | null; same_direction: boolean; wall_benches: boolean; working_space_pct: number; separate_zones: boolean; optimizer_balance: number };
+  layout_options: { mode: 'max_fit' | 'main_wall'; main_wall: WallSide | null; same_direction: boolean; wall_benches: boolean; working_space_pct: number; zone_headroom: number; separate_zones: boolean; optimizer_balance: number };
   // equipmentId -> zone id, for equipment moved to another zone.
   equipment_zones: Record<string, string>;
   // Equipment the optimizer must never move.
@@ -441,6 +452,7 @@ export function buildFinalIntakeJson(a: Answers): FinalIntakeJson {
       same_direction: (a.layout_same_direction as boolean | undefined) ?? LAYOUT_SETTING_DEFAULTS.sameDirection,
       wall_benches: (a.layout_wall_benches as boolean | undefined) ?? LAYOUT_SETTING_DEFAULTS.wallBenches,
       working_space_pct: Number(a.layout_working_space_pct) || LAYOUT_SETTING_DEFAULTS.workingSpacePct,
+      zone_headroom: Number(a.layout_zone_headroom) || LAYOUT_SETTING_DEFAULTS.zoneHeadroom,
       separate_zones: (a.layout_separate_zones as boolean | undefined) ?? LAYOUT_SETTING_DEFAULTS.separateZones,
       optimizer_balance: (a.layout_optimizer_balance as number | undefined) ?? LAYOUT_SETTING_DEFAULTS.optimizerBalance,
     },

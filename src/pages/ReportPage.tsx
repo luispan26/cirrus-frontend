@@ -18,9 +18,11 @@ export function ReportPage() {
 
   // After a zone edit re-runs the layout, the new generated layout replaces
   // the old one here and in the router state, so a refresh keeps it.
-  function handleLayoutUpdated(generated: unknown) {
+  function handleLayoutUpdated(generated: unknown, reportData?: Record<string, unknown>) {
     if (!routedData) return;
-    navigate(location.pathname, { replace: true, state: { ...routedState, reportData: { ...routedData, generated_layout: generated } } });
+    // An edit re-runs the equipment optimizer too, so its summary changes with the layout.
+    const optimization = reportData && 'optimization' in reportData ? { optimization: reportData.optimization } : {};
+    navigate(location.pathname, { replace: true, state: { ...routedState, reportData: { ...routedData, generated_layout: generated, ...optimization } } });
   }
 
   function handleEditQuestionnaire() {

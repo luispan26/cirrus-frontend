@@ -184,6 +184,7 @@ export function LayoutFloorPlan({
   plan,
   zoneOfBench,
   onFixtureClick,
+  fixtureClickHint,
   showPlanLayers = true,
 }: {
   layout: SandboxLayout;
@@ -195,6 +196,8 @@ export function LayoutFloorPlan({
   plan?: LabPlan | null;
   zoneOfBench?: (planBenchId: string) => string | undefined;
   onFixtureClick?: (fixtureId: string, event: React.MouseEvent) => void;
+  // What clicking a bench does, for its tooltip.
+  fixtureClickHint?: string;
   showPlanLayers?: boolean;
 }) {
   const interactive = !!onHoverChange;
@@ -285,7 +288,7 @@ export function LayoutFloorPlan({
         const zoneId = benchZone(fixture);
         const zoneName = zoneId ? zoneNames.get(zoneId) ?? zoneId : null;
         const summary = zoneName
-          ? `${fixture.name} — ${zoneName} zone.${onFixtureClick ? ' Click to move this bench into the selected zone.' : ''}`
+          ? `${fixture.name} — ${zoneName} zone.${onFixtureClick ? ` ${fixtureClickHint ?? 'Click to move this bench into the selected zone.'}` : ''}`
           : fixture.name;
         const color = zoneId ? zoneColor(zoneId, zoneIds) : UNZONED_FILL;
         const isHovered = hoveredId === fixture.instanceId;
@@ -350,15 +353,18 @@ export function LayoutFloorPlan({
           <title>Pipette work area (working space)</title>
         </rect>
       ))}
-      {!zoneOfBench && plan?.initialEquipment?.placements.map((item) => {
-        const spanX = item.spanXFt ?? item.widthFt;
-        const spanY = item.spanYFt ?? item.depthFt;
+      {/* Floor equipment (benchId null) is drawn by its sandbox fixture. */}
+      {!zoneOfBench && plan?.initialEquipment?.placements.filter((item) => item.benchId !== null).map((item) => {
+        const spanX = item.spanXFt ?? item.widthFt ?? 0;
+        const spanY = item.spanYFt ?? item.depthFt ?? 0;
         const vertical = spanY > spanX;
         const cx = item.xFt + spanX / 2;
         const cy = item.yFt + spanY / 2;
         return (
           <g key={item.instanceId} style={{ pointerEvents: 'none' }}>
-            <rect x={item.xFt} y={item.yFt} width={spanX} height={spanY} rx={0.06} fill="#fff" fillOpacity={0.85} stroke="#263b46" strokeWidth={0.05} strokeDasharray={item.placeholderSize ? '0.12 0.08' : undefined} />
+            {/* Too big for a bench: it replaces this bench when the lab is built. */}
+            {item.replacesBench && <title>{`${item.name} — replaces this bench`}</title>}
+            <rect x={item.xFt} y={item.yFt} width={spanX} height={spanY} rx={0.06} fill="#fff" fillOpacity={item.replacesBench ? 0.95 : 0.85} stroke={item.replacesBench ? '#C41678' : '#263b46'} strokeWidth={item.replacesBench ? 0.09 : 0.05} strokeDasharray={item.placeholderSize ? '0.12 0.08' : undefined} />
             <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle" fontSize={0.18} fill="#263b46" transform={vertical ? `rotate(-90 ${cx} ${cy})` : undefined}>{truncateLabel(item.name, Math.max(spanX, spanY) - 0.1, 0.18)}{item.fixed ? ' *' : ''}</text>
           </g>
         );

@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { DonutChart } from './DonutChart';
 import { GeneratedLayoutPlan, type GeneratedLayout } from './GeneratedLayoutPlan';
+import { LayoutOptimization } from './LayoutOptimization';
 import { BASIC_EQUIPMENT_CATEGORIES } from '../lib/questions';
 
 function cap(s: string): string {
@@ -131,8 +132,9 @@ function computeCostByCategory(bom: any[]): { name: string; value: number; color
 }
 
 // reportId (absent for pasted JSON) enables editing the generated plan's
-// zones; onLayoutUpdated receives the re-run generated layout.
-export function ReportView({ data, reportId, onLayoutUpdated }: { data: Record<string, any>; reportId?: string | null; onLayoutUpdated?: (generated: GeneratedLayout) => void }) {
+// zones; onLayoutUpdated receives the re-run generated layout and the
+// updated report data (its re-run optimization).
+export function ReportView({ data, reportId, onLayoutUpdated }: { data: Record<string, any>; reportId?: string | null; onLayoutUpdated?: (generated: GeneratedLayout, reportData?: Record<string, unknown>) => void }) {
   const bom = asArray(data.bom);
   const staff = asArray(data.staff);
   const recommended = asArray(data.recommended_equipment);
@@ -223,6 +225,8 @@ export function ReportView({ data, reportId, onLayoutUpdated }: { data: Record<s
       )}
 
       <GeneratedLayoutPlan value={data.generated_layout} reportId={reportId} onUpdated={onLayoutUpdated} />
+
+      <LayoutOptimization value={data.optimization} />
 
       {staff.length > 0 && (
         <>

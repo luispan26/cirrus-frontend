@@ -14,6 +14,9 @@ export interface PlanOptions {
   sameDirection: boolean;
   wallBenches: boolean;
   workingSpacePct: number;
+  // Bench space each zone gets over its equipment's need (1.25 = 25% more);
+  // spare benches go to General. (Absent on plans made before it existed.)
+  zoneHeadroom?: number;
   // Contamination control: an aisle always runs between different zones.
   separateZonesWithAisles: boolean;
   // For the equipment optimizer only: 0 = favor meeting soft constraints,
@@ -28,6 +31,9 @@ export interface PlanBench {
   unitId: string;
   islandId: string | null;
   zoneId: string;
+  // Benches facing into one working aisle: always one zone.
+  // (Absent on plans made before zone units.)
+  zoneUnitId?: string;
   rect: PlanRect;
   facing: PlanWall;
   accessRect: PlanRect;
@@ -65,10 +71,13 @@ export interface LabPlan {
     // widthFt runs along the bench, depthFt front to back; spanXFt/spanYFt
     // are the footprint's extent on the floor plan (absent on reports made
     // before the one-row bench rules, when they equalled width/depth).
-    placements: { instanceId: string; equipmentId: string; zoneId: string; benchId: string; name: string; fixed: boolean; placeholderSize: boolean; xFt: number; yFt: number; widthFt: number; depthFt: number; spanXFt?: number; spanYFt?: number; offsetFt?: number; rotationDegrees: number; workAreaId?: string }[];
+    // benchId null: floor-standing equipment placed by hand in the sandbox
+    // (drawn by its sandbox fixture), reached from accessCell.
+    placements: { instanceId: string; equipmentId: string; zoneId: string | null; benchId: string | null; name: string; fixed: boolean; placeholderSize: boolean; xFt: number; yFt: number; widthFt?: number; depthFt?: number; spanXFt?: number; spanYFt?: number; offsetFt?: number; rotationDegrees?: number; workAreaId?: string; accessCell?: [number, number]; replacesBench?: boolean }[];
     // Pipette work areas: 3 ft of bench, all working space, 1-2 pipettes.
     workAreas?: { id: string; benchId: string; zoneId: string; offsetFt: number; lengthFt: number; xFt: number; yFt: number; spanXFt: number; spanYFt: number; instanceIds: string[] }[];
-    unplaced: { instanceId: string; equipmentId: string; zoneId: string; reason: string }[];
+    // zoneId null: floor-standing equipment not yet placed in the sandbox.
+    unplaced: { instanceId: string; equipmentId: string; zoneId: string | null; reason: string }[];
   };
   version: number;
   gridInches: number;
@@ -94,10 +103,12 @@ export function readLabPlan(layoutData: unknown): LabPlan | null {
   return plan && typeof plan === 'object' && Array.isArray(plan.benches) && Array.isArray(plan.zones) ? plan : null;
 }
 
-// The three default zones keep fixed colors; zones a user adds cycle
-// through the rest.
-const ZONE_COLORS: Record<string, string> = { microbial: '#3D8B3D', general: '#3462C9', mammalian: '#B5442E' };
-const EXTRA_ZONE_COLORS = ['#C9791C', '#7B4FD6', '#D64F9E', '#00A3A3', '#8A5A3B', '#6B7280'];
+// The default zones keep fixed colors (General, the shared hub, neutral);
+// zones a user adds cycle through the rest. All from the Cirrus palette
+// (index.css :root). Microbial: plans made before it was split into
+// Bacterial and Yeast.
+const ZONE_COLORS: Record<string, string> = { bacterial: '#049295', yeast: '#8C7CFF', mammalian: '#FF3FA4', general: '#69707F', microbial: '#049295' };
+const EXTRA_ZONE_COLORS = ['#00D5D5', '#C41678', '#FF5CB8'];
 
 export function zoneColor(zoneId: string, zoneIds: string[]): string {
   if (ZONE_COLORS[zoneId]) return ZONE_COLORS[zoneId];
@@ -152,4 +163,20 @@ export function cellRuns(cells: PlanCell[]): PlanRect[] {
     }
   }
   return runs;
+}
+
+// What stands on a bench: its items (pipettes listed with their work area),
+// how much of its 6 ft they take, or the equipment replacing it.
+export function benchContents(plan: LabPlan, benchId: string) {
+  const placements = (plan.initialEquipment?.placements ?? []).filter((p) => p.benchId === benchId);
+  const replacing = placements.find((p) => p.replacesBench);
+  const areas = (plan.initialEquipment?.workAreas ?? []).filter((a) => a.benchId === benchId);
+  const fmt = (n: number) => `${Math.round(n * 100) / 100}`;
+  const items = placements.filter((p) => !p.replacesBench).sort((a, b) => (a.offsetFt ?? 0) - (b.offsetFt ?? 0)).map((p) => ({
+    key: p.instanceId,
+    name: p.name,
+    detail: p.workAreaId ? 'pipette work area (3 ft)' : `${fmt(p.widthFt ?? 0)} × ${fmt(p.depthFt ?? 0)} ft${p.placeholderSize ? ', size not measured' : ''}${p.fixed ? ', fixed' : ''}`,
+  }));
+  const used = placements.filter((p) => !p.workAreaId).reduce((sum, p) => sum + (p.widthFt ?? 0), 0) + areas.reduce((sum, a) => sum + a.lengthFt, 0);
+  return { items, usedFt: fmt(Math.min(6, used)), replacedBy: replacing?.name ?? null };
 }
