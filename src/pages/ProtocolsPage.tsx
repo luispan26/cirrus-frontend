@@ -9,6 +9,7 @@ import {
   VALIDATED_PROTOCOLS_QUERY,
 } from '../graphql/operations';
 import { SearchableSelect } from '../components/SearchableSelect';
+import { StandardizationGuideDownload } from '../components/StandardizationGuideDownload';
 
 const SEARCH_PAGE_SIZE = 10;
 
@@ -271,7 +272,10 @@ export function ProtocolsPage() {
           </div>
           <div style={{ fontSize: 12, color: 'var(--mid)' }}>Browse protocols, manage step-equipment assignments, and validate protocols for the questionnaire</div>
         </div>
-        <button className="btn-out" onClick={() => navigate('/settings')}>← Settings</button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <StandardizationGuideDownload style={{ padding: '8px 16px' }} />
+          <button className="btn-out" onClick={() => navigate('/settings')}>← Settings</button>
+        </div>
       </div>
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>

@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import { DonutChart } from './DonutChart';
 import { GeneratedLayoutPlan, type GeneratedLayout } from './GeneratedLayoutPlan';
 import { LayoutOptimization } from './LayoutOptimization';
+import { StandardizationGuideDownload } from './StandardizationGuideDownload';
 import { BASIC_EQUIPMENT_CATEGORIES } from '../lib/questions';
 
 function cap(s: string): string {
@@ -200,9 +201,9 @@ export function ReportView({ data, reportId, onLayoutUpdated }: { data: Record<s
         </>
       )}
 
+      <div className="sec-head">Protocols<div className="sec-line" /></div>
       {selectedProtocols.length > 0 && (
         <>
-          <div className="sec-head">Protocols<div className="sec-line" /></div>
           <div style={{ borderRadius: 10, overflow: 'hidden', marginBottom: 4 }}>
             <table className="rep-table">
               <thead><tr><th>Protocol</th><th>Weekly runs</th><th></th></tr></thead>
@@ -223,6 +224,13 @@ export function ReportView({ data, reportId, onLayoutUpdated }: { data: Record<s
           </div>
         </>
       )}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap', background: '#fff', border: '1px solid var(--br)', borderRadius: 12, padding: '12px 16px', marginTop: 8, marginBottom: 4 }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>Protocol Standardization Guide</div>
+          <div style={{ fontSize: 12, color: 'var(--mid)' }}>The shared format, material names and action wording to use when writing these protocols.</div>
+        </div>
+        <StandardizationGuideDownload />
+      </div>
 
       <GeneratedLayoutPlan value={data.generated_layout} reportId={reportId} onUpdated={onLayoutUpdated} floorPromptPending={data.floor_equipment_prompt === 'pending'} />
 
