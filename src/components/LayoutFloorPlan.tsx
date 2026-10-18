@@ -13,6 +13,12 @@ const DOOR_CLEARANCE_EDGE = 'rgba(214,79,79,.75)';
 // Fill for a fixture that isn't a zoned bench (e.g. an older report's bench).
 const UNZONED_FILL = '#A7A2AD';
 
+// The emergency shower's clear floor circle (it hangs from the ceiling) and
+// the eye wash beside the door — see the backend's safety-fixtures.ts.
+export const SHOWER_FILL = 'rgba(255,214,0,.32)';
+export const SHOWER_EDGE = '#b38f00';
+export const EYEWASH_FILL = '#3fae6a';
+
 // One glyph per zone (wet_lab / dry_lab / automation / unassigned) rather
 // than per stationId — a finite, meaningful set instead of an arbitrary icon
 // per station. Path data matches components/Icons.tsx's line-icon style
@@ -280,7 +286,29 @@ export function LayoutFloorPlan({
       {layout.baseObjects.filter((o) => o.kind === 'window' && o.footprint.points.length).map((window) => <WindowSymbol key={window.id} object={window} />)}
       {layout.baseObjects.filter((o) => o.kind === 'door' && o.footprint.points.length).map((door) => <DoorSymbol key={door.id} object={door} room={room} />)}
 
-      {(layout.fixtures as PlanFixture[]).map((fixture) => {
+      {(layout.fixtures as PlanFixture[]).filter((fixture) => fixture.kind === 'safety_shower' || fixture.kind === 'eyewash').map((fixture) => {
+        const { width, height } = exactFootprint(fixture);
+        const x = fixture.x * layout.room.gridFt;
+        const y = fixture.y * layout.room.gridFt;
+        if (fixture.kind === 'safety_shower') {
+          return (
+            <g key={fixture.instanceId} style={{ pointerEvents: interactive ? undefined : 'none' }}>
+              {interactive && <title>Emergency shower — hangs from the ceiling; this clear circle stays free of benches, work space and equipment.</title>}
+              <circle cx={x + width / 2} cy={y + height / 2} r={Math.min(width, height) / 2} style={{ fill: SHOWER_FILL, stroke: SHOWER_EDGE, strokeWidth: 0.07, strokeDasharray: '.16 .12' }} />
+              {showDetail && <text x={x + width / 2} y={y + height / 2} textAnchor="middle" dominantBaseline="middle" fontSize={0.3} fontFamily="var(--mono)" fill={INK} style={{ pointerEvents: 'none' }}>Shower</text>}
+            </g>
+          );
+        }
+        return (
+          <g key={fixture.instanceId} style={{ pointerEvents: interactive ? undefined : 'none' }}>
+            {interactive && <title>Emergency eye wash (wall-mounted, beside the main door)</title>}
+            <rect x={x} y={y} width={width} height={height} rx={0.12} style={{ fill: EYEWASH_FILL, stroke: INK, strokeWidth: 0.05 }} />
+            <text x={x + width / 2} y={y + height / 2} textAnchor="middle" dominantBaseline="middle" fontSize={0.3} fontFamily="var(--mono)" fill="#fff" style={{ pointerEvents: 'none' }}>EW</text>
+          </g>
+        );
+      })}
+
+      {(layout.fixtures as PlanFixture[]).filter((fixture) => fixture.kind !== 'safety_shower' && fixture.kind !== 'eyewash').map((fixture) => {
         const size = exactFootprint(fixture);
         const x = fixture.x * layout.room.gridFt;
         const y = fixture.y * layout.room.gridFt;

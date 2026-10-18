@@ -424,6 +424,10 @@ h1,h2,h3,h4,h5,h6{font-family:var(--head);font-weight:500;letter-spacing:-.01em}
 .lc-empty-library{padding:18px;border:1px dashed var(--br);border-radius:12px;color:var(--mid);font-size:11px;background:white}.lc-seed-card{cursor:default}.lc-seed-card:hover{border-color:var(--br);box-shadow:none}.lc-delete-seed{margin-top:3px;width:100%;border:1px solid var(--pk);background:var(--pkl);color:var(--pkd);border-radius:8px;padding:7px;font-size:9px;font-weight:700;cursor:pointer}.lc-delete-seed:disabled{opacity:.5}
 .ls-fixture-template.sink{background:#e1f4f7}.ls-fixture-template.cabinet{background:#f1e8db}.ls-fixture.sink{background:#8fd3de}.ls-fixture.cabinet{background:#cfb895}.lc-fixture.sink{fill:#8fd3de}.lc-fixture.cabinet{fill:#cfb895}
 .ls-fixture-template.refrigerator{background:#e9ecf5}.ls-fixture.refrigerator{background:#b9c2d8}.lc-fixture.refrigerator{fill:#b9c2d8}
+/* Emergency eye wash (green, like its sign) and the ceiling shower's clear
+   floor circle (yellow, dotted) — placed by generation, never dragged. */
+.ls-fixture.eyewash{background:#3fae6a;color:#fff;cursor:not-allowed;padding:0}.ls-fixture.eyewash small{display:none}
+.ls-fixture.safety_shower{background:rgba(255,214,0,.32);border:2px dotted #b38f00;outline:none;border-radius:50%;cursor:not-allowed;z-index:0}.ls-fixture.safety_shower small{display:none}
 
 /* HUD ACCENTS */
 .hud-corner,.q-card,.sc-card.active{position:relative}

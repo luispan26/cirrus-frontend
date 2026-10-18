@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom';
 import { useMutation, useQuery } from '@apollo/client/react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { LAYOUT_SANDBOX_CAPABILITIES_QUERY, MAXIMIZE_ZONES_AND_BENCHES_FOR_SANDBOX_MUTATION, PLACE_REPORT_FLOOR_EQUIPMENT_MUTATION } from '../graphql/operations';
-import { isAutoPlacedBench, BENCH_DEPTH_FT, BENCH_WIDTH_FT, EMPTY_SANDBOX_LAYOUT, buildBenchPlacementGeometryInput, canPlaceBaseObject, canPlaceFixture, centeredRectFootprint, computePlacementAvailability, doorHinge, fixtureFootprint, fixtureRectFt, offsetAlongWall, parseSandboxLayout, pointOnWall, polygonBounds, resizeRoom, SANDBOX_GRID_FT, sandboxFixturesFromBenchPlacement, validateSandboxLayout, wallRectFootprint, wallSideOfBounds, withGridFt, type DoorHinge, type FixtureClearance, type FixtureKind, type FixtureOrientation, type SandboxBaseObject, type SandboxFixture, type SandboxLayer, type SandboxLayout, type SandboxPolygon, type WallSide } from '../lib/layout-sandbox';
+import { isAutoPlacedBench, isSafetyFixture, BENCH_DEPTH_FT, BENCH_WIDTH_FT, EMPTY_SANDBOX_LAYOUT, buildBenchPlacementGeometryInput, canPlaceBaseObject, canPlaceFixture, centeredRectFootprint, computePlacementAvailability, doorHinge, fixtureFootprint, fixtureRectFt, offsetAlongWall, parseSandboxLayout, pointOnWall, polygonBounds, resizeRoom, SANDBOX_GRID_FT, sandboxFixturesFromBenchPlacement, validateSandboxLayout, wallRectFootprint, wallSideOfBounds, withGridFt, type DoorHinge, type FixtureClearance, type FixtureKind, type FixtureOrientation, type SandboxBaseObject, type SandboxFixture, type SandboxLayer, type SandboxLayout, type SandboxPolygon, type WallSide } from '../lib/layout-sandbox';
 import { Logo } from '../components/Logo';
 import { CanvasLayers } from '../components/sandbox/CanvasLayers';
 import { FixtureDetailsPanel } from '../components/sandbox/FixtureDetailsPanel';
@@ -207,9 +207,20 @@ export function LayoutSandboxPage() {
     const used = new Set((plan.initialEquipment?.placements ?? []).map((p) => p.benchId));
     return new Set(plan.benches.filter((b) => b.kind === 'wall' && !used.has(b.id)).map((b) => b.fixtureId));
   }, [placeFloor, layout]);
-  const othersFor = (equipmentId?: string) => (placeFloor && equipmentId && coldStorageIds.has(equipmentId) ? layout.fixtures.filter((f) => !swappableBenchFixtures.has(f.instanceId)) : layout.fixtures);
+  // After generation, floor equipment also keeps off the floor kept clear
+  // beside the doors and round the eye wash (the shower and eye wash are
+  // fixtures already).
+  const keepClearBlockers = useMemo<SandboxFixture[]>(() => {
+    const keepClear = placeFloor ? readLabPlan(layout)?.safety?.keepClear ?? [] : [];
+    const g = layout.room.gridFt;
+    return keepClear.map((r, i) => ({ instanceId: `keep-clear-${i}`, kind: 'cabinet', name: 'Kept clear', x: r.left / g, y: r.top / g, widthFt: r.right - r.left, depthFt: r.bottom - r.top, orientation: 0 }));
+  }, [placeFloor, layout]);
+  const othersFor = (equipmentId?: string) => [...(placeFloor && equipmentId && coldStorageIds.has(equipmentId) ? layout.fixtures.filter((f) => !swappableBenchFixtures.has(f.instanceId)) : layout.fixtures), ...(equipmentId ? keepClearBlockers : [])];
   const onSwappableBench = (fixture: SandboxFixture) => placeFloor && fixture.equipmentId && coldStorageIds.has(fixture.equipmentId) && !canPlaceFixture(fixture, layout.fixtures, layout.baseObjects, layout.room.gridFt);
-  const lockedInPlaceFloor = (fixture: SandboxFixture) => !!placeFloor && !fixture.equipmentId;
+  const lockedInPlaceFloor = (fixture: SandboxFixture) => isSafetyFixture(fixture) || (!!placeFloor && !fixture.equipmentId);
+  const lockedMessage = (fixture: SandboxFixture) => (isSafetyFixture(fixture)
+    ? 'The emergency eye wash and shower stay by the main door, where Cirrus placed them.'
+    : 'Benches stay where they were generated — only floor equipment moves here.');
   // Only computed while a fixture is actively being picked up or dragged —
   // the whole room's green/red availability for that exact footprint, not
   // just a single cell under the cursor, so the user can see every open
@@ -355,14 +366,14 @@ export function LayoutSandboxPage() {
   }
   function moveFixture(id: string, x: number, y: number) {
     const fixture = layout.fixtures.find((f) => f.instanceId === id); if (!fixture) return;
-    if (lockedInPlaceFloor(fixture)) return setMessage('Benches stay where they were generated — only floor equipment moves here.');
+    if (lockedInPlaceFloor(fixture)) return setMessage(lockedMessage(fixture));
     const moved = { ...fixture, x, y };
     if (!canPlaceFixture(moved, othersFor(fixture.equipmentId), layout.baseObjects, layout.room.gridFt)) return setMessage('That move overlaps another fixture or object.');
     updateLayout((p) => ({ ...p, fixtures: p.fixtures.map((f) => f.instanceId === id ? moved : f) })); setSelectedFixtureId(id); setMessage(onSwappableBench(moved) ? `${fixture.name} moved — it replaces the wall bench under it when you save.` : `${fixture.name} moved.`);
   }
   function startFixtureMove(event: React.PointerEvent<HTMLDivElement>, fixture: SandboxFixture) {
     if (event.button !== 0) return;
-    if (lockedInPlaceFloor(fixture)) { event.stopPropagation(); setSelectedFixtureId(fixture.instanceId); setMessage('Benches stay where they were generated — only floor equipment moves here.'); return; }
+    if (lockedInPlaceFloor(fixture)) { event.stopPropagation(); setSelectedFixtureId(fixture.instanceId); setMessage(lockedMessage(fixture)); return; }
     event.preventDefault(); event.stopPropagation(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
     if (group?.fixtures.includes(fixture.instanceId)) { startGroupDrag(event); return; }
     setGroup(null);
@@ -830,7 +841,7 @@ export function LayoutSandboxPage() {
     <div className="ls-workspace">
       <aside className="ls-sidebar"><label className="field-label">Layout name</label><input className="field-input" value={layout.name} onChange={(e) => updateLayout((p) => ({ ...p, name: e.target.value }))} /><div className="ls-room-fields" hidden={!!placeFloor} style={placeFloor ? { display: 'none' } : undefined}><label><span className="field-label">Width (ft)</span><input className="field-input" type="number" min="5" value={layout.room.widthFt} onChange={(e) => updateLayout((p) => resizeRoom(p, { widthFt: Math.max(5, Number(e.target.value)), heightFt: p.room.heightFt }))} /></label><label><span className="field-label">Depth (ft)</span><input className="field-input" type="number" min="5" value={layout.room.heightFt} onChange={(e) => updateLayout((p) => resizeRoom(p, { widthFt: p.room.widthFt, heightFt: Math.max(5, Number(e.target.value)) }))} /></label></div>
         {!placeFloor && <BenchArrangement value={arrangement} onChange={setArrangement} />}
-        {placeFloor && <p className="ls-help">Place your floor equipment on the open floor of the generated layout. Benches stay where they are. Fridges and freezers may also go on an empty wall bench — that bench is removed when you save. Anything you don’t place is listed as unplaced on the report.</p>}
+        {placeFloor && <p className="ls-help">Place your floor equipment on the open floor of the generated layout. Benches stay where they are. Fridges and freezers may also go on an empty wall bench — that bench is removed when you save. Nothing may go within 1.5 ft of a door, within 6 in. of the eye wash or under the emergency shower’s yellow circle. Anything you don’t place is listed as unplaced on the report.</p>}
         {showFloorPanel && <FloorEquipmentPanel afterGeneration={!!placeFloor} items={floorItems} placedCount={(equipmentId) => layout.fixtures.filter((f) => f.equipmentId === equipmentId).length} startDrag={startPaletteDrag} moveDrag={movePaletteDrag} finishDrag={finishPaletteDrag} cancelDrag={cancelPaletteDrag} />}
         {!placeFloor && paletteVisible('infrastructure', activeCategory) && <InfraPalette placingKind={placingKind} beginPlacing={beginPlacing} visibleLayers={infraVisibleLayers} />}
         {!placeFloor && paletteVisible('fixtures', activeCategory) && <FixturePalette newKind={newKind} setKind={setKind} newWidth={newWidth} setNewWidth={setNewWidth} newDepth={newDepth} setNewDepth={setNewDepth} newClearance={newClearance} setNewClearance={setNewClearance} startPaletteDrag={startPaletteDrag} movePaletteDrag={movePaletteDrag} finishPaletteDrag={finishPaletteDrag} cancelPaletteDrag={cancelPaletteDrag} visibleKinds={fixtureVisibleKinds} />}

@@ -10,6 +10,8 @@ export const INFRA_PALETTE: Array<{ layer: SandboxLayer; title: string; items: A
 ];
 export const FIXTURE_DEFAULTS: Record<FixtureKind, { name: string; widthFt: number; depthFt: number }> = {
   bench: { name: 'Bench', widthFt: BENCH_WIDTH_FT, depthFt: BENCH_DEPTH_FT }, laminarHood: { name: 'Laminar hood', widthFt: 4, depthFt: 2.5 }, sink: { name: 'Sink', widthFt: 3, depthFt: 2 }, cabinet: { name: 'Cabinet', widthFt: 3, depthFt: 2 }, refrigerator: { name: 'Refrigerator', widthFt: 3, depthFt: 3 }, door: { name: 'Door', widthFt: 3, depthFt: 1 }, waste: { name: 'Waste disposal', widthFt: 2, depthFt: 2 },
+  // Placed by generation only (sizes: backend safety-fixtures.ts).
+  eyewash: { name: 'Emergency eye wash', widthFt: 15.5 / 12, depthFt: 14 / 12 }, safety_shower: { name: 'Emergency shower (ceiling)', widthFt: 3, depthFt: 3 },
 };
 export const DEFAULT_CLEARANCE: Record<'bench' | 'laminarHood', FixtureClearance> = {
   bench: { frontFt: 5, backFt: 0, sideFt: 0 },

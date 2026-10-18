@@ -1,4 +1,6 @@
-export type FixtureKind = 'bench' | 'laminarHood' | 'sink' | 'cabinet' | 'refrigerator' | 'door' | 'waste';
+// 'eyewash' and 'safety_shower' are placed by generation only (at the main
+// door; see the backend's safety-fixtures.ts), never from the palette.
+export type FixtureKind = 'bench' | 'laminarHood' | 'sink' | 'cabinet' | 'refrigerator' | 'door' | 'waste' | 'eyewash' | 'safety_shower';
 export type FixtureOrientation = 0 | 90 | 180 | 270;
 export interface FixtureClearance { frontFt: number; backFt: number; sideFt: number; overheadFt?: number; }
 export type SandboxLayer = 'base' | 'equipment' | 'circulation' | 'electrical' | 'plumbing' | 'ventilation' | 'validation' | 'zoning';
@@ -733,7 +735,8 @@ export function buildBenchPlacementGeometryInput(layout: SandboxLayout): LayoutG
   const blocked = new Set(geometry.blockedCells);
   const entrance = new Set(geometry.entranceCells);
   for (const fixture of layout.fixtures) {
-    if (isAutoPlacedBench(fixture)) continue;
+    // Generation places these again (benches; the eye wash and shower).
+    if (isAutoPlacedBench(fixture) || isSafetyFixture(fixture)) continue;
     const r = fixtureRectFt(fixture, grid);
     const x0 = Math.max(0, Math.floor(r.left / grid + 1e-6)), x1 = Math.min(geometry.roomWidth - 1, Math.ceil(r.right / grid - 1e-6) - 1);
     const y0 = Math.max(0, Math.floor(r.top / grid + 1e-6)), y1 = Math.min(geometry.roomHeight - 1, Math.ceil(r.bottom / grid - 1e-6) - 1);
@@ -833,6 +836,13 @@ export const AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX = 'auto-bench-';
 // A bench an automatic placement produced — the sandbox's own maximize/
 // place run, or a generated report's plan (those carry planBenchId) — as
 // opposed to one a person placed. Re-running placement replaces these.
+// The emergency eye wash and shower a generated layout places at the main
+// door: they stay where generation put them.
+export const SAFETY_FIXTURE_PREFIX = 'auto-safety-';
+export function isSafetyFixture(fixture: SandboxFixture): boolean {
+  return fixture.instanceId.startsWith(SAFETY_FIXTURE_PREFIX);
+}
+
 export function isAutoPlacedBench(fixture: SandboxFixture): boolean {
   return fixture.instanceId.startsWith(AUTO_PLACED_BENCH_INSTANCE_ID_PREFIX) || (fixture as SandboxFixture & { planBenchId?: string }).planBenchId !== undefined;
 }

@@ -67,6 +67,8 @@ export interface PlanZone {
   shortfallSqFt: number;
 }
 
+export interface RectFt { left: number; top: number; right: number; bottom: number }
+
 export interface LabPlan {
   initialEquipment?: {
     // widthFt runs along the bench, depthFt front to back; spanXFt/spanYFt
@@ -96,6 +98,14 @@ export interface LabPlan {
   obstacles: { cells: PlanCell[] };
   zones: PlanZone[];
   floorItems: PlanEquipment[];
+  // The emergency eye wash and shower at the main door (room feet). Absent
+  // on plans made before 2026-10-11.
+  safety?: {
+    eyewash: { rect: RectFt; wall: 'N' | 'S' | 'E' | 'W' } | null;
+    shower: { rect: RectFt; centerXFt: number; centerYFt: number; diameterFt: number } | null;
+    // Floor nothing else may stand on: 1.5 ft beside every door, 6" round the eye wash.
+    keepClear: RectFt[];
+  } | null;
   totals: { benches: number; benchAreaSqFt: number; benchNeedSqFt: number; shortfallSqFt: number; roomTooSmall: boolean };
 }
 

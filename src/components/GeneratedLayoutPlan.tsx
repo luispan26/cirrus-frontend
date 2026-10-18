@@ -4,7 +4,7 @@ import { useMutation } from '@apollo/client/react';
 import { BENCH_SURFACE_AREA_SQFT, parseSandboxLayout, type SandboxLayout } from '../lib/layout-sandbox';
 import { benchContents, readLabPlan, WALL_LABELS, zoneColor, type LabPlan, type PlanOptions, type PlanWall } from '../lib/lab-plan';
 import { DISMISS_FLOOR_EQUIPMENT_PROMPT_MUTATION, UPDATE_REPORT_LAYOUT_MUTATION } from '../graphql/operations';
-import { LayoutFloorPlan } from './LayoutFloorPlan';
+import { EYEWASH_FILL, LayoutFloorPlan, SHOWER_EDGE, SHOWER_FILL } from './LayoutFloorPlan';
 
 type LegacyDecisionReport = {
   topologyProduced: { wallBenchPositions: number; doubleIslandPairs: number; singleIslandBenchPositions: number; totalBenchPositions: number };
@@ -205,6 +205,8 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated, floorPr
               <span><i style={{ background: 'rgba(52,98,201,.35)' }} />Aisles (where technicians walk)</span>
               <span><i style={{ background: 'rgba(214,79,79,.3)' }} />Door clearance</span>
               <span><i style={{ background: '#fbfbfa' }} />Unused floor</span>
+              {layout.fixtures.some((f) => f.kind === 'eyewash') && <span><i style={{ background: EYEWASH_FILL }} />Emergency eye wash</span>}
+              {layout.fixtures.some((f) => f.kind === 'safety_shower') && <span><i style={{ background: SHOWER_FILL, border: `1.5px dotted ${SHOWER_EDGE}`, borderRadius: '50%' }} />Emergency shower (ceiling)</span>}
             </div>
             <div className={`generated-layout-hover-card ${hovered ? 'visible' : ''}`} aria-live="polite">
               {hovered && onBench ? (
