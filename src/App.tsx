@@ -19,6 +19,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { ValidatedProtocolsPage } from './pages/ValidatedProtocolsPage';
 import { DisclaimerPage } from './pages/DisclaimerPage';
+import { OptimizerPage } from './pages/OptimizerPage';
 
 export default function App() {
   return (
@@ -45,6 +46,7 @@ export default function App() {
         <Route path="/validated-protocols" element={<ValidatedProtocolsPage />} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/disclaimer" element={<DisclaimerPage />} />
+        <Route path="/optimizer" element={<OptimizerPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

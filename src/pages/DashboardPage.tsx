@@ -134,7 +134,10 @@ export function DashboardPage() {
               boxShadow: 'var(--glow-teal), var(--shadow-sm)',
             }}
           >
-            <button className="btn-teal" onClick={startNewLabDesign}>+ Design a New Lab</button>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <button className="btn-teal" onClick={startNewLabDesign}>+ Design a New Lab</button>
+              <button className="btn-pink" onClick={() => navigate('/optimizer')} title="Rearrange a generated layout's equipment to cut walking">Open Optimizer</button>
+            </div>
             <div className="stat" style={{ padding: '14px 22px', border: 'none', boxShadow: 'none', background: 'transparent' }}>
               <div
                 className="stat-val"
