@@ -8,6 +8,7 @@ import {
 import { parseSandboxLayout } from '../lib/layout-sandbox';
 import { readLabPlan } from '../lib/lab-plan';
 import { resetSessionId } from '../lib/session';
+import { sendLayoutToOptimizer } from '../lib/optimizer-handoff';
 import { LabAssetBench } from '../components/LabAssets';
 import { LayoutFloorPlan } from '../components/LayoutFloorPlan';
 import { Logo } from '../components/Logo';
@@ -81,6 +82,15 @@ export function DashboardPage() {
   const readyReports = reports.filter((r) => r.status === 'ready' && r.data);
   const latestReport = readyReports[0] ?? null;
   const reportData = latestReport?.data ?? null;
+  const currentLayout = reportData?.generated_layout?.data ?? null;
+
+  // With a current design, jump straight into optimizing it instead of
+  // landing on an empty Optimizer page where the only way in is its own
+  // "pick a generated layout" dropdown.
+  function openOptimizer() {
+    if (currentLayout) sendLayoutToOptimizer(currentLayout, cap(reportData?.business_model) || 'Current lab design');
+    navigate('/optimizer');
+  }
 
   const registeredEquipmentCount = equipmentCountData?.equipmentList.length ?? 0;
   const protocolsCount = protocolsData?.validatedProtocols.length ?? 0;
@@ -136,7 +146,7 @@ export function DashboardPage() {
           >
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <button className="btn-teal" onClick={startNewLabDesign}>+ Design a New Lab</button>
-              <button className="btn-pink" onClick={() => navigate('/optimizer')} title="Rearrange a generated layout's equipment to cut walking">Open Optimizer</button>
+              <button className="btn-pink" onClick={openOptimizer} title={currentLayout ? 'Open your current lab design in the optimizer' : "Rearrange a generated layout's equipment to cut walking"}>Open Optimizer</button>
             </div>
             <div className="stat" style={{ padding: '14px 22px', border: 'none', boxShadow: 'none', background: 'transparent' }}>
               <div

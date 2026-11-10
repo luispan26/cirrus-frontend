@@ -378,7 +378,8 @@ h1,h2,h3,h4,h5,h6{font-family:var(--head);font-weight:500;letter-spacing:-.01em}
 .ls-derived-note { align-self: center; color: var(--mid); font-size: 11px; font-weight: 600; padding: 0 4px; }
 @media (max-width: 640px) { .generated-layout-heading { align-items: flex-start; flex-direction: column; } }
 /* Generated plan: floor plan + zone editor side by side */
-.plan-heading-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.plan-heading-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.plan-heading-actions .btn-teal, .plan-heading-actions .btn-pink, .plan-heading-actions .btn-out { padding: 10px 20px; font-size: 13px; }
 .plan-editor { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
 .plan-editor-preview { max-height: 680px; aspect-ratio: auto; }
 .plan-editor-side { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--mid); }
@@ -498,6 +499,17 @@ h1,h2,h3,h4,h5,h6{font-family:var(--head);font-weight:500;letter-spacing:-.01em}
 .ls-qb-derive{flex:1;padding:13px 18px;border-radius:12px;border:2px solid rgba(255,63,164,.4);background:var(--white);color:var(--pkd);font-size:13px;font-weight:700;cursor:pointer;transition:all .18s cubic-bezier(.4,0,.2,1)}
 .ls-qb-derive:hover:not(:disabled){background:var(--pkl)}
 .ls-qb-derive:disabled{opacity:.5;cursor:not-allowed}
+
+/* ConfirmDialog (components/ConfirmDialog.tsx) — same centered-modal
+   formula as .ls-placement-backdrop/.ls-placement-question above, under
+   neutral names since this one is reused app-wide, not sandbox-specific. */
+.confirm-backdrop{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;background:rgba(20,22,31,.45);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);padding:24px;box-sizing:border-box}
+.confirm-dialog{width:min(440px,94vw);background:var(--white);border:1px solid var(--br);border-radius:22px;box-shadow:var(--shadow-lg);padding:28px}
+.confirm-dialog-title{font-family:var(--head);font-size:17px;font-weight:500;color:var(--dark);margin-bottom:8px}
+.confirm-dialog-text{font-size:13px;line-height:1.6;color:var(--mid);margin:0}
+.confirm-dialog-actions{display:flex;gap:10px;margin-top:20px;justify-content:flex-end}
+.confirm-dialog-danger{padding:10px 22px;border-radius:12px;border:1px solid rgba(255,63,164,.4);background:var(--white);color:var(--pkd);font-size:13px;font-weight:700;cursor:pointer;transition:all .18s cubic-bezier(.4,0,.2,1)}
+.confirm-dialog-danger:hover{background:var(--pkl);border-color:var(--pk)}
 
 /* Guided questionnaire: readable cards, with the stage owning tall content. */
 .qm-stage{justify-content:flex-start;padding:32px 24px}

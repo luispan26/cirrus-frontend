@@ -4,6 +4,7 @@ import { useMutation } from '@apollo/client/react';
 import { BENCH_SURFACE_AREA_SQFT, parseSandboxLayout, type SandboxLayout } from '../lib/layout-sandbox';
 import { benchContents, readLabPlan, WALL_LABELS, zoneColor, type LabPlan, type PlanOptions, type PlanWall } from '../lib/lab-plan';
 import { DISMISS_FLOOR_EQUIPMENT_PROMPT_MUTATION, UPDATE_REPORT_LAYOUT_MUTATION } from '../graphql/operations';
+import { sendLayoutToOptimizer } from '../lib/optimizer-handoff';
 import { EYEWASH_FILL, LayoutFloorPlan, SHOWER_EDGE, SHOWER_FILL } from './LayoutFloorPlan';
 
 type LegacyDecisionReport = {
@@ -162,6 +163,13 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated, floorPr
     URL.revokeObjectURL(url);
   }
 
+  function openInOptimizer() {
+    sendLayoutToOptimizer(generated.data, `Report layout${generated.layoutId ? ` ${generated.layoutId.slice(0, 8)}` : ''} r${generated.revision ?? 1}`);
+    // So the Optimizer's back button can return here instead of defaulting
+    // to the dashboard — same returnState handoff placeFloorEquipment uses.
+    navigate('/optimizer', { state: { returnState: location.state } });
+  }
+
   // The bench described below the plan: the one under the pointer, else the pinned one.
   const shownId = hoveredId ?? pinnedId;
   const hovered = shownId ? benchByFixture.get(shownId) : undefined;
@@ -186,6 +194,7 @@ function ZonedLayoutPlan({ generated, layout, plan, reportId, onUpdated, floorPr
           <div className="plan-heading-actions">
             <button className="btn-out" onClick={downloadJson} title="Everything in this plan — benches, aisles, zones, unused floor, equipment per zone, fixed flags — for the optimizer.">Download plan JSON</button>
             <button className="btn-teal" onClick={() => navigate('/layout-sandbox', { state: { loadLayout: generated.data } })}>Open in sandbox</button>
+            <button className="btn-pink" onClick={openInOptimizer} title="Load this layout straight into the equipment optimizer, no download/upload needed.">Optimize further →</button>
           </div>
         </div>
 

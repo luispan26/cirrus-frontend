@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@apollo/client/react';
 import { DELETE_REPORT_MUTATION, MY_REPORTS_QUERY } from '../graphql/operations';
 import { Logo } from '../components/Logo';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 interface ReportSummary {
   id: string;
@@ -45,9 +47,12 @@ export function DesignHistoryPage() {
     fetchPolicy: 'network-only',
   });
   const [deleteReport] = useMutation(DELETE_REPORT_MUTATION);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
-  async function handleDelete(id: string) {
-    if (!window.confirm('Delete this lab design report? This cannot be undone.')) return;
+  async function confirmDelete() {
+    if (!pendingDeleteId) return;
+    const id = pendingDeleteId;
+    setPendingDeleteId(null);
     await deleteReport({ variables: { id } });
     refetch();
   }
@@ -119,7 +124,7 @@ export function DesignHistoryPage() {
                 {r.status === 'failed' && (
                   <span style={{ fontSize: 12, color: 'var(--mid)' }}>{r.error}</span>
                 )}
-                <button className="icon-btn-danger" title="Delete report" aria-label="Delete report" onClick={() => handleDelete(r.id)}>
+                <button className="icon-btn-danger" title="Delete report" aria-label="Delete report" onClick={() => setPendingDeleteId(r.id)}>
                   <TrashIcon />
                 </button>
               </div>
@@ -133,6 +138,13 @@ export function DesignHistoryPage() {
           )}
         </div>
       </div>
+      <ConfirmDialog
+        open={!!pendingDeleteId}
+        title="Delete this lab design report?"
+        message="This cannot be undone."
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDeleteId(null)}
+      />
     </div>
   );
 }

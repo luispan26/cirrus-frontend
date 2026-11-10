@@ -6,6 +6,7 @@ import {
   SET_VALIDATED_PROTOCOL_CELL_TYPES_MUTATION, SET_VALIDATED_PROTOCOL_ESSENTIAL_MUTATION,
 } from '../graphql/operations';
 import { CELL_TYPE_OPTS } from '../lib/questions';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 interface ValidatedProtocolRow { id: string; protocolId: string; title: string; sourceUrl: string; cellTypes?: string[] | null; essential: boolean; createdAt?: string; }
 
@@ -22,6 +23,7 @@ export function ValidatedProtocolsPage() {
   const [setCellTypes] = useMutation(SET_VALIDATED_PROTOCOL_CELL_TYPES_MUTATION);
   const [setEssential] = useMutation(SET_VALIDATED_PROTOCOL_ESSENTIAL_MUTATION);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<ValidatedProtocolRow | null>(null);
   const [removeError, setRemoveError] = useState('');
   const [cellTypeError, setCellTypeError] = useState('');
   const [essentialError, setEssentialError] = useState('');
@@ -55,11 +57,7 @@ export function ValidatedProtocolsPage() {
     }
   }
 
-  // window.confirm rather than a custom modal — same pattern as
-  // DesignHistoryPage's report delete, which is the only other
-  // permanent-removal action in the app today.
   async function handleRemove(row: ValidatedProtocolRow) {
-    if (!window.confirm(`Remove "${row.title}" from the questionnaire's Validated Protocols list? It will no longer be selectable there until re-validated on the Protocols page.`)) return;
     setRemoveError('');
     setRemovingId(row.protocolId);
     try {
@@ -158,7 +156,7 @@ export function ValidatedProtocolsPage() {
                       <button
                         className="btn-out"
                         style={{ padding: '4px 12px', fontSize: 12, color: '#a33', borderColor: '#e6b3b3' }}
-                        onClick={() => handleRemove(row)}
+                        onClick={() => setPendingRemove(row)}
                         disabled={removingId === row.protocolId}
                       >
                         {removingId === row.protocolId ? 'Removing…' : 'Remove'}
@@ -171,6 +169,14 @@ export function ValidatedProtocolsPage() {
           </>
         )}
       </div>
+      <ConfirmDialog
+        open={!!pendingRemove}
+        title="Remove from Validated Protocols?"
+        message={`Remove "${pendingRemove?.title}" from the questionnaire's Validated Protocols list? It will no longer be selectable there until re-validated on the Protocols page.`}
+        confirmLabel="Remove"
+        onConfirm={() => { if (pendingRemove) handleRemove(pendingRemove); setPendingRemove(null); }}
+        onCancel={() => setPendingRemove(null)}
+      />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import {
   DELETE_EQUIPMENT_MUTATION, UPDATE_EQUIPMENT_MUTATION,
 } from '../graphql/operations';
 import { SearchableSelect } from '../components/SearchableSelect';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 interface EquipmentRow {
   equipmentId: string; name: string; costUsd: number; widthFt: number; depthFt: number; heightFt: number;
@@ -58,9 +59,18 @@ export function InventoryPage() {
     }
   }
 
+  const [pendingDelete, setPendingDelete] = useState<{ equipmentId: string; name: string } | null>(null);
+
   async function handleDeleteEquipment(id: string) {
     await deleteEquipment({ variables: { equipmentId: id } });
     refetchEquipment();
+  }
+
+  async function confirmDeleteEquipment() {
+    if (!pendingDelete) return;
+    const { equipmentId } = pendingDelete;
+    setPendingDelete(null);
+    await handleDeleteEquipment(equipmentId);
   }
 
   // Commits a single field edited in place in the table. `value` is the raw
@@ -253,7 +263,7 @@ export function InventoryPage() {
                     />
                   </td>
                   <td style={{ padding: '6px 10px' }}>
-                    <button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => handleDeleteEquipment(eq.equipmentId)}>Delete</button>
+                    <button className="btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setPendingDelete({ equipmentId: eq.equipmentId, name: eq.name })}>Delete</button>
                     {rowError?.equipmentId === eq.equipmentId && (
                       <div style={{ color: '#a33', fontSize: 11, marginTop: 4 }}>{rowError.message}</div>
                     )}
@@ -268,6 +278,13 @@ export function InventoryPage() {
         </table>
 
       </div>
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title="Delete equipment?"
+        message={`Remove "${pendingDelete?.name}" from the equipment database? This cannot be undone.`}
+        onConfirm={confirmDeleteEquipment}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }
